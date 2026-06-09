@@ -96,6 +96,14 @@ screen_init(struct screen *s, u_int sx, u_int sy, u_int hlimit)
 	TAILQ_INIT(&s->saved_images);
 #endif
 
+#ifdef ENABLE_KITTY_IMAGES
+	TAILQ_INIT(&s->kitty_images);
+	TAILQ_INIT(&s->kitty_placements);
+	TAILQ_INIT(&s->saved_kitty_images);
+	TAILQ_INIT(&s->saved_kitty_placements);
+	memset(&s->kitty_pending, 0, sizeof(s->kitty_pending));
+#endif
+
 	s->write_list = NULL;
 	s->hyperlinks = NULL;
 
@@ -169,6 +177,18 @@ screen_free(struct screen *s)
 
 #ifdef ENABLE_SIXEL
 	image_free_all(s);
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_free_all(s);
+	{
+		struct kitty_image	*img, *img_next;
+		struct kitty_placement	*pl, *pl_next;
+		TAILQ_FOREACH_SAFE(img, &s->saved_kitty_images, entry, img_next)
+			TAILQ_REMOVE(&s->saved_kitty_images, img, entry);
+		TAILQ_FOREACH_SAFE(pl, &s->saved_kitty_placements, entry, pl_next)
+			TAILQ_REMOVE(&s->saved_kitty_placements, pl, entry);
+	}
 #endif
 }
 
@@ -699,6 +719,13 @@ screen_alternate_on(struct screen *s, struct grid_cell *gc, int cursor)
 	    im->list = &s->saved_images;
 #endif
 
+#ifdef ENABLE_KITTY_IMAGES
+	{
+		TAILQ_CONCAT(&s->saved_kitty_images, &s->kitty_images, entry);
+		TAILQ_CONCAT(&s->saved_kitty_placements, &s->kitty_placements, entry);
+	}
+#endif
+
 	grid_view_clear(s->grid, 0, 0, sx, sy, 8);
 
 	s->saved_flags = s->grid->flags;
@@ -761,6 +788,12 @@ screen_alternate_off(struct screen *s, struct grid_cell *gc, int cursor)
 	TAILQ_CONCAT(&s->images, &s->saved_images, entry);
 	TAILQ_FOREACH(im, &s->images, entry)
 	    im->list = &s->images;
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_free_all(s);
+	TAILQ_CONCAT(&s->kitty_images, &s->saved_kitty_images, entry);
+	TAILQ_CONCAT(&s->kitty_placements, &s->saved_kitty_placements, entry);
 #endif
 
 	if (s->cx > screen_size_x(s) - 1)

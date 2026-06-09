@@ -1397,6 +1397,9 @@ screen_redraw_draw_pane(struct screen_redraw_ctx *ctx, struct window_pane *wp)
 #ifdef ENABLE_SIXEL
 	tty_draw_images(c, wp, s);
 #endif
+#ifdef ENABLE_KITTY_IMAGES
+	tty_draw_kitty_images(c, wp, s);
+#endif
 }
 
 /* Draw the panes scrollbars */

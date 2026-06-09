@@ -2777,6 +2777,26 @@ input_exit_apc(struct input_ctx *ictx)
 		return;
 	log_debug("%s: \"%s\"", __func__, ictx->input_buf);
 
+#ifdef ENABLE_KITTY_IMAGES
+	/* Check if this is a Kitty graphics sequence (starts with 'G'). */
+	if (ictx->input_len > 0 && ictx->input_buf[0] == 'G') {
+		if (wp != NULL && sctx->s != NULL) {
+			char *reply = NULL;
+			if (kitty_image_parse(sctx->s,
+			    (const char *)ictx->input_buf + 1,
+			    ictx->input_len - 1, &reply) == 0) {
+				wp->flags |= PANE_REDRAW;
+				if (reply != NULL) {
+					bufferevent_write(ictx->event, reply,
+					    strlen(reply));
+					free(reply);
+				}
+			}
+		}
+		return;
+	}
+#endif
+
 	if (wp != NULL &&
 	    options_get_number(wp->options, "allow-set-title") &&
 	    screen_set_title(sctx->s, ictx->input_buf)) {

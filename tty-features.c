@@ -357,6 +357,17 @@ static const struct tty_feature tty_feature_sixel = {
 	TERM_SIXEL
 };
 
+/* Terminal supports Kitty graphics protocol. */
+static const char *const tty_feature_kitty_capabilities[] = {
+	"Skitty=1",
+	NULL
+};
+static const struct tty_feature tty_feature_kitty = {
+	"kitty",
+	tty_feature_kitty_capabilities,
+	TERM_KITTY
+};
+
 /* Terminal supports the OSC 9;4 progress bar. */
 static const char *const tty_feature_progressbar_capabilities[] = {
 	"Spb=\\E]9;4;%p1%d;%p2%d\\E\\\\",
@@ -379,6 +390,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_extkeys,
 	&tty_feature_focus,
 	&tty_feature_ignorefkeys,
+	&tty_feature_kitty,
 	&tty_feature_margins,
 	&tty_feature_mouse,
 	&tty_feature_osc7,

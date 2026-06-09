@@ -67,7 +67,7 @@ static void	tty_emulate_repeat(struct tty *, enum tty_code_code,
 static void	tty_draw_pane(struct tty *, const struct tty_ctx *, u_int);
 static int	tty_check_overlay(struct tty *, u_int, u_int);
 
-#ifdef ENABLE_SIXEL
+#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
 static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
 		    struct client *, struct tty_ctx *);
 #endif
@@ -1495,7 +1495,7 @@ tty_check_overlay_range(struct tty *tty, u_int px, u_int py, u_int nx)
 	return (c->overlay_check(c, c->overlay_data, px, py, nx));
 }
 
-#ifdef ENABLE_SIXEL
+#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
 /* Update context for client. */
 static int
 tty_set_client_cb(struct tty_ctx *ttyctx, struct client *c)
@@ -1520,6 +1520,7 @@ tty_set_client_cb(struct tty_ctx *ttyctx, struct client *c)
 	return (1);
 }
 
+#ifdef ENABLE_SIXEL
 void
 tty_draw_images(struct client *c, struct window_pane *wp, struct screen *s)
 {
@@ -1547,6 +1548,37 @@ tty_draw_images(struct client *c, struct window_pane *wp, struct screen *s)
 		tty_write_one(tty_cmd_sixelimage, c, &ttyctx);
 	}
 }
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+void
+tty_draw_kitty_images(struct client *c, struct window_pane *wp, struct screen *s)
+{
+	struct kitty_placement	*pl;
+	struct tty_ctx		 ttyctx;
+
+	TAILQ_FOREACH(pl, &s->kitty_placements, entry) {
+		memset(&ttyctx, 0, sizeof ttyctx);
+
+		/* Set the client independent properties. */
+		ttyctx.ocx = pl->pane_x;
+		ttyctx.ocy = pl->pane_y;
+
+		ttyctx.orlower = s->rlower;
+		ttyctx.orupper = s->rupper;
+
+		ttyctx.xoff = ttyctx.rxoff = wp->xoff;
+		ttyctx.sx = wp->sx;
+		ttyctx.sy = wp->sy;
+
+		ttyctx.kitty_placement = pl;
+		ttyctx.arg = wp;
+		ttyctx.set_client_cb = tty_set_client_cb;
+		ttyctx.flags |= TTY_CTX_INVISIBLE_PANES;
+		tty_write_one(tty_cmd_kittyimage, c, &ttyctx);
+	}
+}
+#endif
 #endif
 
 void
@@ -1622,7 +1654,7 @@ tty_write(void (*cmdfn)(struct tty *, const struct tty_ctx *),
 	}
 }
 
-#ifdef ENABLE_SIXEL
+#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
 /* Only write to the incoming tty instead of every client. */
 static void
 tty_write_one(void (*cmdfn)(struct tty *, const struct tty_ctx *),
@@ -2193,6 +2225,92 @@ tty_cmd_sixelimage(struct tty *tty, const struct tty_ctx *ctx)
 
 	if (fallback == 0)
 		sixel_free(new);
+}
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+/*
+ * Emit a Kitty image to the terminal.
+ * For Phase D, we re-upload the image each time and then place it.
+ */
+void
+tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
+{
+	struct kitty_placement	*pl = ctx->kitty_placement;
+	struct kitty_image	*img = pl->image;
+	char			*upload, *place, *encoded;
+	int			 upload_len, place_len;
+	u_int			 cx = ctx->ocx, cy = ctx->ocy;
+	u_int			 i, j, x, y, rx, ry;
+	int			 fallback = 0;
+
+	if (~tty->term->flags & TERM_KITTY)
+		fallback = 1;
+	if (tty->xpixel == 0 || tty->ypixel == 0)
+		fallback = 1;
+
+	if (fallback == 1) {
+		/* Render a text placeholder instead. */
+		char placeholder[128];
+		log_debug("%s: Kitty not supported, rendering fallback",
+		    __func__);
+		snprintf(placeholder, sizeof(placeholder),
+		    "[KITTY IMAGE %ux%u]", img->pixel_width, img->pixel_height);
+		tty_region_off(tty);
+		tty_margin_off(tty);
+		tty_cursor(tty, cx, cy);
+		tty->flags |= TTY_NOBLOCK;
+		tty_add(tty, placeholder, strlen(placeholder));
+		tty_invalidate(tty);
+		return;
+	}
+
+	if (!tty_clamp_area(tty, ctx, cx, cy, pl->cols, pl->rows,
+	    &i, &j, &x, &y, &rx, &ry))
+		return;
+	log_debug("%s: clamping to %u,%u-%u,%u", __func__, i, j, rx, ry);
+
+	/*
+	 * Phase D: Basic implementation.
+	 * Re-upload the image each time.
+	 */
+	if (img->payload_len > 0) {
+		encoded = xmalloc(4 * ((img->payload_len + 2) / 3) + 1);
+		b64_ntop(img->payload, img->payload_len, encoded,
+		    4 * ((img->payload_len + 2) / 3) + 1);
+		upload_len = xasprintf(&upload,
+		    "\033_Ga=t,i=%u,f=%d,s=%u,v=%u,m=0,q=1;%s\033\\",
+		    img->id, img->format, img->pixel_width,
+		    img->pixel_height, encoded);
+		free(encoded);
+	} else {
+		upload_len = xasprintf(&upload,
+		    "\033_Ga=t,i=%u,f=%d,s=%u,v=%u,m=0,q=1;\033\\",
+		    img->id, img->format, img->pixel_width,
+		    img->pixel_height);
+	}
+
+	/* Build placement command. */
+	place_len = xasprintf(&place,
+	    "\033_Ga=p,i=%u,p=%u,X=%u,Y=%u,c=%u,r=%u,C=1,q=1\033\\",
+	    img->id, pl->placement_id, pl->cell_xoff, pl->cell_yoff,
+	    pl->cols, pl->rows);
+
+	/* Move to the correct position and emit. */
+	tty_region_off(tty);
+	tty_margin_off(tty);
+	tty_cursor(tty, x, y);
+
+	tty->flags |= TTY_NOBLOCK;
+	if (upload != NULL) {
+		tty_add(tty, upload, upload_len);
+		free(upload);
+	}
+	if (place != NULL) {
+		tty_add(tty, place, place_len);
+		free(place);
+	}
+	tty_invalidate(tty);
 }
 #endif
 
