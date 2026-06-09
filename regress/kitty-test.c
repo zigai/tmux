@@ -4,7 +4,6 @@
  * Kitty graphics protocol unit tests.
  *
  * This file includes image-kitty.c directly to test static functions.
- * Build with regress/kitty-images.sh.
  */
 
 #ifdef KITTY_TEST
@@ -120,7 +119,7 @@ test_parse_query(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=q,i=1", strlen("a=q,i=1"), &cmd);
 
 	TEST_ASSERT("parse_query: ret == 0", ret == 0);
@@ -139,11 +138,15 @@ test_parse_transmit(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
-	ret = kitty_parse_control("a=T,i=5,f=100,s=80,v=40,c=10,r=5,o=1,t=d", strlen("a=T,i=5,f=100,s=80,v=40,c=10,r=5,o=1,t=d"), &cmd);
+	memset(&cmd, 0, sizeof cmd);
+	ret = kitty_parse_control(
+	    "a=T,i=5,f=100,s=80,v=40,c=10,r=5,o=1,t=d",
+	    strlen("a=T,i=5,f=100,s=80,v=40,c=10,r=5,o=1,t=d"),
+	    &cmd);
 
 	TEST_ASSERT("parse_transmit: ret == 0", ret == 0);
-	TEST_ASSERT("parse_transmit: action == T", cmd.action == KITTY_ACTION_TRANSMIT_AND_DISPLAY);
+	TEST_ASSERT("parse_transmit: action == T",
+	    cmd.action == KITTY_ACTION_TRANSMIT_AND_DISPLAY);
 	TEST_ASSERT("parse_transmit: image_id == 5", cmd.image_id == 5);
 	TEST_ASSERT("parse_transmit: format == 100", cmd.format == 100);
 	TEST_ASSERT("parse_transmit: pixel_width == 80", cmd.pixel_width == 80);
@@ -165,8 +168,9 @@ test_parse_place(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
-	ret = kitty_parse_control("a=p,i=5,p=1,X=2,Y=3,z=10,C=1", strlen("a=p,i=5,p=1,X=2,Y=3,z=10,C=1"), &cmd);
+	memset(&cmd, 0, sizeof cmd);
+	ret = kitty_parse_control("a=p,i=5,p=1,X=2,Y=3,z=10,C=1",
+	    strlen("a=p,i=5,p=1,X=2,Y=3,z=10,C=1"), &cmd);
 
 	TEST_ASSERT("parse_place: ret == 0", ret == 0);
 	TEST_ASSERT("parse_place: action == p", cmd.action == KITTY_ACTION_PLACE);
@@ -189,7 +193,7 @@ test_parse_delete(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=d,i=5", strlen("a=d,i=5"), &cmd);
 
 	TEST_ASSERT("parse_delete: ret == 0", ret == 0);
@@ -208,12 +212,13 @@ test_parse_payload(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=t,i=1,f=100;base64data",
 	    strlen("a=t,i=1,f=100;base64data"), &cmd);
 
 	TEST_ASSERT("parse_payload: ret == 0", ret == 0);
-	TEST_ASSERT("parse_payload: action == t", cmd.action == KITTY_ACTION_TRANSMIT);
+	TEST_ASSERT("parse_payload: action == t",
+	    cmd.action == KITTY_ACTION_TRANSMIT);
 	TEST_ASSERT("parse_payload: image_id == 1", cmd.image_id == 1);
 	TEST_ASSERT("parse_payload: payload != NULL", cmd.payload != NULL);
 	TEST_ASSERT("parse_payload: payload_len == 10", cmd.payload_len == 10);
@@ -232,7 +237,7 @@ test_parse_empty_payload(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=t,i=1;", strlen("a=t,i=1;"), &cmd);
 
 	TEST_ASSERT("parse_empty_payload: ret == 0", ret == 0);
@@ -251,11 +256,13 @@ test_parse_unknown_keys(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
-	ret = kitty_parse_control("a=q,i=1,unknownkey=42", strlen("a=q,i=1,unknownkey=42"), &cmd);
+	memset(&cmd, 0, sizeof cmd);
+	ret = kitty_parse_control("a=q,i=1,unknownkey=42",
+	    strlen("a=q,i=1,unknownkey=42"), &cmd);
 
 	TEST_ASSERT("parse_unknown_keys: ret == 0", ret == 0);
-	TEST_ASSERT("parse_unknown_keys: action == q", cmd.action == KITTY_ACTION_QUERY);
+	TEST_ASSERT("parse_unknown_keys: action == q",
+	    cmd.action == KITTY_ACTION_QUERY);
 	TEST_ASSERT("parse_unknown_keys: image_id == 1", cmd.image_id == 1);
 
 	kitty_command_free(&cmd);
@@ -270,7 +277,7 @@ test_parse_malformed(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=q,invalid", strlen("a=q,invalid"), &cmd);
 
 	TEST_ASSERT("parse_malformed: ret == -1", ret == -1);
@@ -287,7 +294,7 @@ test_parse_quiet(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=q,i=1,q=1", strlen("a=q,i=1,q=1"), &cmd);
 
 	TEST_ASSERT("parse_quiet: ret == 0", ret == 0);
@@ -305,7 +312,7 @@ test_parse_chunked(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=t,i=1,m=1", strlen("a=t,i=1,m=1"), &cmd);
 
 	TEST_ASSERT("parse_chunked: ret == 0", ret == 0);
@@ -323,7 +330,7 @@ test_parse_image_number(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=t,I=42", strlen("a=t,I=42"), &cmd);
 
 	TEST_ASSERT("parse_image_number: ret == 0", ret == 0);
@@ -341,8 +348,9 @@ test_parse_source_rect(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
-	ret = kitty_parse_control("a=p,i=1,x=10,y=20,w=30,h=40", strlen("a=p,i=1,x=10,y=20,w=30,h=40"), &cmd);
+	memset(&cmd, 0, sizeof cmd);
+	ret = kitty_parse_control("a=p,i=1,x=10,y=20,w=30,h=40",
+	    strlen("a=p,i=1,x=10,y=20,w=30,h=40"), &cmd);
 
 	TEST_ASSERT("parse_source_rect: ret == 0", ret == 0);
 	TEST_ASSERT("parse_source_rect: src_x == 10", cmd.src_x == 10);
@@ -362,7 +370,7 @@ test_parse_virtual(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=T,i=1,U=1", strlen("a=T,i=1,U=1"), &cmd);
 
 	TEST_ASSERT("parse_virtual: ret == 0", ret == 0);
@@ -381,11 +389,11 @@ test_image_store_find(void)
 	struct kitty_command		cmd;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 42;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 100;
@@ -394,7 +402,8 @@ test_image_store_find(void)
 	img = kitty_image_store(&s, &cmd);
 	TEST_ASSERT("store_find: img != NULL", img != NULL);
 	TEST_ASSERT("store_find: img->id == 42", img->id == 42);
-	TEST_ASSERT("store_find: img->format == PNG", img->format == KITTY_FORMAT_PNG);
+	TEST_ASSERT("store_find: img->format == PNG",
+	    img->format == KITTY_FORMAT_PNG);
 	TEST_ASSERT("store_find: img->pixel_width == 100", img->pixel_width == 100);
 	TEST_ASSERT("store_find: img->pixel_height == 50", img->pixel_height == 50);
 	TEST_ASSERT("store_find: img->refcount == 1", img->refcount == 1);
@@ -419,11 +428,11 @@ test_image_replace(void)
 	struct kitty_command		cmd1, cmd2;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd1, 0, sizeof(cmd1));
+	memset(&cmd1, 0, sizeof cmd1);
 	cmd1.image_id = 7;
 	cmd1.format = KITTY_FORMAT_PNG;
 	cmd1.pixel_width = 10;
@@ -431,7 +440,7 @@ test_image_replace(void)
 	img = kitty_image_store(&s, &cmd1);
 	TEST_ASSERT("replace: store 1", img != NULL);
 
-	memset(&cmd2, 0, sizeof(cmd2));
+	memset(&cmd2, 0, sizeof cmd2);
 	cmd2.image_id = 7;
 	cmd2.format = KITTY_FORMAT_RGB;
 	cmd2.pixel_width = 20;
@@ -456,11 +465,11 @@ test_placement_create(void)
 	struct kitty_image		*img;
 	struct kitty_placement		*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 100;
@@ -468,7 +477,7 @@ test_placement_create(void)
 	img = kitty_image_store(&s, &cmd);
 	TEST_ASSERT("placement: store", img != NULL);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 99;
 	cmd.cols = 10;
@@ -510,17 +519,17 @@ test_delete_image(void)
 	struct kitty_image		*img;
 	struct kitty_placement		*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	img = kitty_image_store(&s, &cmd);
 	TEST_ASSERT("delete_image: store", img != NULL);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 1;
 	cmd.cols = 10;
@@ -548,23 +557,23 @@ test_delete_all_placements(void)
 	struct kitty_placement		*pl;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	img = kitty_image_store(&s, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 1;
 	cmd.cols = 10;
 	cmd.rows = 5;
 	pl = kitty_placement_create(&s, img, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 2;
 	cmd.cols = 10;
@@ -593,16 +602,16 @@ test_delete_all(void)
 	struct kitty_placement		*pl;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	img = kitty_image_store(&s, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 1;
 	cmd.cols = 10;
@@ -630,16 +639,16 @@ test_delete_cursor(void)
 	struct kitty_placement		*pl;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	img = kitty_image_store(&s, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 1;
 	cmd.cols = 10;
@@ -671,16 +680,16 @@ test_delete_zindex(void)
 	struct kitty_placement		*pl;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	img = kitty_image_store(&s, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 1;
 	cmd.cols = 10;
@@ -689,7 +698,7 @@ test_delete_zindex(void)
 	pl = kitty_placement_create(&s, img, &cmd);
 	pl->zindex = 5;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 2;
 	cmd.cols = 10;
@@ -718,7 +727,7 @@ test_build_reply(void)
 	char			*reply;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 42;
 	ret = kitty_build_reply(NULL, &cmd, &reply);
 	TEST_ASSERT("build_reply: ret == 0", ret == 0);
@@ -741,7 +750,7 @@ test_handle_query_quiet(void)
 	char			*reply;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_QUERY;
 	cmd.image_id = 1;
 	cmd.quiet = 1;
@@ -761,7 +770,7 @@ test_handle_query_loud(void)
 	char			*reply;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_QUERY;
 	cmd.image_id = 1;
 	cmd.quiet = 0;
@@ -785,12 +794,12 @@ test_memory_limits_images(void)
 	struct kitty_image		*img;
 	u_int				i;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
 	for (i = 0; i < KITTY_MAX_IMAGES + 5; i++) {
-		memset(&cmd, 0, sizeof(cmd));
+		memset(&cmd, 0, sizeof cmd);
 		cmd.image_id = i + 1;
 		cmd.format = KITTY_FORMAT_PNG;
 		cmd.pixel_width = 1;
@@ -815,11 +824,11 @@ test_memory_limits_payload(void)
 	struct kitty_command		cmd;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
@@ -830,7 +839,7 @@ test_memory_limits_payload(void)
 	TEST_ASSERT("memlimit_payload: too large fails", img == NULL);
 	free(cmd.payload);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 2;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
@@ -857,11 +866,11 @@ test_handle_transmit_empty(void)
 	char				*reply;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_TRANSMIT;
 	cmd.image_id = 0;
 	cmd.image_number = 0;
@@ -886,11 +895,11 @@ test_handle_place_missing(void)
 	char				*reply;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_PLACE;
 	cmd.image_id = 99;
 	ret = kitty_handle_place(&s, &cmd, &reply);
@@ -914,18 +923,18 @@ test_handle_delete_default(void)
 	char				*reply;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
 	cmd.pixel_height = 1;
 	kitty_image_store(&s, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_DELETE;
 	ret = kitty_handle_delete(&s, &cmd, &reply);
 	TEST_ASSERT("delete_default: ret == 0", ret == 0);
@@ -945,11 +954,11 @@ test_handle_transmit_file_no_path(void)
 	char				*reply;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_TRANSMIT;
 	cmd.image_id = 1;
 	cmd.transmission = 'f';
@@ -974,11 +983,11 @@ test_handle_transmit_shm(void)
 	char				*reply;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_TRANSMIT;
 	cmd.image_id = 1;
 	cmd.transmission = 's';
@@ -1002,10 +1011,10 @@ test_chunked_upload(void)
 	int				ret;
 	char				*reply;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
-	memset(&s.kitty_pending, 0, sizeof(s.kitty_pending));
+	memset(&s.kitty_pending, 0, sizeof s.kitty_pending);
 
 	ret = kitty_image_parse(&s, "a=t,i=1,f=100,s=1,v=1,m=1;chunk1",
 	    strlen("a=t,i=1,f=100,s=1,v=1,m=1;chunk1"), &reply);
@@ -1036,7 +1045,7 @@ test_parse_empty(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("", strlen(""), &cmd);
 	TEST_ASSERT("parse_empty: ret == 0", ret == 0);
 	TEST_ASSERT("parse_empty: action == 0", cmd.action == 0);
@@ -1053,7 +1062,7 @@ test_parse_semicolon_only(void)
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control(";", strlen(";"), &cmd);
 	TEST_ASSERT("parse_semicolon_only: ret == 0", ret == 0);
 	TEST_ASSERT("parse_semicolon_only: payload == NULL", cmd.payload == NULL);
@@ -1073,13 +1082,13 @@ test_handle_transmit_cursor_move(void)
 	int				ret;
 	struct kitty_placement		*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 	s.cx = 5;
 	s.cy = 10;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_TRANSMIT_AND_DISPLAY;
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
@@ -1112,13 +1121,13 @@ test_handle_transmit_cursor_stay(void)
 	char				*reply;
 	int				ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 	s.cx = 5;
 	s.cy = 10;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_TRANSMIT_AND_DISPLAY;
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
@@ -1149,11 +1158,11 @@ test_handle_transmit_virtual(void)
 	int				ret;
 	struct kitty_placement		*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_TRANSMIT_AND_DISPLAY;
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
@@ -1183,20 +1192,20 @@ test_handle_place_replace(void)
 	struct kitty_image		*img;
 	struct kitty_placement		*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 	s.cx = 0;
 	s.cy = 0;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
 	cmd.pixel_height = 1;
 	img = kitty_image_store(&s, &cmd);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.placement_id = 5;
 	cmd.cols = 10;
@@ -1209,7 +1218,7 @@ test_handle_place_replace(void)
 	s.cx = 3;
 	s.cy = 4;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_PLACE;
 	cmd.image_id = 1;
 	cmd.placement_id = 5;
@@ -1242,11 +1251,11 @@ test_handle_place_virtual(void)
 	struct kitty_image		*img;
 	struct kitty_placement		*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
@@ -1254,7 +1263,7 @@ test_handle_place_virtual(void)
 	img = kitty_image_store(&s, &cmd);
 	TEST_ASSERT("place_virtual: image stored", img != NULL);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.action = KITTY_ACTION_PLACE;
 	cmd.image_id = 1;
 	cmd.virtual = 1;
@@ -1270,7 +1279,49 @@ test_handle_place_virtual(void)
 	return (0);
 }
 
-/* Test 40: Memory limit - max placements. */
+/* Test 40: Handle place by image number. */
+static int
+test_handle_place_by_number(void)
+{
+	struct screen			s;
+	struct kitty_command		cmd;
+	char				*reply;
+	int				ret;
+	struct kitty_image		*img;
+	struct kitty_placement		*pl;
+
+	memset(&s, 0, sizeof s);
+	TAILQ_INIT(&s.kitty_images);
+	TAILQ_INIT(&s.kitty_placements);
+
+	memset(&cmd, 0, sizeof cmd);
+	cmd.image_number = 42;
+	cmd.format = KITTY_FORMAT_PNG;
+	cmd.pixel_width = 1;
+	cmd.pixel_height = 1;
+	img = kitty_image_store(&s, &cmd);
+	TEST_ASSERT("place_number: image stored", img != NULL);
+
+	memset(&cmd, 0, sizeof cmd);
+	cmd.action = KITTY_ACTION_PLACE;
+	cmd.image_number = 42;
+	cmd.placement_id = 9;
+	cmd.cols = 2;
+	cmd.rows = 3;
+	ret = kitty_handle_place(&s, &cmd, &reply);
+	TEST_ASSERT("place_number: ret == 0", ret == 0);
+	free(reply);
+
+	pl = kitty_placement_find(&s, 9, 0);
+	TEST_ASSERT("place_number: placement exists", pl != NULL);
+	TEST_ASSERT("place_number: placement image", pl->image == img);
+
+	kitty_image_free_all(&s);
+	TEST_PASS("place_number");
+	return (0);
+}
+
+/* Test 41: Memory limit - max placements. */
 static int
 test_memory_limits_placements(void)
 {
@@ -1280,11 +1331,11 @@ test_memory_limits_placements(void)
 	struct kitty_placement		*pl;
 	u_int				i;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
@@ -1292,7 +1343,7 @@ test_memory_limits_placements(void)
 	img = kitty_image_store(&s, &cmd);
 
 	for (i = 0; i < KITTY_MAX_PLACEMENTS + 5; i++) {
-		memset(&cmd, 0, sizeof(cmd));
+		memset(&cmd, 0, sizeof cmd);
 		cmd.image_id = 1;
 		cmd.placement_id = i + 1;
 		cmd.cols = 1;
@@ -1311,7 +1362,7 @@ test_memory_limits_placements(void)
 	return (0);
 }
 
-/* Test 41: Image number find. */
+/* Test 42: Image number find. */
 static int
 test_image_number_find(void)
 {
@@ -1319,11 +1370,11 @@ test_image_number_find(void)
 	struct kitty_command		cmd;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.image_number = 42;
 	cmd.format = KITTY_FORMAT_PNG;
@@ -1344,7 +1395,7 @@ test_image_number_find(void)
 	return (0);
 }
 
-/* Test 42: Build reply with image_id 0. */
+/* Test 43: Build reply with image_id 0. */
 static int
 test_build_reply_zero(void)
 {
@@ -1352,7 +1403,7 @@ test_build_reply_zero(void)
 	char			*reply;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 0;
 	ret = kitty_build_reply(NULL, &cmd, &reply);
 	TEST_ASSERT("build_reply_zero: ret == 0", ret == 0);
@@ -1365,7 +1416,7 @@ test_build_reply_zero(void)
 	return (0);
 }
 
-/* Test 43: Free all images. */
+/* Test 44: Free all images. */
 static int
 test_free_all(void)
 {
@@ -1373,11 +1424,11 @@ test_free_all(void)
 	struct kitty_command		cmd;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 1;
@@ -1397,14 +1448,14 @@ test_free_all(void)
 	return (0);
 }
 
-/* Test 44: Empty control data with only semicolon and payload. */
+/* Test 45: Empty control data with only semicolon and payload. */
 static int
 test_parse_payload_only(void)
 {
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control(";hello", strlen(";hello"), &cmd);
 	TEST_ASSERT("parse_payload_only: ret == 0", ret == 0);
 	TEST_ASSERT("parse_payload_only: payload != NULL", cmd.payload != NULL);
@@ -1418,14 +1469,14 @@ test_parse_payload_only(void)
 	return (0);
 }
 
-/* Test 45: Duplicate keys (last one wins). */
+/* Test 46: Duplicate keys (last one wins). */
 static int
 test_parse_duplicate_keys(void)
 {
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("i=1,i=2,i=3", strlen("i=1,i=2,i=3"), &cmd);
 	TEST_ASSERT("parse_duplicate: ret == 0", ret == 0);
 	TEST_ASSERT("parse_duplicate: image_id == 3", cmd.image_id == 3);
@@ -1435,7 +1486,7 @@ test_parse_duplicate_keys(void)
 	return (0);
 }
 
-/* Test 46: Large control data should be rejected. */
+/* Test 47: Large control data should be rejected. */
 static int
 test_parse_large_control(void)
 {
@@ -1447,7 +1498,7 @@ test_parse_large_control(void)
 	memset(data, 'a', KITTY_MAX_CONTROL_LEN + 10);
 	data[KITTY_MAX_CONTROL_LEN + 9] = '\0';
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control(data, KITTY_MAX_CONTROL_LEN + 10, &cmd);
 	TEST_ASSERT("parse_large: ret == -1", ret == -1);
 
@@ -1457,14 +1508,14 @@ test_parse_large_control(void)
 	return (0);
 }
 
-/* Test 47: Negative z-index. */
+/* Test 48: Negative z-index. */
 static int
 test_parse_negative_zindex(void)
 {
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("z=-5", strlen("z=-5"), &cmd);
 	TEST_ASSERT("parse_negative_z: ret == 0", ret == 0);
 	TEST_ASSERT("parse_negative_z: zindex == -5", cmd.zindex == -5);
@@ -1474,17 +1525,18 @@ test_parse_negative_zindex(void)
 	return (0);
 }
 
-/* Test 48: Multiple commas in sequence. */
+/* Test 49: Multiple commas in sequence. */
 static int
 test_parse_multiple_commas(void)
 {
 	struct kitty_command	cmd;
 	int			ret;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	ret = kitty_parse_control("a=q,,i=1", strlen("a=q,,i=1"), &cmd);
 	TEST_ASSERT("parse_multi_commas: ret == 0", ret == 0);
-	TEST_ASSERT("parse_multi_commas: action == q", cmd.action == KITTY_ACTION_QUERY);
+	TEST_ASSERT("parse_multi_commas: action == q",
+	    cmd.action == KITTY_ACTION_QUERY);
 	TEST_ASSERT("parse_multi_commas: image_id == 1", cmd.image_id == 1);
 
 	kitty_command_free(&cmd);
@@ -1492,7 +1544,7 @@ test_parse_multiple_commas(void)
 	return (0);
 }
 
-/* Test 49: Image store with payload. */
+/* Test 50: Image store with payload. */
 static int
 test_image_store_with_payload(void)
 {
@@ -1500,11 +1552,11 @@ test_image_store_with_payload(void)
 	struct kitty_command		cmd;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 10;
@@ -1526,7 +1578,7 @@ test_image_store_with_payload(void)
 	return (0);
 }
 
-/* Test 50: Image replace with payload. */
+/* Test 51: Image replace with payload. */
 static int
 test_image_replace_with_payload(void)
 {
@@ -1534,11 +1586,11 @@ test_image_replace_with_payload(void)
 	struct kitty_command		cmd;
 	struct kitty_image		*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_PNG;
 	cmd.pixel_width = 10;
@@ -1551,7 +1603,7 @@ test_image_replace_with_payload(void)
 	if (img != NULL)
 		img->payload = NULL;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 1;
 	cmd.format = KITTY_FORMAT_RGB;
 	cmd.pixel_width = 20;
@@ -1564,7 +1616,8 @@ test_image_replace_with_payload(void)
 	if (img != NULL)
 		img->payload = NULL;
 	TEST_ASSERT("replace_payload: img != NULL", img != NULL);
-	TEST_ASSERT("replace_payload: format == RGB", img->format == KITTY_FORMAT_RGB);
+	TEST_ASSERT("replace_payload: format == RGB",
+	    img->format == KITTY_FORMAT_RGB);
 	TEST_ASSERT("replace_payload: width == 20", img->pixel_width == 20);
 	TEST_ASSERT("replace_payload: height == 20", img->pixel_height == 20);
 
@@ -1574,7 +1627,7 @@ test_image_replace_with_payload(void)
 }
 
 
-/* Test 51: a=T parsed through public entry point stores image and placement. */
+/* Test 52: a=T stores an image and placement through the public entry. */
 static int
 test_parse_dispatch_transmit_display(void)
 {
@@ -1584,18 +1637,19 @@ test_parse_dispatch_transmit_display(void)
 	char			*reply;
 	int			 ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 	s.cx = 2;
 	s.cy = 3;
 
 	ret = kitty_image_parse(&s,
-	    "a=T,i=44,f=24,s=2,v=2,c=4,r=1,p=7,C=1;RGBX",
-	    strlen("a=T,i=44,f=24,s=2,v=2,c=4,r=1,p=7,C=1;RGBX"),
+	    "a=T,i=44,f=24,s=2,v=2,c=4,r=1,p=7,C=1;UkdCWA==",
+	    strlen("a=T,i=44,f=24,s=2,v=2,c=4,r=1,p=7,C=1;UkdCWA=="),
 	    &reply);
 	TEST_ASSERT("dispatch_T: ret == 0", ret == 0);
-	TEST_ASSERT("dispatch_T: reply OK", reply != NULL && strstr(reply, "OK") != NULL);
+	TEST_ASSERT("dispatch_T: reply OK",
+	    reply != NULL && strstr(reply, "OK") != NULL);
 	free(reply);
 	img = kitty_image_find(&s, 44);
 	TEST_ASSERT("dispatch_T: image stored", img != NULL);
@@ -1614,7 +1668,35 @@ test_parse_dispatch_transmit_display(void)
 	return (0);
 }
 
-/* Test 52: t=f reads payload from an actual file path. */
+/* Test 53: Direct RGB payload is base64 decoded before storage. */
+static int
+test_transmit_direct_rgb_decodes(void)
+{
+	struct screen		 s;
+	struct kitty_image	*img;
+	char			*reply;
+	int			 ret;
+
+	memset(&s, 0, sizeof s);
+	TAILQ_INIT(&s.kitty_images);
+	TAILQ_INIT(&s.kitty_placements);
+
+	ret = kitty_image_parse(&s, "a=t,i=45,f=24,s=1,v=1;QUJD",
+	    strlen("a=t,i=45,f=24,s=1,v=1;QUJD"), &reply);
+	TEST_ASSERT("direct_rgb: ret == 0", ret == 0);
+	free(reply);
+	img = kitty_image_find(&s, 45);
+	TEST_ASSERT("direct_rgb: image stored", img != NULL);
+	TEST_ASSERT("direct_rgb: decoded len", img->payload_len == 3);
+	TEST_ASSERT("direct_rgb: decoded payload",
+	    img->payload != NULL && memcmp(img->payload, "ABC", 3) == 0);
+
+	kitty_image_free_all(&s);
+	TEST_PASS("direct_rgb");
+	return (0);
+}
+
+/* Test 54: t=f reads payload from an actual file path. */
 static int
 test_transmit_file_regular(void)
 {
@@ -1625,7 +1707,7 @@ test_transmit_file_regular(void)
 	char			*reply;
 	int			 fd, ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
@@ -1649,7 +1731,7 @@ test_transmit_file_regular(void)
 	return (0);
 }
 
-/* Test 53: t=t reads and removes a temporary file. */
+/* Test 55: t=t reads and removes a temporary file. */
 static int
 test_transmit_file_temporary_removes_source(void)
 {
@@ -1660,7 +1742,7 @@ test_transmit_file_temporary_removes_source(void)
 	char			*reply;
 	int			 fd, ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
@@ -1682,7 +1764,7 @@ test_transmit_file_temporary_removes_source(void)
 	return (0);
 }
 
-/* Test 54: chunked a=T preserves first-chunk metadata when final chunk arrives. */
+/* Test 56: chunked a=T preserves first-chunk metadata. */
 static int
 test_chunked_transmit_display_metadata(void)
 {
@@ -1692,7 +1774,7 @@ test_chunked_transmit_display_metadata(void)
 	char			*reply;
 	int			 ret;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 	s.cx = 4;
@@ -1715,14 +1797,15 @@ test_chunked_transmit_display_metadata(void)
 	    img->payload_len == 6 && memcmp(img->payload, "AAABBB", 6) == 0);
 	pl = kitty_placement_find(&s, 9, 57);
 	TEST_ASSERT("chunked_T: placement created", pl != NULL);
-	TEST_ASSERT("chunked_T: placement position", pl->pane_x == 4 && pl->pane_y == 5);
+	TEST_ASSERT("chunked_T: placement position",
+	    pl->pane_x == 4 && pl->pane_y == 5);
 	kitty_image_free_all(&s);
 	TEST_PASS("chunked_T");
 	return (0);
 }
 
 
-/* Test 55: Writing over an image placement removes only overlapping placement. */
+/* Test 57: Writing over an image removes overlapping placements. */
 static int
 test_check_area_removes_overlapping_placement(void)
 {
@@ -1730,11 +1813,11 @@ test_check_area_removes_overlapping_placement(void)
 	struct kitty_command	 cmd;
 	struct kitty_image	*img;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 70;
 	cmd.pixel_width = 10;
 	cmd.pixel_height = 10;
@@ -1760,7 +1843,7 @@ test_check_area_removes_overlapping_placement(void)
 	return (0);
 }
 
-/* Test 56: Scrolling moves image placements and removes those scrolled out. */
+/* Test 58: Scrolling moves image placements and removes those scrolled out. */
 static int
 test_scroll_up_moves_and_removes_placements(void)
 {
@@ -1769,13 +1852,13 @@ test_scroll_up_moves_and_removes_placements(void)
 	struct kitty_image	*img;
 	struct kitty_placement	*pl;
 
-	memset(&s, 0, sizeof(s));
+	memset(&s, 0, sizeof s);
 	TAILQ_INIT(&s.kitty_images);
 	TAILQ_INIT(&s.kitty_placements);
 	s.rupper = 0;
 	s.rlower = 10;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	cmd.image_id = 71;
 	cmd.pixel_width = 10;
 	cmd.pixel_height = 10;
@@ -1840,6 +1923,7 @@ main(int argc, char **argv)
 	test_image_replace();
 	test_image_replace_with_payload();
 	test_parse_dispatch_transmit_display();
+	test_transmit_direct_rgb_decodes();
 	test_transmit_file_regular();
 	test_transmit_file_temporary_removes_source();
 	test_chunked_transmit_display_metadata();
@@ -1874,6 +1958,7 @@ main(int argc, char **argv)
 	test_handle_place_missing();
 	test_handle_place_replace();
 	test_handle_place_virtual();
+	test_handle_place_by_number();
 	test_handle_delete_default();
 	test_chunked_upload();
 
