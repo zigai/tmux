@@ -378,7 +378,7 @@ kitty_image_delete_placements(struct screen *s, struct kitty_image *img)
 /* Maximum number of placements per screen. */
 #define KITTY_MAX_PLACEMENTS 512
 
-/* Read a file into memory. Returns allocated buffer on success, NULL on error. */
+/* Read a file into memory. */
 static u_char *
 kitty_read_file(const char *path, size_t *len)
 {
@@ -513,7 +513,8 @@ kitty_image_replace(struct screen *s, struct kitty_image *old,
 
 	if (old->refcount > 0)
 		old->refcount = 0;
-	kitty_image_free_one(&s->kitty_images, old);
+	free(old->payload);
+	free(old);
 
 	log_debug("kitty: replaced image id=%u size=%zu", img->id,
 	    img->payload_len);
@@ -568,7 +569,7 @@ kitty_image_init(struct screen *s)
 {
 	TAILQ_INIT(&s->kitty_images);
 	TAILQ_INIT(&s->kitty_placements);
-	memset(&s->kitty_pending, 0, sizeof(s->kitty_pending));
+	memset(&s->kitty_pending, 0, sizeof s->kitty_pending);
 }
 
 /* Free all Kitty images and placements for a screen. */
@@ -587,7 +588,7 @@ kitty_image_free_all(struct screen *s)
 
 	if (s->kitty_pending.active) {
 		free(s->kitty_pending.payload);
-		memset(&s->kitty_pending, 0, sizeof(s->kitty_pending));
+		memset(&s->kitty_pending, 0, sizeof s->kitty_pending);
 	}
 }
 
@@ -602,7 +603,7 @@ kitty_pending_append(struct screen *s, u_char *payload, size_t len)
 	if (new_size > KITTY_MAX_IMAGE_PAYLOAD) {
 		log_debug("kitty: chunked upload too large");
 		free(pending->payload);
-		memset(pending, 0, sizeof(*pending));
+		memset(pending, 0, sizeof *pending);
 		return (-1);
 	}
 
@@ -627,7 +628,7 @@ kitty_image_parse(struct screen *s, const char *data, size_t len,
 	struct kitty_command	 cmd;
 	int			 result;
 
-	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd, 0, sizeof cmd);
 	*reply = NULL;
 
 	log_debug("kitty: received %zu bytes", len);
@@ -649,8 +650,8 @@ kitty_image_parse(struct screen *s, const char *data, size_t len,
 		if (cmd.more == 1) {
 			/* More chunks coming. */
 			if (!cmd.quiet)
-				return (kitty_build_reply(s, &cmd, reply));
-			return (0);
+				result = kitty_build_reply(s, &cmd, reply);
+			goto done;
 		}
 		/* Final chunk - process the complete command using metadata
 		 * from the first chunk. */
@@ -679,7 +680,7 @@ kitty_image_parse(struct screen *s, const char *data, size_t len,
 		cmd.payload = s->kitty_pending.payload;
 		cmd.payload_len = s->kitty_pending.payload_len;
 		result = kitty_image_dispatch(s, &cmd, reply);
-		memset(&s->kitty_pending, 0, sizeof(s->kitty_pending));
+		memset(&s->kitty_pending, 0, sizeof s->kitty_pending);
 		goto done;
 	}
 
@@ -715,8 +716,8 @@ kitty_image_parse(struct screen *s, const char *data, size_t len,
 			}
 		}
 		if (!cmd.quiet)
-			return (kitty_build_reply(s, &cmd, reply));
-		return (0);
+			result = kitty_build_reply(s, &cmd, reply);
+		goto done;
 	}
 
 	result = kitty_image_dispatch(s, &cmd, reply);
@@ -726,19 +727,19 @@ done:
 	return (result);
 }
 
-/* Decode a base64 direct PNG payload if needed. */
+/* Decode a base64 direct payload if needed. */
 static int
-kitty_decode_direct_png_payload(struct kitty_command *cmd)
+kitty_decode_direct_payload(struct kitty_command *cmd)
 {
 	u_char	*decoded;
 	char	*encoded;
 	int	 outlen;
 
-	if (cmd->format != KITTY_FORMAT_PNG || cmd->payload_len == 0)
+	if (cmd->payload_len == 0)
 		return (0);
 
-	/* Already decoded. */
-	if (cmd->payload_len >= 8 &&
+	/* PNG payload may already have been decoded by older paths. */
+	if (cmd->format == KITTY_FORMAT_PNG && cmd->payload_len >= 8 &&
 	    memcmp(cmd->payload, "\211PNG\r\n\032\n", 8) == 0)
 		return (0);
 
@@ -747,8 +748,15 @@ kitty_decode_direct_png_payload(struct kitty_command *cmd)
 	outlen = b64_pton(encoded, decoded, cmd->payload_len);
 	free(encoded);
 
-	if (outlen == -1 || outlen < 8 ||
-	    memcmp(decoded, "\211PNG\r\n\032\n", 8) != 0) {
+	if (outlen == -1) {
+		free(decoded);
+		if (cmd->format == KITTY_FORMAT_PNG)
+			return (0);
+		return (-1);
+	}
+
+	if (cmd->format == KITTY_FORMAT_PNG &&
+	    (outlen < 8 || memcmp(decoded, "\211PNG\r\n\032\n", 8) != 0)) {
 		free(decoded);
 		return (0);
 	}
@@ -756,6 +764,9 @@ kitty_decode_direct_png_payload(struct kitty_command *cmd)
 	free(cmd->payload);
 	cmd->payload = decoded;
 	cmd->payload_len = (size_t)outlen;
+
+	if (cmd->format != KITTY_FORMAT_PNG)
+		return (0);
 
 	if (cmd->pixel_width == 0 && cmd->payload_len >= 24) {
 		cmd->pixel_width = ((u_int)cmd->payload[16] << 24) |
@@ -830,7 +841,7 @@ kitty_handle_transmit(struct screen *s, struct kitty_command *cmd,
 		if (!cmd->quiet)
 			*reply = xstrdup("\033_Gi=0;ENOTSUP\033\\");
 		return (-1);
-	} else if (kitty_decode_direct_png_payload(cmd) != 0) {
+	} else if (kitty_decode_direct_payload(cmd) != 0) {
 		if (!cmd->quiet)
 			*reply = xstrdup("\033_Gi=0;EINVAL\033\\");
 		return (-1);
@@ -883,9 +894,13 @@ kitty_handle_place(struct screen *s, struct kitty_command *cmd,
 	struct kitty_image	*img;
 	struct kitty_placement	*pl;
 
-	img = kitty_image_find(s, cmd->image_id);
+	if (cmd->image_id != 0)
+		img = kitty_image_find(s, cmd->image_id);
+	else
+		img = kitty_image_find_by_number(s, cmd->image_number);
 	if (img == NULL) {
-		log_debug("kitty: place image not found: %u", cmd->image_id);
+		log_debug("kitty: place image not found: %u/%u",
+		    cmd->image_id, cmd->image_number);
 		if (!cmd->quiet)
 			*reply = xstrdup("\033_Gi=0;ENOENT\033\\");
 		return (-1);
@@ -893,7 +908,7 @@ kitty_handle_place(struct screen *s, struct kitty_command *cmd,
 
 	/* Check if replacing existing placement. */
 	if (cmd->placement_id != 0) {
-		pl = kitty_placement_find(s, cmd->placement_id, cmd->image_id);
+		pl = kitty_placement_find(s, cmd->placement_id, img->id);
 		if (pl != NULL) {
 			/* Replace existing placement. */
 			pl->pane_x = s->cx;
