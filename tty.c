@@ -71,6 +71,15 @@ static int	tty_check_overlay(struct tty *, u_int, u_int);
 static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
 		    struct client *, struct tty_ctx *);
 #endif
+#ifdef ENABLE_KITTY_IMAGES
+static void	tty_add_kitty_chunks(struct tty *, const char *, const u_char *,
+		    size_t);
+static void	tty_kitty_images_free(struct tty *);
+static int	tty_kitty_image_uploaded(struct tty *, struct kitty_image *);
+static void	tty_kitty_image_mark_uploaded(struct tty *, struct kitty_image *);
+static void	tty_kitty_image_remove_uploaded_from_tty(struct tty *,
+		    uint32_t);
+#endif
 
 #define tty_use_margin(tty) \
 	(tty->term->flags & TERM_DECSLRM)
@@ -83,6 +92,10 @@ static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
 
 #define TTY_QUERY_TIMEOUT 5
 #define TTY_REQUEST_LIMIT 30
+
+#ifdef ENABLE_KITTY_IMAGES
+#define KITTY_MAX_ENCODED_CHUNK 4096
+#endif
 
 void
 tty_create_log(void)
@@ -104,6 +117,9 @@ tty_init(struct tty *tty, struct client *c)
 
 	memset(tty, 0, sizeof *tty);
 	tty->client = c;
+#ifdef ENABLE_KITTY_IMAGES
+	TAILQ_INIT(&tty->kitty_images);
+#endif
 
 	tty->cstyle = SCREEN_CURSOR_DEFAULT;
 	tty->ccolour = -1;
@@ -348,6 +364,9 @@ tty_start_tty(struct tty *tty)
 	if (tcsetattr(c->fd, TCSANOW, &tio) == 0)
 		tcflush(c->fd, TCOFLUSH);
 
+#ifdef ENABLE_KITTY_IMAGES
+	tty_kitty_images_free(tty);
+#endif
 	tty_putcode(tty, TTYC_SMCUP);
 
 	tty_putcode(tty, TTYC_SMKX);
@@ -523,6 +542,9 @@ tty_free(struct tty *tty)
 {
 	tty_close(tty);
 
+#ifdef ENABLE_KITTY_IMAGES
+	tty_kitty_images_free(tty);
+#endif
 	free(tty->r.ranges);
 }
 
@@ -638,6 +660,119 @@ tty_add(struct tty *tty, const char *buf, size_t len)
 	    !event_pending(&tty->event_out, EV_WRITE, NULL))
 		event_add(&tty->event_out, NULL);
 }
+
+#ifdef ENABLE_KITTY_IMAGES
+static void
+tty_add_kitty_chunks(struct tty *tty, const char *control,
+    const u_char *payload, size_t payload_len)
+{
+	char	*encoded, *sequence;
+	size_t	 size, used = 0;
+	int	 encoded_len, more, sequence_len;
+
+	if (payload_len == 0) {
+		sequence_len = xasprintf(&sequence,
+		    "\033_G%s,m=0,q=1;\033\\", control);
+		tty_add(tty, sequence, sequence_len);
+		free(sequence);
+		return;
+	}
+
+	size = 4 * ((payload_len + 2) / 3) + 1;
+	encoded = xmalloc(size);
+	encoded_len = b64_ntop(payload, payload_len, encoded, size);
+	if (encoded_len == -1) {
+		free(encoded);
+		return;
+	}
+
+	while (used < (size_t)encoded_len) {
+		size = (size_t)encoded_len - used;
+		if (size > KITTY_MAX_ENCODED_CHUNK)
+			size = KITTY_MAX_ENCODED_CHUNK;
+		more = (used + size < (size_t)encoded_len);
+		if (used == 0)
+			sequence_len = xasprintf(&sequence,
+			    "\033_G%s,m=%d,q=1;%.*s\033\\", control, more,
+			    (int)size, encoded + used);
+		else
+			sequence_len = xasprintf(&sequence,
+			    "\033_Gm=%d,q=1;%.*s\033\\", more, (int)size,
+			    encoded + used);
+		tty_add(tty, sequence, sequence_len);
+		free(sequence);
+		used += size;
+	}
+	free(encoded);
+}
+
+static void
+tty_kitty_images_free(struct tty *tty)
+{
+	struct tty_kitty_image	*image, *image1;
+
+	TAILQ_FOREACH_SAFE(image, &tty->kitty_images, entry, image1) {
+		TAILQ_REMOVE(&tty->kitty_images, image, entry);
+		free(image);
+	}
+}
+
+static void
+tty_kitty_image_remove_uploaded_from_tty(struct tty *tty, uint32_t id)
+{
+	struct tty_kitty_image	*image, *image1;
+
+	TAILQ_FOREACH_SAFE(image, &tty->kitty_images, entry, image1) {
+		if (image->id == id) {
+			TAILQ_REMOVE(&tty->kitty_images, image, entry);
+			free(image);
+		}
+	}
+}
+
+void
+tty_kitty_image_remove_uploaded(struct kitty_image *img)
+{
+	struct client	*c;
+
+	if (img == NULL || img->tty_id == 0)
+		return;
+
+	TAILQ_FOREACH(c, &clients, entry)
+		tty_kitty_image_remove_uploaded_from_tty(&c->tty, img->tty_id);
+}
+
+static int
+tty_kitty_image_uploaded(struct tty *tty, struct kitty_image *img)
+{
+	struct tty_kitty_image	*image;
+
+	TAILQ_FOREACH(image, &tty->kitty_images, entry) {
+		if (image->id == img->tty_id &&
+		    image->generation == img->generation)
+			return (1);
+	}
+	return (0);
+}
+
+static void
+tty_kitty_image_mark_uploaded(struct tty *tty, struct kitty_image *img)
+{
+	struct tty_kitty_image	*image;
+
+	TAILQ_FOREACH(image, &tty->kitty_images, entry) {
+		if (image->id == img->tty_id) {
+			image->generation = img->generation;
+			return;
+		}
+	}
+
+	image = xcalloc(1, sizeof *image);
+	image->id = img->tty_id;
+	image->generation = img->generation;
+	TAILQ_INSERT_TAIL(&tty->kitty_images, image, entry);
+}
+#endif
 
 void
 tty_puts(struct tty *tty, const char *s)
@@ -1552,13 +1687,25 @@ tty_draw_images(struct client *c, struct window_pane *wp, struct screen *s)
 
 #ifdef ENABLE_KITTY_IMAGES
 void
-tty_draw_kitty_images(struct client *c, struct window_pane *wp, struct screen *s)
+tty_draw_kitty_images(struct client *c, struct window_pane *wp,
+    struct screen *s)
 {
-	struct kitty_placement	*pl;
+	struct kitty_placement	*pl, *before;
 	struct tty_ctx		 ttyctx;
+	int			 upload;
 
 	TAILQ_FOREACH(pl, &s->kitty_placements, entry) {
 		memset(&ttyctx, 0, sizeof ttyctx);
+
+		upload = 1;
+		TAILQ_FOREACH(before, &s->kitty_placements, entry) {
+			if (before == pl)
+				break;
+			if (before->image == pl->image) {
+				upload = 0;
+				break;
+			}
+		}
 
 		/* Set the client independent properties. */
 		ttyctx.ocx = pl->pane_x;
@@ -1575,6 +1722,8 @@ tty_draw_kitty_images(struct client *c, struct window_pane *wp, struct screen *s
 		ttyctx.arg = wp;
 		ttyctx.set_client_cb = tty_set_client_cb;
 		ttyctx.flags |= TTY_CTX_INVISIBLE_PANES;
+		if (upload)
+			ttyctx.flags |= TTY_CTX_KITTY_UPLOAD;
 		tty_write_one(tty_cmd_kittyimage, c, &ttyctx);
 	}
 }
@@ -2231,18 +2380,20 @@ tty_cmd_sixelimage(struct tty *tty, const struct tty_ctx *ctx)
 #ifdef ENABLE_KITTY_IMAGES
 /*
  * Emit a Kitty image to the terminal.
- * For Phase D, we re-upload the image each time and then place it.
  */
 void
 tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
 {
 	struct kitty_placement	*pl = ctx->kitty_placement;
 	struct kitty_image	*img = pl->image;
-	char			*upload, *place, *encoded;
-	int			 upload_len, place_len;
+	char			*control = NULL, *place = NULL;
+	char			 placeholder[128];
+	const char		*compression;
+	uint32_t		 image_id;
+	int			 place_len = 0;
 	u_int			 cx = ctx->ocx, cy = ctx->ocy;
 	u_int			 i, j, x, y, rx, ry;
-	int			 fallback = 0;
+	int			 fallback = 0, upload_image, uploaded;
 
 	if (~tty->term->flags & TERM_KITTY)
 		fallback = 1;
@@ -2251,10 +2402,9 @@ tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
 
 	if (fallback == 1) {
 		/* Render a text placeholder instead. */
-		char placeholder[128];
 		log_debug("%s: Kitty not supported, rendering fallback",
 		    __func__);
-		snprintf(placeholder, sizeof(placeholder),
+		snprintf(placeholder, sizeof placeholder,
 		    "[KITTY IMAGE %ux%u]", img->pixel_width, img->pixel_height);
 		tty_region_off(tty);
 		tty_margin_off(tty);
@@ -2265,36 +2415,62 @@ tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
 		return;
 	}
 
+	upload_image = (ctx->flags & TTY_CTX_KITTY_UPLOAD);
+	image_id = (img->tty_id != 0 ? img->tty_id : img->id);
+	compression = (img->compression == 1 ? ",o=z" : "");
+
+	uploaded = (img->id != 0 && tty_kitty_image_uploaded(tty, img));
+
+	/*
+	 * Clear stale placements once per image redraw. If the image data is
+	 * already uploaded, keep the data and delete placements only.
+	 */
+	if (img->id != 0 && upload_image) {
+		tty_region_off(tty);
+		tty_margin_off(tty);
+		tty->flags |= TTY_NOBLOCK;
+		if (uploaded) {
+			place_len = xasprintf(&place,
+			    "\033_Ga=d,d=i,i=%u,q=1\033\\", image_id);
+			tty_add(tty, place, place_len);
+			free(place);
+			place = NULL;
+			place_len = 0;
+		} else {
+			xasprintf(&control, "a=t,i=%u,f=%d,s=%u,v=%u%s",
+			    image_id, img->format, img->pixel_width,
+			    img->pixel_height, compression);
+			tty_add_kitty_chunks(tty, control, img->payload,
+			    img->payload_len);
+			if (~tty->flags & TTY_BLOCK)
+				tty_kitty_image_mark_uploaded(tty, img);
+			free(control);
+			control = NULL;
+		}
+		tty_invalidate(tty);
+	}
+
 	if (!tty_clamp_area(tty, ctx, cx, cy, pl->cols, pl->rows,
 	    &i, &j, &x, &y, &rx, &ry))
 		return;
 	log_debug("%s: clamping to %u,%u-%u,%u", __func__, i, j, rx, ry);
 
-	/*
-	 * Phase D: Basic implementation.
-	 * Re-upload the image each time.
-	 */
-	if (img->payload_len > 0) {
-		encoded = xmalloc(4 * ((img->payload_len + 2) / 3) + 1);
-		b64_ntop(img->payload, img->payload_len, encoded,
-		    4 * ((img->payload_len + 2) / 3) + 1);
-		upload_len = xasprintf(&upload,
-		    "\033_Ga=t,i=%u,f=%d,s=%u,v=%u,m=0,q=1;%s\033\\",
-		    img->id, img->format, img->pixel_width,
-		    img->pixel_height, encoded);
-		free(encoded);
-	} else {
-		upload_len = xasprintf(&upload,
-		    "\033_Ga=t,i=%u,f=%d,s=%u,v=%u,m=0,q=1;\033\\",
-		    img->id, img->format, img->pixel_width,
-		    img->pixel_height);
-	}
+	if (img->id == 0)
+		xasprintf(&control,
+		    "a=T,f=%d,s=%u,v=%u%s,x=%u,y=%u,w=%u,h=%u,X=%u,Y=%u,"
+		    "c=%u,r=%u,z=%d,C=1", img->format, img->pixel_width,
+		    img->pixel_height, compression, pl->src_x, pl->src_y,
+		    pl->src_w, pl->src_h, pl->cell_xoff, pl->cell_yoff,
+		    pl->cols, pl->rows, pl->zindex);
 
 	/* Build placement command. */
-	place_len = xasprintf(&place,
-	    "\033_Ga=p,i=%u,p=%u,X=%u,Y=%u,c=%u,r=%u,C=1,q=1\033\\",
-	    img->id, pl->placement_id, pl->cell_xoff, pl->cell_yoff,
-	    pl->cols, pl->rows);
+	if (img->id != 0)
+		place_len = xasprintf(&place,
+		    "\033_Ga=p,i=%u,p=%u,x=%u,y=%u,w=%u,h=%u,X=%u,Y=%u,"
+		    "c=%u,r=%u,z=%d,C=1,q=1\033\\",
+		    image_id, pl->placement_id, pl->src_x, pl->src_y,
+		    pl->src_w, pl->src_h, pl->cell_xoff, pl->cell_yoff,
+		    pl->cols, pl->rows, pl->zindex);
 
 	/* Move to the correct position and emit. */
 	tty_region_off(tty);
@@ -2302,9 +2478,10 @@ tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
 	tty_cursor(tty, x, y);
 
 	tty->flags |= TTY_NOBLOCK;
-	if (upload != NULL) {
-		tty_add(tty, upload, upload_len);
-		free(upload);
+	if (control != NULL) {
+		tty_add_kitty_chunks(tty, control, img->payload,
+		    img->payload_len);
+		free(control);
 	}
 	if (place != NULL) {
 		tty_add(tty, place, place_len);

@@ -181,14 +181,8 @@ screen_free(struct screen *s)
 
 #ifdef ENABLE_KITTY_IMAGES
 	kitty_image_free_all(s);
-	{
-		struct kitty_image	*img, *img_next;
-		struct kitty_placement	*pl, *pl_next;
-		TAILQ_FOREACH_SAFE(img, &s->saved_kitty_images, entry, img_next)
-			TAILQ_REMOVE(&s->saved_kitty_images, img, entry);
-		TAILQ_FOREACH_SAFE(pl, &s->saved_kitty_placements, entry, pl_next)
-			TAILQ_REMOVE(&s->saved_kitty_placements, pl, entry);
-	}
+	kitty_image_free_lists(&s->saved_kitty_images,
+	    &s->saved_kitty_placements);
 #endif
 }
 

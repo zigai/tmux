@@ -996,6 +996,8 @@ enum kitty_image_format {
 struct kitty_image {
 	uint32_t		 id;		/* i */
 	uint32_t		 number;	/* I */
+	uint32_t		 tty_id;	/* terminal-side i */
+	u_int		 generation;
 
 	enum kitty_image_format	 format;	/* f */
 	int			 compression;	/* o: 0=none, 1=zlib */
@@ -1010,6 +1012,15 @@ struct kitty_image {
 	TAILQ_ENTRY(kitty_image) entry;
 };
 TAILQ_HEAD(kitty_images, kitty_image);
+
+/* Kitty image data uploaded to a client terminal. */
+struct tty_kitty_image {
+	uint32_t		 id;
+	u_int		 generation;
+
+	TAILQ_ENTRY(tty_kitty_image) entry;
+};
+TAILQ_HEAD(tty_kitty_images, tty_kitty_image);
 
 /* Kitty placement (one image displayed at one location). */
 struct kitty_placement {
@@ -1050,6 +1061,8 @@ struct kitty_pending {
 	int			 transmission;
 	u_int			 pixel_width;
 	u_int			 pixel_height;
+	size_t			 file_size;
+	off_t			 file_offset;
 	u_int			 cols;
 	u_int			 rows;
 	u_int			 src_x;
@@ -1058,10 +1071,16 @@ struct kitty_pending {
 	u_int			 src_h;
 	u_int			 cell_xoff;
 	u_int			 cell_yoff;
+	uint32_t		 parent_image_id;
+	uint32_t		 parent_placement_id;
+	int32_t			 parent_offset_x;
+	int32_t			 parent_offset_y;
+	int			 relative;
 	int32_t			 zindex;
 	int			 cursor_no_move;
 	int			 virtual;
 	int			 quiet;
+	int			 delete_action;
 	u_char			*payload;
 	size_t			 payload_len;
 	size_t			 payload_space;
@@ -1811,6 +1830,10 @@ struct tty {
 
 	struct tty_term	*term;
 
+#ifdef ENABLE_KITTY_IMAGES
+	struct tty_kitty_images	kitty_images;
+#endif
+
 	u_int		 mouse_last_x;
 	u_int		 mouse_last_y;
 	u_int		 mouse_last_b;
@@ -1846,6 +1869,7 @@ struct tty_ctx {
 #define TTY_CTX_OVERLAY_SYNC 0x10
 #define TTY_CTX_CELL_INVALIDATE 0x20
 #define TTY_CTX_PANE_OBSCURED 0x40
+#define TTY_CTX_KITTY_UPLOAD 0x80
 
 	union {
 		u_int			 n;
@@ -2817,7 +2841,9 @@ void	tty_draw_line(struct tty *, struct screen *, u_int, u_int, u_int,
 void	tty_draw_images(struct client *, struct window_pane *, struct screen *);
 #endif
 #ifdef ENABLE_KITTY_IMAGES
-void	tty_draw_kitty_images(struct client *, struct window_pane *, struct screen *);
+void	tty_draw_kitty_images(struct client *, struct window_pane *,
+	    struct screen *);
+void	tty_kitty_image_remove_uploaded(struct kitty_image *);
 #endif
 
 void	tty_sync_start(struct tty *);
@@ -3972,6 +3998,8 @@ void		 kitty_image_init(struct screen *);
 void		 kitty_image_free(struct screen *);
 int		 kitty_image_parse(struct screen *, const char *, size_t,
 		     char **);
+void		 kitty_image_free_lists(struct kitty_images *,
+		     struct kitty_placements *);
 void		 kitty_image_free_all(struct screen *);
 void		 kitty_image_scroll_up(struct screen *, u_int);
 void		 kitty_image_check_area(struct screen *, u_int, u_int, u_int,

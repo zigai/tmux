@@ -2782,15 +2782,15 @@ input_exit_apc(struct input_ctx *ictx)
 	if (ictx->input_len > 0 && ictx->input_buf[0] == 'G') {
 		if (wp != NULL && sctx->s != NULL) {
 			char *reply = NULL;
+
 			if (kitty_image_parse(sctx->s,
 			    (const char *)ictx->input_buf + 1,
-			    ictx->input_len - 1, &reply) == 0) {
+			    ictx->input_len - 1, &reply) == 0)
 				wp->flags |= PANE_REDRAW;
-				if (reply != NULL) {
-					bufferevent_write(ictx->event, reply,
-					    strlen(reply));
-					free(reply);
-				}
+			if (reply != NULL) {
+				bufferevent_write(ictx->event, reply,
+				    strlen(reply));
+				free(reply);
 			}
 		}
 		return;
