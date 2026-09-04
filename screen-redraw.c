@@ -1823,6 +1823,14 @@ redraw_draw(struct client *c, struct window_pane *wp, int flags)
 			tty_draw_images(c, loop);
 	}
 #endif
+#ifdef ENABLE_KITTY_IMAGES
+	if (wp != NULL)
+		tty_draw_kitty_images(c, wp);
+	else {
+		TAILQ_FOREACH(loop, &scene->w->panes, entry)
+			tty_draw_kitty_images(c, loop);
+	}
+#endif
 
 	log_debug("%s: finished @%u redraw", c->name, scene->w->id);
 }

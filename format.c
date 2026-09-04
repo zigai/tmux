@@ -563,6 +563,28 @@ format_cb_pid(__unused struct format_tree *ft)
 	return (value);
 }
 
+/* Callback for image_support. */
+static void *
+format_cb_image_support(__unused struct format_tree *ft)
+{
+	int		sixel = 0, kitty = 0;
+
+#ifdef ENABLE_SIXEL
+	sixel = 1;
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+	kitty = 1;
+#endif
+
+	if (sixel && kitty)
+		return (xstrdup("sixel,kitty"));
+	if (sixel)
+		return (xstrdup("sixel"));
+	if (kitty)
+		return (xstrdup("kitty"));
+	return (xstrdup(""));
+}
+
 /* Callback for session_attached_list. */
 static void *
 format_cb_session_attached_list(struct format_tree *ft)
@@ -3733,6 +3755,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "host_short", FORMAT_TABLE_STRING,
 	  format_cb_host_short
+	},
+	{ "image_support", FORMAT_TABLE_STRING,
+	  format_cb_image_support
 	},
 	{ "insert_flag", FORMAT_TABLE_STRING,
 	  format_cb_insert_flag

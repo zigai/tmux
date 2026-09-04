@@ -68,9 +68,19 @@ static void	tty_emulate_repeat(struct tty *, enum tty_code_code,
 static void	tty_draw_pane(struct tty *, const struct tty_ctx *, u_int);
 static int	tty_check_overlay(struct tty *, u_int, u_int);
 
-#ifdef ENABLE_SIXEL
+#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
 static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
 		    struct client *, struct tty_ctx *);
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+static void	tty_add_kitty_chunks(struct tty *, const char *, const u_char *,
+    size_t);
+static void	tty_kitty_images_free(struct tty *);
+static int	tty_kitty_image_uploaded(struct tty *, struct kitty_image *);
+static void	tty_kitty_image_mark_uploaded(struct tty *,
+    struct kitty_image *);
+static void	tty_kitty_image_remove_uploaded_from_tty(struct tty *,
+    uint32_t);
 #endif
 
 #define tty_use_margin(tty) \
@@ -88,6 +98,9 @@ static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
 static struct tty_style_ctx tty_default_style_ctx = {
 	&grid_default_cell, NULL, 0, NULL
 };
+#ifdef ENABLE_KITTY_IMAGES
+#define KITTY_MAX_ENCODED_CHUNK 4096
+#endif
 
 void
 tty_create_log(void)
@@ -109,6 +122,9 @@ tty_init(struct tty *tty, struct client *c)
 
 	memset(tty, 0, sizeof *tty);
 	tty->client = c;
+#ifdef ENABLE_KITTY_IMAGES
+	TAILQ_INIT(&tty->kitty_images);
+#endif
 
 	tty->cstyle = SCREEN_CURSOR_DEFAULT;
 	tty->ccolour = -1;
@@ -354,6 +370,9 @@ tty_start_tty(struct tty *tty)
 	if (tcsetattr(c->fd, TCSANOW, &tio) == 0)
 		tcflush(c->fd, TCOFLUSH);
 
+#ifdef ENABLE_KITTY_IMAGES
+	tty_kitty_images_free(tty);
+#endif
 	if (options_get_number(global_options, "clear-on-attach")) {
 		tty_putcode(tty, TTYC_SMCUP);
 		tty_putcode(tty, TTYC_CLEAR);
@@ -546,6 +565,9 @@ tty_free(struct tty *tty)
 {
 	tty_close(tty);
 
+#ifdef ENABLE_KITTY_IMAGES
+	tty_kitty_images_free(tty);
+#endif
 	free(tty->r.ranges);
 }
 
@@ -661,6 +683,119 @@ tty_add(struct tty *tty, const char *buf, size_t len)
 	    !event_pending(&tty->event_out, EV_WRITE, NULL))
 		event_add(&tty->event_out, NULL);
 }
+
+#ifdef ENABLE_KITTY_IMAGES
+static void
+tty_add_kitty_chunks(struct tty *tty, const char *control,
+    const u_char *payload, size_t payload_len)
+{
+	char	*encoded, *sequence;
+	size_t	 size, used = 0;
+	int	 encoded_len, more, sequence_len;
+
+	if (payload_len == 0) {
+		sequence_len = xasprintf(&sequence,
+		    "\033_G%s,m=0,q=1;\033\\", control);
+		tty_add(tty, sequence, sequence_len);
+		free(sequence);
+		return;
+	}
+
+	size = 4 * ((payload_len + 2) / 3) + 1;
+	encoded = xmalloc(size);
+	encoded_len = b64_ntop(payload, payload_len, encoded, size);
+	if (encoded_len == -1) {
+		free(encoded);
+		return;
+	}
+
+	while (used < (size_t)encoded_len) {
+		size = (size_t)encoded_len - used;
+		if (size > KITTY_MAX_ENCODED_CHUNK)
+			size = KITTY_MAX_ENCODED_CHUNK;
+		more = (used + size < (size_t)encoded_len);
+		if (used == 0)
+			sequence_len = xasprintf(&sequence,
+			    "\033_G%s,m=%d,q=1;%.*s\033\\", control, more,
+			    (int)size, encoded + used);
+		else
+			sequence_len = xasprintf(&sequence,
+			    "\033_Gm=%d,q=1;%.*s\033\\", more, (int)size,
+			    encoded + used);
+		tty_add(tty, sequence, sequence_len);
+		free(sequence);
+		used += size;
+	}
+	free(encoded);
+}
+
+static void
+tty_kitty_images_free(struct tty *tty)
+{
+	struct tty_kitty_image	*image, *image1;
+
+	TAILQ_FOREACH_SAFE(image, &tty->kitty_images, entry, image1) {
+		TAILQ_REMOVE(&tty->kitty_images, image, entry);
+		free(image);
+	}
+}
+
+static void
+tty_kitty_image_remove_uploaded_from_tty(struct tty *tty, uint32_t id)
+{
+	struct tty_kitty_image	*image, *image1;
+
+	TAILQ_FOREACH_SAFE(image, &tty->kitty_images, entry, image1) {
+		if (image->id == id) {
+			TAILQ_REMOVE(&tty->kitty_images, image, entry);
+			free(image);
+		}
+	}
+}
+
+void
+tty_kitty_image_remove_uploaded(struct kitty_image *img)
+{
+	struct client	*c;
+
+	if (img == NULL || img->tty_id == 0)
+		return;
+
+	TAILQ_FOREACH(c, &clients, entry)
+		tty_kitty_image_remove_uploaded_from_tty(&c->tty, img->tty_id);
+}
+
+static int
+tty_kitty_image_uploaded(struct tty *tty, struct kitty_image *img)
+{
+	struct tty_kitty_image	*image;
+
+	TAILQ_FOREACH(image, &tty->kitty_images, entry) {
+		if (image->id == img->tty_id &&
+		    image->generation == img->generation)
+			return (1);
+	}
+	return (0);
+}
+
+static void
+tty_kitty_image_mark_uploaded(struct tty *tty, struct kitty_image *img)
+{
+	struct tty_kitty_image	*image;
+
+	TAILQ_FOREACH(image, &tty->kitty_images, entry) {
+		if (image->id == img->tty_id) {
+			image->generation = img->generation;
+			return;
+		}
+	}
+
+	image = xcalloc(1, sizeof *image);
+	image->id = img->tty_id;
+	image->generation = img->generation;
+	TAILQ_INSERT_TAIL(&tty->kitty_images, image, entry);
+}
+#endif
 
 void
 tty_puts(struct tty *tty, const char *s)
@@ -1540,7 +1675,7 @@ tty_check_overlay_range(struct tty *tty, u_int px, u_int py, u_int nx)
 	return (c->overlay_check(c, c->overlay_data, px, py, nx));
 }
 
-#ifdef ENABLE_SIXEL
+#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
 /* Update context for client. */
 static int
 tty_set_client_cb(struct tty_ctx *ttyctx, struct client *c)
@@ -1564,7 +1699,8 @@ tty_set_client_cb(struct tty_ctx *ttyctx, struct client *c)
 
 	return (1);
 }
-
+#endif
+#ifdef ENABLE_SIXEL
 void
 tty_draw_images(struct client *c, struct window_pane *wp)
 {
@@ -1590,6 +1726,50 @@ tty_draw_images(struct client *c, struct window_pane *wp)
 		ttyctx.set_client_cb = tty_set_client_cb;
 		ttyctx.flags |= TTY_CTX_INVISIBLE_PANES;
 		tty_write_one(tty_cmd_sixelimage, c, &ttyctx);
+	}
+}
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+void
+tty_draw_kitty_images(struct client *c, struct window_pane *wp)
+{
+	struct screen		*s = wp->screen;
+	struct kitty_placement	*pl, *before;
+	struct tty_ctx		 ttyctx;
+	int			 upload;
+
+	TAILQ_FOREACH(pl, &s->kitty_placements, entry) {
+		memset(&ttyctx, 0, sizeof ttyctx);
+
+		upload = 1;
+		TAILQ_FOREACH(before, &s->kitty_placements, entry) {
+			if (before == pl)
+				break;
+			if (before->image == pl->image) {
+				upload = 0;
+				break;
+			}
+		}
+
+		/* Set the client independent properties. */
+		ttyctx.ocx = pl->pane_x;
+		ttyctx.ocy = pl->pane_y;
+
+		ttyctx.orlower = s->rlower;
+		ttyctx.orupper = s->rupper;
+
+		ttyctx.xoff = ttyctx.rxoff = wp->xoff;
+		ttyctx.sx = wp->sx;
+		ttyctx.sy = wp->sy;
+
+		ttyctx.kitty_placement = pl;
+		ttyctx.arg = wp;
+		ttyctx.set_client_cb = tty_set_client_cb;
+		ttyctx.flags |= TTY_CTX_INVISIBLE_PANES;
+		if (upload)
+			ttyctx.flags |= TTY_CTX_KITTY_UPLOAD;
+		tty_write_one(tty_cmd_kittyimage, c, &ttyctx);
 	}
 }
 #endif
@@ -1667,7 +1847,7 @@ tty_write(void (*cmdfn)(struct tty *, const struct tty_ctx *),
 	}
 }
 
-#ifdef ENABLE_SIXEL
+#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
 /* Only write to the incoming tty instead of every client. */
 static void
 tty_write_one(void (*cmdfn)(struct tty *, const struct tty_ctx *),
@@ -2222,6 +2402,120 @@ tty_cmd_sixelimage(struct tty *tty, const struct tty_ctx *ctx)
 
 	if (fallback == 0)
 		sixel_free(new);
+}
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+/*
+ * Emit a Kitty image to the terminal.
+ */
+void
+tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
+{
+	struct kitty_placement	*pl = ctx->kitty_placement;
+	struct kitty_image	*img = pl->image;
+	char			*control = NULL, *place = NULL;
+	char			 placeholder[128];
+	const char		*compression;
+	uint32_t		 image_id;
+	int			 place_len = 0;
+	u_int			 cx = ctx->ocx, cy = ctx->ocy;
+	u_int			 i, j, x, y, rx, ry;
+	int			 fallback = 0, upload_image, uploaded;
+
+	if (~tty->term->flags & TERM_KITTY)
+		fallback = 1;
+	if (tty->xpixel == 0 || tty->ypixel == 0)
+		fallback = 1;
+
+	if (fallback == 1) {
+		/* Render a text placeholder instead. */
+		log_debug("%s: Kitty not supported, rendering fallback",
+		    __func__);
+		snprintf(placeholder, sizeof placeholder,
+		    "[KITTY IMAGE %ux%u]", img->pixel_width, img->pixel_height);
+		tty_region_off(tty);
+		tty_margin_off(tty);
+		tty_cursor(tty, cx, cy);
+		tty->flags |= TTY_NOBLOCK;
+		tty_add(tty, placeholder, strlen(placeholder));
+		tty_invalidate(tty);
+		return;
+	}
+
+	upload_image = (ctx->flags & TTY_CTX_KITTY_UPLOAD);
+	image_id = (img->tty_id != 0 ? img->tty_id : img->id);
+	compression = (img->compression == 1 ? ",o=z" : "");
+
+	uploaded = (img->id != 0 && tty_kitty_image_uploaded(tty, img));
+
+	/*
+	 * Clear stale placements once per image redraw. If the image data is
+	 * already uploaded, keep the data and delete placements only.
+	 */
+	if (img->id != 0 && upload_image) {
+		tty_region_off(tty);
+		tty_margin_off(tty);
+		tty->flags |= TTY_NOBLOCK;
+		if (uploaded) {
+			place_len = xasprintf(&place,
+			    "\033_Ga=d,d=i,i=%u,q=1\033\\", image_id);
+			tty_add(tty, place, place_len);
+			free(place);
+			place = NULL;
+			place_len = 0;
+		} else {
+			xasprintf(&control, "a=t,i=%u,f=%d,s=%u,v=%u%s",
+			    image_id, img->format, img->pixel_width,
+			    img->pixel_height, compression);
+			tty_add_kitty_chunks(tty, control, img->payload,
+			    img->payload_len);
+			if (~tty->flags & TTY_BLOCK)
+				tty_kitty_image_mark_uploaded(tty, img);
+			free(control);
+			control = NULL;
+		}
+		tty_invalidate(tty);
+	}
+
+	if (!tty_clamp_area(tty, ctx, cx, cy, pl->cols, pl->rows,
+	    &i, &j, &x, &y, &rx, &ry))
+		return;
+	log_debug("%s: clamping to %u,%u-%u,%u", __func__, i, j, rx, ry);
+
+	if (img->id == 0)
+		xasprintf(&control,
+		    "a=T,f=%d,s=%u,v=%u%s,x=%u,y=%u,w=%u,h=%u,X=%u,Y=%u,"
+		    "c=%u,r=%u,z=%d,C=1", img->format, img->pixel_width,
+		    img->pixel_height, compression, pl->src_x, pl->src_y,
+		    pl->src_w, pl->src_h, pl->cell_xoff, pl->cell_yoff,
+		    pl->cols, pl->rows, pl->zindex);
+
+	/* Build placement command. */
+	if (img->id != 0)
+		place_len = xasprintf(&place,
+		    "\033_Ga=p,i=%u,p=%u,x=%u,y=%u,w=%u,h=%u,X=%u,Y=%u,"
+		    "c=%u,r=%u,z=%d,C=1,q=1\033\\",
+		    image_id, pl->placement_id, pl->src_x, pl->src_y,
+		    pl->src_w, pl->src_h, pl->cell_xoff, pl->cell_yoff,
+		    pl->cols, pl->rows, pl->zindex);
+
+	/* Move to the correct position and emit. */
+	tty_region_off(tty);
+	tty_margin_off(tty);
+	tty_cursor(tty, x, y);
+
+	tty->flags |= TTY_NOBLOCK;
+	if (control != NULL) {
+		tty_add_kitty_chunks(tty, control, img->payload,
+		    img->payload_len);
+		free(control);
+	}
+	if (place != NULL) {
+		tty_add(tty, place, place_len);
+		free(place);
+	}
+	tty_invalidate(tty);
 }
 #endif
 

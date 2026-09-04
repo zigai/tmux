@@ -1640,6 +1640,11 @@ screen_write_clearline(struct screen_write_ctx *ctx, u_int bg)
 	if (image_check_line(s, s->cy, 1) && ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_check_area(s, 0, s->cy, sx, 1);
+	if (ctx->wp != NULL)
+		ctx->wp->flags |= PANE_REDRAW;
+#endif
 
 	flags = gl->flags & GRID_LINE_OSC133_FLAGS;
 	memcpy(&od, &gl->osc133_data, sizeof od);
@@ -1839,7 +1844,11 @@ screen_write_linefeed(struct screen_write_ctx *ctx, int wrapped, u_int bg)
 	if (redraw && ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
-
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_scroll_up(s, 1);
+	if (ctx->wp != NULL)
+		ctx->wp->flags |= PANE_REDRAW;
+#endif
 	grid_view_scroll_region_up(gd, s->rupper, s->rlower, bg);
 	screen_write_collect_scroll(ctx, bg);
 	ctx->scrolled++;
@@ -1865,6 +1874,11 @@ screen_write_scrollup(struct screen_write_ctx *ctx, u_int lines, u_int bg)
 
 #ifdef ENABLE_SIXEL
 	if (image_scroll_up(s, lines) && ctx->wp != NULL)
+		ctx->wp->flags |= PANE_REDRAW;
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_scroll_up(s, lines);
+	if (ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
 
@@ -1894,6 +1908,11 @@ screen_write_scrolldown(struct screen_write_ctx *ctx, u_int lines, u_int bg)
 
 #ifdef ENABLE_SIXEL
 	if (image_free_all(s) && ctx->wp != NULL)
+		ctx->wp->flags |= PANE_REDRAW;
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_free_all(s);
+	if (ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
 
@@ -2089,6 +2108,11 @@ screen_write_clearscreen(struct screen_write_ctx *ctx, u_int bg)
 
 #ifdef ENABLE_SIXEL
 	if (image_free_all(s) && ctx->wp != NULL)
+		ctx->wp->flags |= PANE_REDRAW;
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_free_all(s);
+	if (ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
 
@@ -2594,6 +2618,11 @@ screen_write_collect_end(struct screen_write_ctx *ctx)
 
 #ifdef ENABLE_SIXEL
 	if (image_check_area(s, s->cx, s->cy, ci->used, 1) && ctx->wp != NULL)
+		ctx->wp->flags |= PANE_REDRAW;
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+	kitty_image_check_area(s, s->cx, s->cy, ci->used, 1);
+	if (ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
 

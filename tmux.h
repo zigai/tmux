@@ -79,6 +79,11 @@ struct session;
 struct sixel_image;
 #endif
 
+#ifdef ENABLE_KITTY_IMAGES
+struct kitty_image;
+struct kitty_placement;
+#endif
+
 struct tty_ctx;
 struct tty_code;
 struct tty_key;
@@ -1042,6 +1047,110 @@ struct image {
 TAILQ_HEAD(images, image);
 #endif
 
+#ifdef ENABLE_KITTY_IMAGES
+/* Kitty image format. */
+enum kitty_image_format {
+	KITTY_FORMAT_PNG = 100,
+	KITTY_FORMAT_RGB = 24,
+	KITTY_FORMAT_RGBA = 32,
+};
+
+/* Kitty image payload (one per transmitted image). */
+struct kitty_image {
+	uint32_t		 id;		/* i */
+	uint32_t		 number;	/* I */
+	uint32_t		 tty_id;	/* terminal-side i */
+	u_int			 generation;
+
+	enum kitty_image_format	 format;	/* f */
+	int			 compression;	/* o: 0=none, 1=zlib */
+
+	u_int			 pixel_width;	/* s */
+	u_int			 pixel_height;	/* v */
+
+	u_char			*payload;
+	size_t			 payload_len;
+
+	u_int			 refcount;
+	TAILQ_ENTRY(kitty_image) entry;
+};
+TAILQ_HEAD(kitty_images, kitty_image);
+
+/* Kitty image data uploaded to a client terminal. */
+struct tty_kitty_image {
+	uint32_t			id;
+	u_int				generation;
+
+	TAILQ_ENTRY(tty_kitty_image)	entry;
+};
+TAILQ_HEAD(tty_kitty_images, tty_kitty_image);
+
+/* Kitty placement (one image displayed at one location). */
+struct kitty_placement {
+	uint32_t			 placement_id;	/* p */
+	struct kitty_image		*image;
+
+	int				 pane_x;
+	int				 pane_y;
+
+	u_int				 cols;		/* c */
+	u_int				 rows;		/* r */
+
+	u_int				 src_x;		/* x */
+	u_int				 src_y;		/* y */
+	u_int				 src_w;		/* w */
+	u_int				 src_h;		/* h */
+
+	u_int				 cell_xoff;	/* X */
+	u_int				 cell_yoff;	/* Y */
+
+	int32_t				 zindex;	/* z */
+	int				 cursor_no_move;	/* C */
+	int				 virtual;		/* U */
+
+	int				 in_alternate_screen;
+	TAILQ_ENTRY(kitty_placement)	 entry;
+};
+TAILQ_HEAD(kitty_placements, kitty_placement);
+
+/* Kitty pending chunked upload. */
+struct kitty_pending {
+	uint32_t		 id;
+	uint32_t		 number;
+	int			 action;
+	uint32_t		 placement_id;
+	int			 format;
+	int			 compression;
+	int			 transmission;
+	u_int			 pixel_width;
+	u_int			 pixel_height;
+	size_t			 file_size;
+	off_t			 file_offset;
+	u_int			 cols;
+	u_int			 rows;
+	u_int			 src_x;
+	u_int			 src_y;
+	u_int			 src_w;
+	u_int			 src_h;
+	u_int			 cell_xoff;
+	u_int			 cell_yoff;
+	uint32_t		 parent_image_id;
+	uint32_t		 parent_placement_id;
+	int32_t			 parent_offset_x;
+	int32_t			 parent_offset_y;
+	int			 relative;
+	int32_t			 zindex;
+	int			 cursor_no_move;
+	int			 virtual;
+	int			 quiet;
+	int			 delete_action;
+	u_char			*payload;
+	size_t			 payload_len;
+	size_t			 payload_space;
+	int			 active;
+};
+#endif
+
 /* Cursor style. */
 enum screen_cursor_style {
 	SCREEN_CURSOR_DEFAULT,
@@ -1101,6 +1210,14 @@ struct screen {
 #ifdef ENABLE_SIXEL
 	struct images			 images;
 	struct images			 saved_images;
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+	struct kitty_images		 kitty_images;
+	struct kitty_placements		 kitty_placements;
+	struct kitty_images		 saved_kitty_images;
+	struct kitty_placements		 saved_kitty_placements;
+	struct kitty_pending		 kitty_pending;
 #endif
 
 	struct screen_write_cline	*write_list;
@@ -1736,6 +1853,7 @@ struct tty_term {
 #define TERM_VT100LIKE 0x20
 #define TERM_SIXEL 0x40
 #define TERM_INVALIDMS 0x80
+#define TERM_KITTY 0x100
 	int		 flags;
 
 	LIST_ENTRY(tty_term) entry;
@@ -1822,6 +1940,10 @@ struct tty {
 
 	struct tty_term	*term;
 
+#ifdef ENABLE_KITTY_IMAGES
+	struct tty_kitty_images	 kitty_images;
+#endif
+
 	u_int		 mouse_last_x;
 	u_int		 mouse_last_y;
 	u_int		 mouse_last_b;
@@ -1859,6 +1981,7 @@ struct tty_ctx {
 #define TTY_CTX_OVERLAY_SYNC 0x10
 #define TTY_CTX_CELL_INVALIDATE 0x20
 #define TTY_CTX_PANE_OBSCURED 0x40
+#define TTY_CTX_KITTY_UPLOAD 0x80
 
 	union {
 		u_int			 n;
@@ -1876,6 +1999,9 @@ struct tty_ctx {
 
 #ifdef ENABLE_SIXEL
 		struct image		*image;
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+		struct kitty_placement	*kitty_placement;
 #endif
 	};
 
@@ -2964,6 +3090,7 @@ const struct grid_cell *tty_check_codeset(struct tty *,
 	    const struct grid_cell *);
 struct visible_ranges *tty_check_overlay_range(struct tty *, u_int, u_int,
 	    u_int);
+
 void	tty_sync_start(struct tty *);
 void	tty_sync_end(struct tty *);
 int	tty_open(struct tty *, char **);
@@ -2997,6 +3124,11 @@ void	tty_cmd_rawstring(struct tty *, const struct tty_ctx *);
 #ifdef ENABLE_SIXEL
 void	tty_cmd_sixelimage(struct tty *, const struct tty_ctx *);
 void	tty_draw_images(struct client *, struct window_pane *);
+#endif
+#ifdef ENABLE_KITTY_IMAGES
+void	tty_cmd_kittyimage(struct tty *, const struct tty_ctx *);
+void	tty_draw_kitty_images(struct client *, struct window_pane *);
+void	tty_kitty_image_remove_uploaded(struct kitty_image *);
 #endif
 void	tty_cmd_syncstart(struct tty *, const struct tty_ctx *);
 void	tty_default_colours(struct grid_cell *, struct window_pane *, u_int *);
@@ -4248,6 +4380,20 @@ struct sixel_image *sixel_scale(struct sixel_image *, u_int, u_int, u_int,
 char		*sixel_print(struct sixel_image *, struct sixel_image *,
 		     size_t *);
 struct screen	*sixel_to_screen(struct sixel_image *);
+#endif
+
+#ifdef ENABLE_KITTY_IMAGES
+/* image-kitty.c */
+void		 kitty_image_init(struct screen *);
+void		 kitty_image_free(struct screen *);
+int		 kitty_image_parse(struct screen *, const char *, size_t,
+    char **);
+void		 kitty_image_free_lists(struct kitty_images *,
+    struct kitty_placements *);
+void		 kitty_image_free_all(struct screen *);
+void		 kitty_image_scroll_up(struct screen *, u_int);
+void		 kitty_image_check_area(struct screen *, u_int, u_int, u_int,
+    u_int);
 #endif
 
 /* server-acl.c */

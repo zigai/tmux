@@ -540,6 +540,16 @@ if test "x$enable_sixel" = xyes; then
 fi
 AM_CONDITIONAL(ENABLE_SIXEL, [test "x$enable_sixel" = xyes])
 
+# Enable Kitty graphics support.
+AC_ARG_ENABLE(
+	kitty-images,
+	AS_HELP_STRING(--enable-kitty-images, enable Kitty graphics images)
+)
+if test "x$enable_kitty_images" = xyes; then
+	AC_DEFINE(ENABLE_KITTY_IMAGES)
+fi
+AM_CONDITIONAL(ENABLE_KITTY_IMAGES, [test "x$enable_kitty_images" = xyes])
+
 # Check for b64_ntop. If we have b64_ntop, we assume b64_pton as well.
 AC_MSG_CHECKING(for b64_ntop)
 AC_LINK_IFELSE([AC_LANG_PROGRAM(
@@ -1141,6 +1151,11 @@ if test "x$enable_sixel" = xyes; then
 	AC_MSG_NOTICE([SIXEL: on])
 else
 	AC_MSG_NOTICE([SIXEL: off])
+fi
+if test "x$enable_kitty_images" = xyes; then
+	AC_MSG_NOTICE([KITTY: on])
+else
+	AC_MSG_NOTICE([KITTY: off])
 fi
 if test "x$enable_debug" = xyes; then
 	AC_MSG_NOTICE([debug: on])
