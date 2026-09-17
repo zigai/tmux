@@ -67,6 +67,7 @@ struct popup_data {
 	u_int			  dx;
 	u_int			  dy;
 
+	int			  job_captured;
 	u_int			  lx;
 	u_int			  ly;
 	u_int			  lb;
@@ -394,6 +395,44 @@ popup_key_cb(struct client *c, void *data, struct key_event *event)
 			popup_handle_drag(c, pd, m);
 			goto out;
 		}
+		if (pd->job != NULL && pd->job_captured) {
+			/* Forward captured pointer events even outside popup. */
+			if (pd->border_lines == BOX_LINES_NONE) {
+				if (m->x < pd->px)
+					px = 0;
+				else if (m->x >= pd->px + pd->sx)
+					px = pd->sx - 1;
+				else
+					px = m->x - pd->px;
+
+				if (m->y < pd->py)
+					py = 0;
+				else if (m->y >= pd->py + pd->sy)
+					py = pd->sy - 1;
+				else
+					py = m->y - pd->py;
+			} else {
+				if (m->x <= pd->px)
+					px = 0;
+				else if (m->x >= pd->px + pd->sx - 1)
+					px = pd->sx > 2 ? pd->sx - 3 : 0;
+				else
+					px = m->x - pd->px - 1;
+
+				if (m->y <= pd->py)
+					py = 0;
+				else if (m->y >= pd->py + pd->sy - 1)
+					py = pd->sy > 2 ? pd->sy - 3 : 0;
+				else
+					py = m->y - pd->py - 1;
+			}
+			if (m->sgr_type == 'm' || MOUSE_RELEASE(m->b))
+				pd->job_captured = 0;
+			if (!input_key_get_mouse(&pd->s, m, px, py, &buf, &len))
+				return (0);
+			bufferevent_write(job_get_event(pd->job), buf, len);
+			return (0);
+		}
 		if (m->x < pd->px ||
 		    m->x > pd->px + pd->sx - 1 ||
 		    m->y < pd->py ||
@@ -434,9 +473,20 @@ popup_key_cb(struct client *c, void *data, struct key_event *event)
 	if (pd->job == NULL && (pd->flags & POPUP_CLOSEANYKEY) &&
 	    !KEYC_IS_MOUSE(event->key) && !KEYC_IS_PASTE(event->key))
 		return (1);
+	if (event->key == KEYC_FOCUS_OUT && pd->job != NULL &&
+	    pd->job_captured) {
+		pd->job_captured = 0;
+		bufferevent_write(job_get_event(pd->job), "\033[<0;1;1m", 9);
+	}
 	if (pd->job != NULL) {
 		if (KEYC_IS_MOUSE(event->key)) {
 			/* Must be inside, checked already. */
+			if (border == NONE && !MOUSE_WHEEL(m->b) &&
+			    m->sgr_type != 'm' && !MOUSE_RELEASE(m->b))
+				pd->job_captured = 1;
+			else if (m->sgr_type == 'm' || MOUSE_RELEASE(m->b))
+				pd->job_captured = 0;
+
 			if (pd->border_lines == BOX_LINES_NONE) {
 				px = m->x - pd->px;
 				py = m->y - pd->py;
