@@ -899,6 +899,7 @@ struct osc133_data {
 	u_short			 out_start_col;
 	u_short			 out_end_col;
 	u_char			 exit_status;
+	u_char			 status_known;
 };
 
 /* Grid line. */

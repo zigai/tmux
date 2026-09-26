@@ -2458,6 +2458,14 @@ backward becomes forward).
 .Xc
 Select the current line.
 .It Xo
+.Ic select\-command
+.Xc
+Select the command text of the OSC 133 block at or before the copy-mode cursor.
+.It Xo
+.Ic select\-output
+.Xc
+Select the output of the OSC 133 block at or before the copy-mode cursor.
+.It Xo
 .Ic select\-word
 .Xc
 Select the current word.
@@ -2790,11 +2798,12 @@ The pane must not already be floating or hidden, and the window must not
 be zoomed.
 .Tg capturep
 .It Xo Ic capture\-pane
-.Op Fl aeFHILpPRqCJMN
+.Op Fl aeFHILOpPRqCJMN
 .Op Fl b Ar buffer\-name
 .Op Fl E Ar end\-line
 .Op Fl S Ar start\-line
 .Op Fl t Ar target\-pane
+.Op Ar output\-number
 .Xc
 .D1 Pq alias: Ic capturep
 Capture the contents of a pane.
@@ -2812,6 +2821,15 @@ is given.
 Similarly, if the pane is in a mode,
 .Fl M
 uses the screen for the mode.
+With
+.Fl O ,
+capture the output of the specified OSC 133 command block, where zero is the
+most recent block and is the default.
+Only completed blocks can be captured unless
+.Fl a
+is given; then running and truncated blocks are also accepted and the captured
+text is prefixed with their state.
+Blocks with missing or inconsistent boundaries cannot be captured.
 If
 .Fl e
 is given, the output includes escape sequences for text and background
@@ -7331,6 +7349,8 @@ The following variables are available, where appropriate:
 .It Li "command_list_usage" Ta "" Ta "Command usage if listing commands"
 .It Li "config_files" Ta "" Ta "List of configuration files loaded"
 .It Li "cursor_blinking" Ta "" Ta "1 if the cursor is blinking"
+.It Li "copy_command_state" Ta "" Ta "OSC 133 block state at or above the copy-mode cursor"
+.It Li "copy_command_status" Ta "" Ta "OSC 133 exit status when the block is completed"
 .It Li "copy_cursor_hyperlink" Ta "" Ta "Hyperlink under cursor in copy mode"
 .It Li "copy_cursor_line" Ta "" Ta "Line the cursor is on in copy mode"
 .It Li "copy_cursor_word" Ta "" Ta "Word under cursor in copy mode"

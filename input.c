@@ -3194,13 +3194,14 @@ input_osc_112(struct input_ctx *ictx, const char *p)
 
 /* Parse the OSC 133 D exit status. */
 static int
-input_osc_133_exit_status(const char *p)
+input_osc_133_exit_status(const char *p, int *known)
 {
 	const char	*end;
 	char		*copy;
 	const char	*errstr;
 	long long	 status;
 
+	*known = 0;
 	if (p[1] != ';' || p[2] == '\0' || strchr(p + 2, '=') == p + 2)
 		return (0);
 	end = strchr(p + 2, ';');
@@ -3218,6 +3219,7 @@ input_osc_133_exit_status(const char *p)
 	free(copy);
 	if (errstr != NULL)
 		return (255);
+	*known = 1;
 	return (status);
 }
 
@@ -3271,7 +3273,7 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 	u_int			 line = s->cy + gd->hsize;
 	struct grid_line	*gl = NULL;
 	const char		*cp;
-	int			 status;
+	int			 status, known;
 
 	if (line < gd->hsize + gd->sy)
 		gl = grid_get_line(gd, line);
@@ -3280,7 +3282,9 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 	case 'A':
 	case 'N':
 		if (gl != NULL) {
-			memset(&gl->osc133_data, 0, sizeof gl->osc133_data);
+			if (!(gl->flags & GRID_LINE_END_OUTPUT))
+				memset(&gl->osc133_data, 0,
+				    sizeof gl->osc133_data);
 			gl->osc133_data.prompt_col = s->cx;
 			gl->flags |= GRID_LINE_START_PROMPT;
 		}
@@ -3320,7 +3324,7 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 		}
 		break;
 	case 'D':
-		status = input_osc_133_exit_status(p);
+		status = input_osc_133_exit_status(p, &known);
 		if (wp != NULL) {
 			wp->cmd_end_time = time(NULL);
 			wp->flags &= ~PANE_CMDRUNNING;
@@ -3331,6 +3335,7 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 			gl->flags |= GRID_LINE_END_OUTPUT;
 			gl->osc133_data.out_end_col = s->cx;
 			gl->osc133_data.exit_status = status;
+			gl->osc133_data.status_known = known;
 		}
 		break;
 	}
