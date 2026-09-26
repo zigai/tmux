@@ -842,6 +842,13 @@ const struct options_table_entry options_table[] = {
 	  .text = "Whether moving the mouse into a pane selects it."
 	},
 
+	{ .name = "mouse-motion",
+	  .type = OPTIONS_TABLE_FLAG,
+	  .scope = OPTIONS_TABLE_SESSION,
+	  .default_num = 0,
+	  .text = "Whether mouse movement is reported without a button pressed."
+	},
+
 	{ .name = "history-limit",
 	  .type = OPTIONS_TABLE_NUMBER,
 	  .scope = OPTIONS_TABLE_SESSION,
@@ -2013,6 +2020,8 @@ const struct options_table_entry options_table[] = {
 	OPTIONS_TABLE_PANE_HOOK("pane-focus-out", "",
 	    "Run when the focus exits a pane, if the focus-events option is "
 	    "on."),
+	OPTIONS_TABLE_PANE_HOOK("pane-mouse-moved", "",
+	"Run when the mouse moves to a different pane cell or viewport."),
 	OPTIONS_TABLE_PANE_HOOK("pane-mode-changed", "",
 	    "Run when a pane changes mode."),
 	OPTIONS_TABLE_PANE_HOOK("pane-mode-entered", "",
