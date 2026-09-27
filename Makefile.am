@@ -182,6 +182,7 @@ dist_tmux_SOURCES = \
 	layout.c \
 	log.c \
 	menu.c \
+	mouse-motion.c \
 	mode-tree.c \
 	monitor.c \
 	names.c \

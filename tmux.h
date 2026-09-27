@@ -64,6 +64,7 @@ struct json_node;
 struct menu_data;
 struct mode_tree_data;
 struct mouse_event;
+struct mouse_motion_state;
 struct options;
 struct options_array_item;
 struct options_entry;
@@ -2383,6 +2384,7 @@ struct client {
 	struct event		 exit_timer;
 	u_int			 click_button;
 	struct mouse_event	 click_event;
+	struct mouse_motion_state	 *mouse_motion;
 
 	struct status_line	 status;
 	struct event		 cycle_timer;
@@ -2431,6 +2433,7 @@ struct client {
 #define CLIENT_WRITE_ACK 0x4000000000ULL
 #define CLIENT_NO_DETACH_ON_DESTROY 0x8000000000ULL
 #define CLIENT_CONTROL_DISCARD 0x1000000000ULL
+#define CLIENT_MOUSE_MOTION 0x10000000000ULL
 #define CLIENT_ALLREDRAWFLAGS		\
 	(CLIENT_REDRAWWINDOW|		\
 	 CLIENT_REDRAWSTATUS|		\
@@ -4148,6 +4151,10 @@ int		 window_copy_get_current_offset(struct window_pane *, u_int *,
 		     u_int *);
 char		*window_copy_get_hyperlink(struct window_pane *, u_int, u_int);
 void		 window_copy_set_line_numbers(struct window_pane *, int);
+
+void		 mouse_motion_fire(struct client *, struct window_pane *, u_int,
+    u_int);
+void		 mouse_motion_free(struct client *);
 
 /* window-customize.c */
 extern const struct window_mode window_customize_mode;

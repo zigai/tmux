@@ -586,6 +586,7 @@ server_client_free(__unused int fd, __unused short events, void *arg)
 	cmdq_free(c->queue);
 
 	if (c->references == 0) {
+		mouse_motion_free(c);
 		free((void *)c->name);
 		free((void *)c->user);
 		free(c);
@@ -1170,8 +1171,13 @@ have_event:
 	}
 
 	/* Convert to a key binding. */
+	if (type == KEYC_TYPE_MOUSEMOVE && loc != KEYC_MOUSE_LOCATION_PANE &&
+	    c->mouse_motion != NULL)
+		mouse_motion_free(c);
 	if (type == KEYC_TYPE_MOUSEMOVE && loc == KEYC_MOUSE_LOCATION_PANE) {
 		key = KEYC_MOUSEMOVE_PANE;
+		if (c->flags & CLIENT_MOUSE_MOTION)
+			mouse_motion_fire(c, wp, px - wp->xoff, py - wp->yoff);
 		if (wp != NULL &&
 		    wp != w->active &&
 		    options_get_number(s->options, "focus-follows-mouse")) {
@@ -2275,6 +2281,13 @@ server_client_reset_state(struct client *c)
 	 * movement events.
 	 */
 	if (options_get_number(oo, "mouse")) {
+		if (options_get_number(oo, "mouse-motion"))
+			c->flags |= CLIENT_MOUSE_MOTION;
+		else
+			c->flags &= ~CLIENT_MOUSE_MOTION;
+		if (c->mouse_motion != NULL &&
+		    !(c->flags & CLIENT_MOUSE_MOTION))
+			mouse_motion_free(c);
 		if (c->overlay_draw == NULL && w->menu == NULL) {
 			mode &= ~ALL_MOUSE_MODES;
 			TAILQ_FOREACH(loop, &w->panes, entry) {
@@ -2283,11 +2296,16 @@ server_client_reset_state(struct client *c)
 			}
 		}
 		if (options_get_number(oo, "focus-follows-mouse") ||
+		    (c->flags & CLIENT_MOUSE_MOTION) ||
 		    w->sb == PANE_SCROLLBARS_MODAL ||
 		    w->sb == PANE_SCROLLBARS_AUTOHIDE)
 			mode |= MODE_MOUSE_ALL;
 		else if (~mode & MODE_MOUSE_ALL)
 			mode |= MODE_MOUSE_BUTTON;
+	} else {
+		c->flags &= ~CLIENT_MOUSE_MOTION;
+		if (c->mouse_motion != NULL)
+			mouse_motion_free(c);
 	}
 
 	/* Clear bracketed paste mode if at the prompt. */

@@ -4969,6 +4969,16 @@ option.
 When enabled and
 .Ic mouse
 is on, moving the mouse into a pane selects it.
+.It Xo Ic mouse\-motion
+.Op Ic on | off
+.Xc
+When enabled and
+.Ic mouse
+is on, request all mouse movement from the terminal, including movement
+without a button pressed.
+Movement may be bound with the
+.Ql MouseMove
+keys.
 .It Xo Ic get\-clipboard
 .Op Ic both | request | buffer | off
 .Xc
@@ -6528,6 +6538,20 @@ option is on.
 Run when the focus exits a pane, if the
 .Ic focus\-events
 option is on.
+.It pane\-mouse\-moved
+Run when the mouse moves to a different cell or viewport in a pane while
+.Ic mouse\-motion
+is on.
+The event has
+.Ql client ,
+.Ql pane ,
+.Ql x ,
+.Ql y ,
+.Ql scroll_position
+and
+.Ql history_generation
+values; coordinates are relative to the pane.
+The scroll position is zero outside copy mode.
 .It pane\-mode\-changed
 Run when a pane changes mode.
 .It pane\-mode\-entered
@@ -6706,6 +6730,7 @@ section for information on control ranges.
 The following mouse events are available:
 .Bl -column "MouseDown1" "MouseDrag1" "WheelDown" -offset indent
 .It Li "WheelUp" Ta "WheelDown" Ta ""
+.It Li "MouseMove" Ta "" Ta ""
 .It Li "MouseDown1" Ta "MouseUp1" Ta "MouseDrag1" Ta "MouseDragEnd1"
 .It Li "MouseDown2" Ta "MouseUp2" Ta "MouseDrag2" Ta "MouseDragEnd2"
 .It Li "MouseDown3" Ta "MouseUp3" Ta "MouseDrag3" Ta "MouseDragEnd3"
