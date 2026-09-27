@@ -34,10 +34,10 @@ const struct cmd_entry cmd_refresh_client_entry = {
 	.name = "refresh-client",
 	.alias = "refresh",
 
-	.args = { "A:B:cC:Df:r:F:lLRSt:U", 0, 1, NULL },
+	.args = { "A:B:cC:Df:E:r:F:lLRSt:U", 0, 1, NULL },
 	.usage = "[-cDlLRSU] [-A pane:state] [-B name:what:format] "
-		 "[-C XxY] [-f flags] [-r pane:report] " CMD_TARGET_CLIENT_USAGE
-		 " [adjustment]",
+		"[-C XxY] [-E client-lifecycle] [-f flags] [-r pane:report] " CMD_TARGET_CLIENT_USAGE
+		" [adjustment]",
 
 	.flags = CMD_AFTERHOOK|CMD_CLIENT_TFLAG,
 	.exec = cmd_refresh_client_exec
@@ -262,6 +262,28 @@ cmd_refresh_client_exec(struct cmd *self, struct cmdq_item *item)
 		av = args_first_value(args, 'B');
 		while (av != NULL) {
 			cmd_refresh_client_update_subscription(tc, av->string);
+			av = args_next_value(av);
+		}
+		return (CMD_RETURN_NORMAL);
+	}
+	if (args_has(args, 'E')) {
+		if (~tc->flags & CLIENT_CONTROL)
+			goto not_control_client;
+		av = args_first_value(args, 'E');
+		while (av != NULL) {
+			if (strcmp(av->string, "client-lifecycle") != 0 &&
+			    strcmp(av->string, "!client-lifecycle") != 0) {
+				cmdq_error(item,
+				    "unknown event subscription: %s",
+				    av->string);
+				return (CMD_RETURN_ERROR);
+			}
+			av = args_next_value(av);
+		}
+		av = args_first_value(args, 'E');
+		while (av != NULL) {
+			control_set_client_lifecycle(tc,
+			    av->string[0] != '!');
 			av = args_next_value(av);
 		}
 		return (CMD_RETURN_NORMAL);
