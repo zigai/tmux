@@ -277,10 +277,17 @@ server_client_create(int fd)
 {
 	struct client	*c;
 	u_int		 i;
+	u_char			 token[6];
+	static const char	 hex[] = "0123456789abcdef";
 
 	setblocking(fd, 0);
 
 	c = xcalloc(1, sizeof *c);
+	arc4random_buf(token, sizeof token);
+	for (i = 0; i < sizeof token; i++) {
+		c->routing_token[i * 2] = hex[token[i] >> 4];
+		c->routing_token[i * 2 + 1] = hex[token[i] & 0xf];
+	}
 	c->references = 1;
 	c->peer = proc_add_peer(server_proc, fd, server_client_dispatch, c);
 
