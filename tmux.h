@@ -4205,6 +4205,9 @@ void	control_add_sub(struct client *, const char *, enum monitor_type, int,
 	    const char *);
 void	control_remove_sub(struct client *, const char *);
 
+void	control_set_client_lifecycle(struct client *, int);
+int	control_client_lifecycle_enabled(struct client *);
+
 /* control-notify.c */
 void	control_build_events(void);
 

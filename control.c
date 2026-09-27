@@ -114,6 +114,7 @@ struct control_state {
 	struct bufferevent		*write_event;
 
 	struct monitor_set		*subs;
+	int				 client_lifecycle;
 
 	/*
 	 * Depth of open %begin/%end guard blocks and notifications deferred
@@ -1114,4 +1115,16 @@ control_remove_sub(struct client *c, const char *name)
 	struct control_state	*cs = c->control_state;
 
 	monitor_remove(cs->subs, name);
+}
+
+void
+control_set_client_lifecycle(struct client *c, int enabled)
+{
+	c->control_state->client_lifecycle = enabled;
+}
+
+int
+control_client_lifecycle_enabled(struct client *c)
+{
+	return (c->control_state->client_lifecycle);
 }

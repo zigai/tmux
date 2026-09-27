@@ -246,6 +246,24 @@ control_client_detached_cb(__unused const char *name, struct event_payload *ep,
 	}
 }
 
+static void
+control_client_lifecycle_cb(const char *name, struct event_payload *ep,
+    __unused void *sink_data)
+{
+	struct client	*cc = event_payload_get_client(ep, "client");
+	struct client	*c;
+
+	if (cc == NULL || cc->name == NULL)
+		return;
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (!CONTROL_SHOULD_NOTIFY_CLIENT(c) ||
+		    !control_client_lifecycle_enabled(c))
+			continue;
+		control_notify_write(c, "%%%s %s %ld", name, cc->name,
+		    (long)cc->pid);
+	}
+}
+
 /* Notify control clients that a session was renamed. */
 static void
 control_session_renamed_cb(__unused const char *name, struct event_payload *ep,
@@ -367,6 +385,8 @@ control_build_events(void)
 		{ "window-renamed", control_window_renamed_cb },
 		{ "client-session-changed", control_client_session_changed_cb },
 		{ "client-detached", control_client_detached_cb },
+		{ "client-created", control_client_lifecycle_cb },
+		{ "client-closed", control_client_lifecycle_cb },
 		{ "session-renamed", control_session_renamed_cb },
 		{ "session-created", control_session_created_cb },
 		{ "session-closed", control_session_closed_cb },
