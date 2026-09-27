@@ -4,6 +4,10 @@ CHANGES FROM 3.7c TO 3.8
   of focus-follows-mouse, with a pane-mouse-moved hook for changed cells and
   viewports.
 
+* Add OSC 133 command output and command selection in copy mode, capture-pane
+  -O for completed command output, and copy-mode block state and exit status
+  formats. capture-pane -aO also accepts running and truncated output.
+
 * Many improvements to floating panes:
 
   - new-pane and split-window can now set the title with -T and border lines

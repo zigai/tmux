@@ -25,6 +25,7 @@
 #include <time.h>
 
 #include "tmux.h"
+#include "grid-prompts.h"
 
 struct window_copy_mode_data;
 
@@ -1102,6 +1103,37 @@ window_copy_search_match_cb(struct format_tree *ft)
 	return (window_copy_match_at_cursor(data));
 }
 
+static void *
+window_copy_command_state_cb(struct format_tree *ft)
+{
+	struct window_pane		*wp = format_get_pane(ft);
+	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
+	struct window_copy_mode_data	*data = wme->data;
+	struct grid_prompt_block	 block;
+
+	if (!grid_prompt_find(data->backing->grid,
+	    screen_hsize(data->backing) - data->oy + data->cy, 0, &block))
+		return (NULL);
+	return (xstrdup(grid_prompt_state_name(block.state)));
+}
+
+static void *
+window_copy_command_status_cb(struct format_tree *ft)
+{
+	struct window_pane		*wp = format_get_pane(ft);
+	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
+	struct window_copy_mode_data	*data = wme->data;
+	struct grid_prompt_block	 block;
+	char				*status;
+
+	if (!grid_prompt_find(data->backing->grid,
+	    screen_hsize(data->backing) - data->oy + data->cy, 0, &block) ||
+	    block.state != GRID_PROMPT_COMPLETED)
+		return (NULL);
+	xasprintf(&status, "%d", block.status);
+	return (status);
+}
+
 static void
 window_copy_formats(struct window_mode_entry *wme, struct format_tree *ft)
 {
@@ -1176,6 +1208,8 @@ window_copy_formats(struct window_mode_entry *wme, struct format_tree *ft)
 	format_add_cb(ft, "copy_cursor_line", window_copy_cursor_line_cb);
 	format_add_cb(ft, "copy_cursor_hyperlink",
 	    window_copy_cursor_hyperlink_cb);
+	format_add_cb(ft, "copy_command_state", window_copy_command_state_cb);
+	format_add_cb(ft, "copy_command_status", window_copy_command_status_cb);
 }
 
 static struct screen *
@@ -2853,6 +2887,77 @@ window_copy_cmd_previous_prompt(struct window_copy_cmd_state *cs)
 }
 
 static enum window_copy_cmd_action
+window_copy_cmd_select_prompt(struct window_copy_cmd_state *cs, int command)
+{
+	struct window_mode_entry	*wme = cs->wme;
+	struct window_copy_mode_data	*data = wme->data;
+	struct grid			*gd = data->backing->grid;
+	struct grid_prompt_block	 block;
+	u_int				 line, start_y, start_x, end_y, end_x;
+
+	line = gd->hsize - data->oy + data->cy;
+	if (!grid_prompt_find(gd, line, 0, &block))
+		return (WINDOW_COPY_CMD_NOTHING);
+	if (block.state == GRID_PROMPT_RUNNING) {
+		block.end_y = gd->hsize + data->backing->cy;
+		block.end_x = data->backing->cx;
+	}
+	if (command) {
+		if (!block.command_present)
+			return (WINDOW_COPY_CMD_NOTHING);
+		start_y = block.command_y;
+		start_x = block.command_x;
+		end_y = block.output_y;
+		end_x = block.output_x;
+	} else {
+		start_y = block.output_y;
+		start_x = block.output_x;
+		end_y = block.end_y;
+		end_x = block.end_x;
+	}
+	if (end_y < start_y || (end_y == start_y && end_x <= start_x))
+		return (WINDOW_COPY_CMD_NOTHING);
+	if (options_get_number(wme->wp->window->options, "mode-keys") ==
+	    MODEKEY_VI) {
+		if (end_x != 0)
+			end_x--;
+		else {
+			end_y--;
+			end_x = grid_line_limit(gd, end_y);
+		}
+	}
+	window_copy_clear_selection(wme);
+	data->rectflag = 0;
+	data->selx = start_x;
+	data->sely = start_y;
+	data->endselx = end_x;
+	data->endsely = end_y;
+	data->cursordrag = CURSORDRAG_NONE;
+	data->cx = start_x;
+	if (start_y <= gd->hsize) {
+		data->oy = gd->hsize - start_y;
+		data->cy = 0;
+	} else {
+		data->oy = 0;
+		data->cy = start_y - gd->hsize;
+	}
+	window_copy_set_selection(wme, 0, 1);
+	return (WINDOW_COPY_CMD_REDRAW);
+}
+
+static enum window_copy_cmd_action
+window_copy_cmd_select_output(struct window_copy_cmd_state *cs)
+{
+	return (window_copy_cmd_select_prompt(cs, 0));
+}
+
+static enum window_copy_cmd_action
+window_copy_cmd_select_command(struct window_copy_cmd_state *cs)
+{
+	return (window_copy_cmd_select_prompt(cs, 1));
+}
+
+static enum window_copy_cmd_action
 window_copy_cmd_search_backward(struct window_copy_cmd_state *cs)
 {
 	struct window_mode_entry	*wme = cs->wme;
@@ -3577,6 +3682,18 @@ static const struct {
 	  .flags = WINDOW_COPY_CMD_FLAG_READONLY,
 	  .clear = WINDOW_COPY_CMD_CLEAR_ALWAYS,
 	  .f = window_copy_cmd_previous_prompt
+	},
+	{ .command = "select-command",
+	  .args = { "", 0, 0, NULL },
+	  .flags = WINDOW_COPY_CMD_FLAG_READONLY,
+	  .clear = WINDOW_COPY_CMD_CLEAR_ALWAYS,
+	  .f = window_copy_cmd_select_command
+	},
+	{ .command = "select-output",
+	  .args = { "", 0, 0, NULL },
+	  .flags = WINDOW_COPY_CMD_FLAG_READONLY,
+	  .clear = WINDOW_COPY_CMD_CLEAR_ALWAYS,
+	  .f = window_copy_cmd_select_output
 	},
 	{ .command = "middle-line",
 	  .args = { "", 0, 0, NULL },

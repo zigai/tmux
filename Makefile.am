@@ -166,6 +166,7 @@ dist_tmux_SOURCES = \
 	format-draw.c \
 	format.c \
 	fuzzy.c \
+	grid-prompts.c \
 	grid-reader.c \
 	grid-view.c \
 	grid.c \

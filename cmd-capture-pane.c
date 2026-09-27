@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "tmux.h"
+#include "grid-prompts.h"
 
 /*
  * Write the entire contents of a pane to a buffer or stdout.
@@ -42,9 +43,9 @@ const struct cmd_entry cmd_capture_pane_entry = {
 	.name = "capture-pane",
 	.alias = "capturep",
 
-	.args = { "ab:CeE:FHIJLMNpPqRS:Tt:", 0, 0, NULL },
-	.usage = "[-aCeFHIJLMNpPqRT] " CMD_BUFFER_USAGE " [-E end-line] "
-		 "[-S start-line] " CMD_TARGET_PANE_USAGE,
+	.args = { "ab:CeE:FHIJLMNOpPqRS:Tt:", 0, 1, NULL },
+	.usage = "[-aCeFHIJLMNOpPqRT] " CMD_BUFFER_USAGE " [-E end-line] "
+		"[-S start-line] " CMD_TARGET_PANE_USAGE " [output-number]",
 
 	.target = { 't', CMD_FIND_PANE, 0 },
 
@@ -419,6 +420,10 @@ cmd_capture_pane_exec(struct cmd *self, struct cmdq_item *item)
 	struct window_pane	*wp = cmdq_get_target(item)->wp;
 	char			*buf, *cause;
 	const char		*bufname;
+	const char		*errstr;
+	char			*prefix;
+	struct grid_prompt_block block;
+	long long		 number;
 	size_t			 len;
 
 	if (cmd_get_entry(self) == &cmd_clear_history_entry) {
@@ -430,8 +435,62 @@ cmd_capture_pane_exec(struct cmd *self, struct cmdq_item *item)
 		return (CMD_RETURN_NORMAL);
 	}
 
+	if (args_count(args) != 0 && !args_has(args, 'O')) {
+		cmdq_error(item, "output number requires -O");
+		return (CMD_RETURN_ERROR);
+	}
 	len = 0;
-	if (args_has(args, 'R'))
+	if (args_has(args, 'O')) {
+		if (args_has(args, 'R') || args_has(args, 'P') ||
+		    args_has(args, 'M') || args_has(args, 'S') ||
+		    args_has(args, 'E') || args_has(args, 'H') ||
+		    args_has(args, 'e') || args_has(args, 'C') ||
+		    args_has(args, 'T') || args_has(args, 'L') ||
+		    args_has(args, 'F') || args_has(args, 'I') ||
+		    args_has(args, 'J') || args_has(args, 'N')) {
+			cmdq_error(item,
+			    "-O cannot be combined with other capture options");
+			return (CMD_RETURN_ERROR);
+		}
+		number = 0;
+		if (args_count(args) != 0) {
+			number = strtonum(args_string(args, 0), 0, INT_MAX,
+			    &errstr);
+			if (errstr != NULL) {
+				cmdq_error(item, "output number %s", errstr);
+				return (CMD_RETURN_ERROR);
+			}
+		}
+		if (!grid_prompt_find(wp->base.grid,
+		    wp->base.grid->hsize + wp->base.grid->sy - 1,
+		    number, &block)) {
+			cmdq_error(item, "no command output");
+			return (CMD_RETURN_ERROR);
+		}
+		if (block.state != GRID_PROMPT_COMPLETED &&
+		    (!args_has(args, 'a') ||
+		     (block.state != GRID_PROMPT_RUNNING &&
+		      block.state != GRID_PROMPT_TRUNCATED))) {
+			cmdq_error(item, "command output is %s",
+			    grid_prompt_state_name(block.state));
+			return (CMD_RETURN_ERROR);
+		}
+		if (block.state == GRID_PROMPT_RUNNING) {
+			block.end_y = wp->base.grid->hsize + wp->base.cy;
+			block.end_x = wp->base.cx;
+		}
+		buf = grid_prompt_capture(wp->base.grid, &wp->base,
+		    &block, &len);
+		if (block.state != GRID_PROMPT_COMPLETED) {
+			xasprintf(&prefix, "[%s] ",
+			    grid_prompt_state_name(block.state));
+			buf = xrealloc(buf, len + strlen(prefix) + 1);
+			memmove(buf + strlen(prefix), buf, len + 1);
+			memcpy(buf, prefix, strlen(prefix));
+			len += strlen(prefix);
+			free(prefix);
+		}
+	} else if (args_has(args, 'R'))
 		buf = cmd_capture_pane_grid(wp, &len);
 	else if (args_has(args, 'P') && !args_has(args, 'H'))
 		buf = cmd_capture_pane_pending(args, wp, &len);
