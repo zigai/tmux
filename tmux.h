@@ -2335,6 +2335,7 @@ typedef void (*overlay_resize_cb)(struct client *, void *);
 /* Client connection. */
 struct client {
 	const char		*name;
+	char			  routing_token[13];
 	struct tmuxpeer		*peer;
 	const char		*user;
 	struct cmdq_list	*queue;

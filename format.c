@@ -1668,6 +1668,14 @@ format_cb_client_name(struct format_tree *ft)
 	return (NULL);
 }
 
+static void *
+format_cb_client_routing_token(struct format_tree *ft)
+{
+	if (ft->c != NULL)
+		return (xstrdup(ft->c->routing_token));
+	return (NULL);
+}
+
 /* Callback for client_pid. */
 static void *
 format_cb_client_pid(struct format_tree *ft)
@@ -3684,6 +3692,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "client_readonly", FORMAT_TABLE_STRING,
 	  format_cb_client_readonly
+	},
+	{ "client_routing_token", FORMAT_TABLE_STRING,
+	  format_cb_client_routing_token
 	},
 	{ "client_session", FORMAT_TABLE_STRING,
 	  format_cb_client_session
