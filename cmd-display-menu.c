@@ -390,11 +390,11 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 {
 	struct args		*args = cmd_get_args(self);
 	struct cmd_find_state	*target = cmdq_get_target(item);
-	struct session		*s = target->s;
+	struct session		*s;
 	struct client		*tc = cmdq_get_target_client(item);
-	struct winlink		*wl = target->wl;
-	struct window		*w = wl->window;
-	struct window_pane	*wp = target->wp, *new_wp = NULL;
+	struct winlink		*wl;
+	struct window		*w;
+	struct window_pane	*wp, *new_wp = NULL;
 	struct spawn_context	 sc = { 0 };
 	struct layout_cell	*lc = NULL;
 	struct layout_geometry	 lg;
@@ -407,6 +407,18 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 	u_int			 px, py, sx, sy, count = args_count(args);
 	struct args_value	*av;
 	long long		 ll;
+
+	/*
+	 * With -c and no -t, open the popup in the window the client is
+	 * showing rather than in the default target window.
+	 */
+	if (args_has(args, 'c') && !args_has(args, 't') &&
+	    tc->session != NULL && cmd_find_from_client(&fs, tc, 0) == 0)
+		cmd_find_copy_state(target, &fs);
+	s = target->s;
+	wl = target->wl;
+	w = wl->window;
+	wp = target->wp;
 
 	if (args_has(args, 'C')) {
 		if (w->modal != NULL)
