@@ -1952,7 +1952,8 @@ format_cb_history_collected(struct format_tree *ft)
 	struct window_pane	*wp = ft->wp;
 
 	if (wp != NULL)
-		return (format_printf("%u", wp->base.grid->scroll_collected));
+		return (format_printf("%llu",
+		    (unsigned long long)wp->base.grid->scroll_collected));
 	return (NULL);
 }
 
@@ -2666,6 +2667,15 @@ format_cb_pane_pb_state(struct format_tree *ft)
 			return xstrdup("paused");
 		}
 	}
+	return (NULL);
+}
+
+/* Callback for pane_ranges. */
+static void *
+format_cb_pane_ranges(struct format_tree *ft)
+{
+	if (ft->wp != NULL)
+		return (format_printf("%u", pane_ranges_count(ft->wp)));
 	return (NULL);
 }
 
@@ -3980,6 +3990,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "pane_private_modes", FORMAT_TABLE_STRING,
 	  format_cb_pane_private_modes
+	},
+	{ "pane_ranges", FORMAT_TABLE_STRING,
+	  format_cb_pane_ranges
 	},
 	{ "pane_right", FORMAT_TABLE_STRING,
 	  format_cb_pane_right

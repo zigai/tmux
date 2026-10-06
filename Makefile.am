@@ -128,6 +128,7 @@ dist_tmux_SOURCES = \
 	cmd-paste-buffer.c \
 	cmd-pipe-pane.c \
 	cmd-queue.c \
+	cmd-range.c \
 	cmd-refresh-client.c \
 	cmd-rename-session.c \
 	cmd-rename-window.c \
@@ -192,6 +193,7 @@ dist_tmux_SOURCES = \
 	names.c \
 	options-table.c \
 	options.c \
+	pane-ranges.c \
 	paste.c \
 	proc.c \
 	prompt-history.c \

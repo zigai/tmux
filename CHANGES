@@ -10,6 +10,12 @@ CHANGES FROM 3.7c TO 3.8
 
 * Add a pane-alternate-screen-changed hook.
 
+* Add pane ranges with new-range, set-range, kill-range and list-ranges, range
+  formats and a pane-ranges-changed hook. Each covered cell carries its ranges,
+  as an OSC 8 hyperlink does, so ranges follow scrolling, history trimming,
+  reflow and the alternate screen. The history_collected counter is now 64
+  bits.
+
 * Many improvements to floating panes:
 
   - new-pane and split-window can now set the title with -T and border lines

@@ -108,6 +108,7 @@ screen_init(struct screen *s, u_int sx, u_int sy, u_int hlimit)
 
 	s->write_list = NULL;
 	s->hyperlinks = NULL;
+	s->ranges = NULL;
 
 	screen_reinit(s, 1);
 }
@@ -166,6 +167,7 @@ screen_free(struct screen *s)
 	struct image	*im;
 #endif
 
+	pane_ranges_free(s);
 	free(s->sel);
 	free(s->tabs);
 	free(s->path);

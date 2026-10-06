@@ -273,7 +273,7 @@ struct window_copy_mode_data {
 	struct input_ctx *ictx;
 
 	u_int		 sync_added;	/* snapshot of backing grid counters */
-	u_int		 sync_collected;
+	uint64_t		 sync_collected;
 	u_int		 sync_generation;
 
 	int		 viewmode;	/* view mode entered */
@@ -6085,6 +6085,71 @@ window_copy_set_selection(struct window_mode_entry *wme, int may_redraw,
 		}
 	}
 
+	return (1);
+}
+
+/* Get the selection as history lines in the snapshot and pane grids. */
+int
+window_copy_get_selection_span(struct window_pane *wp,
+    struct window_copy_selection *selection)
+{
+	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
+	struct window_copy_mode_data	*data;
+	struct grid			*gd = wp->base.grid;
+	struct grid			*back;
+	u_int				 sx, sy, ex, ey, last, x;
+	int				 emacs;
+
+	if (wme == NULL || wme->mode != &window_copy_mode ||
+	    wme->swp != wp)
+		return (0);
+	data = wme->data;
+	if (data == NULL || (data->screen.sel == NULL &&
+	    data->lineflag == LINE_SEL_NONE))
+		return (0);
+	back = data->backing->grid;
+	sx = data->selx;
+	sy = data->sely;
+	ex = data->endselx;
+	ey = data->endsely;
+	if (sy > ey || (sy == ey && sx > ex)) {
+		x = sx;
+		sx = ex;
+		ex = x;
+		x = sy;
+		sy = ey;
+		ey = x;
+	}
+	last = window_copy_find_length(wme, ey);
+	if (ex > last)
+		ex = last;
+	emacs = options_get_number(wp->window->options, "mode-keys") ==
+	    MODEKEY_EMACS;
+	if (data->rectflag) {
+		x = data->cursordrag == CURSORDRAG_ENDSEL
+		    ? data->selx : data->endselx;
+		if (x >= data->cx)
+			emacs = 0;
+	}
+	if (emacs) {
+		if (ex == 0) {
+			if (ey == sy)
+				return (0);
+			ey--;
+			ex = back->sx - 1;
+		} else
+			ex--;
+	} else if (ex >= back->sx)
+		ex = back->sx - 1;
+	selection->grid = back;
+	selection->collected = data->sync_collected;
+	selection->span.start_line = data->sync_collected + sy;
+	selection->span.start_x = sx;
+	selection->span.end_line = data->sync_collected + ey;
+	selection->span.end_x = ex;
+	selection->rectangular = data->rectflag;
+	selection->current = gd->sx == back->sx &&
+	    gd->scroll_generation == data->sync_generation;
 	return (1);
 }
 
