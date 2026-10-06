@@ -40,7 +40,7 @@
 
 /* Default grid cell data. */
 const struct grid_cell grid_default_cell = {
-	{ { ' ' }, 0, 1, 1 }, 0, 0, 8, 8, 8, 0
+	{ { ' ' }, 0, 1, 1 }, 0, 0, 8, 8, 8, 0, 0
 };
 
 /*
@@ -48,12 +48,12 @@ const struct grid_cell grid_default_cell = {
  * appears in the grid - because of this, they are always extended cells.
  */
 static const struct grid_cell grid_padding_cell = {
-	{ { '!' }, 0, 0, 0 }, 0, GRID_FLAG_PADDING, 8, 8, 8, 0
+	{ { '!' }, 0, 0, 0 }, 0, GRID_FLAG_PADDING, 8, 8, 8, 0, 0
 };
 
 /* Cleared grid cell data. */
 static const struct grid_cell grid_cleared_cell = {
-	{ { ' ' }, 0, 1, 1 }, 0, GRID_FLAG_CLEARED, 8, 8, 8, 0
+	{ { ' ' }, 0, 1, 1 }, 0, GRID_FLAG_CLEARED, 8, 8, 8, 0, 0
 };
 static const struct grid_cell_entry grid_cleared_entry = {
 	{ .data = { 0, 8, 8, ' ' } }, GRID_FLAG_CLEARED
@@ -132,6 +132,8 @@ grid_need_extended_cell(const struct grid_cell_entry *gce,
 		return (1);
 	if (gc->link != 0)
 		return (1);
+	if (gc->range != 0)
+		return (1);
 	if (gc->flags & GRID_FLAG_TAB)
 		return (1);
 	return (0);
@@ -181,6 +183,7 @@ grid_extended_cell(struct grid_line *gl, struct grid_cell_entry *gce,
 	gee->bg = gc->bg;
 	gee->us = gc->us;
 	gee->link = gc->link;
+	gee->range = gc->range;
 	return (gee);
 }
 
@@ -514,6 +517,7 @@ grid_scroll_history(struct grid *gd, u_int bg)
 void
 grid_clear_history(struct grid *gd)
 {
+	gd->scroll_collected += gd->hsize;
 	grid_trim_history(gd, gd->hsize);
 
 	gd->hscrolled = 0;
@@ -624,6 +628,7 @@ grid_get_cell1(struct grid_line *gl, u_int px, struct grid_cell *gc)
 			gc->bg = gee->bg;
 			gc->us = gee->us;
 			gc->link = gee->link;
+			gc->range = gee->range;
 
 			if (gc->flags & GRID_FLAG_TAB)
 				grid_set_tab(gc, gee->data);
@@ -644,6 +649,7 @@ grid_get_cell1(struct grid_line *gl, u_int px, struct grid_cell *gc)
 	gc->us = 8;
 	utf8_set(&gc->data, gce->data.data);
 	gc->link = 0;
+	gc->range = 0;
 }
 
 /* Get cell for reading. */
@@ -657,12 +663,63 @@ grid_get_cell(struct grid *gd, u_int px, u_int py, struct grid_cell *gc)
 		grid_get_cell1(&gd->linedata[py], px, gc);
 }
 
+/*
+ * Get the range set of a cell if it is replaced by an identical cell, with the
+ * character replaced by ch if it is not NULL.
+ */
+static u_int
+grid_identical_range(struct grid_line *gl, u_int px, const struct grid_cell *gc,
+    const char *ch)
+{
+	struct grid_cell_entry	*gce = &gl->celldata[px];
+	struct grid_cell	 old, new;
+
+	if (~gce->flags & GRID_FLAG_EXTENDED || gce->offset >= gl->extdsize)
+		return (0);
+	if (gl->extddata[gce->offset].range == 0 || gc->range != 0)
+		return (0);
+
+	grid_get_cell1(gl, px, &old);
+	memcpy(&new, gc, sizeof new);
+	if (ch != NULL)
+		utf8_set(&new.data, *ch);
+	if (old.us != new.us || !grid_cells_equal(&old, &new))
+		return (0);
+	return (old.range);
+}
+
+/* Set the range set of a cell. */
+void
+grid_set_range(struct grid *gd, u_int px, u_int py, u_int range)
+{
+	struct grid_line	*gl;
+	struct grid_cell_entry	*gce;
+	struct grid_cell	 gc;
+
+	if (grid_check_y(gd, __func__, py) != 0)
+		return;
+	gl = &gd->linedata[py];
+	if (px >= gl->cellsize)
+		return;
+
+	grid_get_cell1(gl, px, &gc);
+	gc.range = range;
+
+	gce = &gl->celldata[px];
+	if (grid_need_extended_cell(gce, &gc))
+		grid_extended_cell(gl, gce, &gc);
+	else
+		grid_store_cell(gce, &gc, gc.data.data[0]);
+}
+
 /* Set cell at position. */
 void
 grid_set_cell(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc)
 {
 	struct grid_line	*gl;
 	struct grid_cell_entry	*gce;
+	struct grid_cell	 tmp;
+	u_int			 range;
 
 	if (grid_check_y(gd, __func__, py) != 0)
 		return;
@@ -672,6 +729,13 @@ grid_set_cell(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc)
 	gl = &gd->linedata[py];
 	if (px + 1 > gl->cellused)
 		gl->cellused = px + 1;
+
+	range = grid_identical_range(gl, px, gc, NULL);
+	if (range != 0) {
+		memcpy(&tmp, gc, sizeof tmp);
+		tmp.range = range;
+		gc = &tmp;
+	}
 
 	gce = &gl->celldata[px];
 	if (grid_need_extended_cell(gce, gc))
@@ -699,7 +763,7 @@ grid_set_cells(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc,
 	struct grid_line	*gl;
 	struct grid_cell_entry	*gce;
 	struct grid_extd_entry	*gee;
-	u_int			 i;
+	u_int			 i, range;
 
 	if (grid_check_y(gd, __func__, py) != 0)
 		return;
@@ -712,9 +776,12 @@ grid_set_cells(struct grid *gd, u_int px, u_int py, const struct grid_cell *gc,
 
 	for (i = 0; i < slen; i++) {
 		gce = &gl->celldata[px + i];
+		range = grid_identical_range(gl, px + i, gc, s + i);
 		if (grid_need_extended_cell(gce, gc)) {
 			gee = grid_extended_cell(gl, gce, gc);
 			gee->data = utf8_build_one(s[i]);
+			if (range != 0)
+				gee->range = range;
 		} else
 			grid_store_cell(gce, gc, s[i]);
 	}

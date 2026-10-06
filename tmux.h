@@ -56,6 +56,7 @@ struct format_job_tree;
 struct format_tree;
 struct hyperlinks_uri;
 struct hyperlinks;
+struct pane_ranges;
 struct input_ctx;
 struct input_request;
 struct input_requests;
@@ -865,6 +866,7 @@ struct grid_cell {
 	int			bg;
 	int			us;
 	u_int			link;
+	u_int			range;
 };
 
 /* Grid extended cell entry. */
@@ -876,6 +878,7 @@ struct grid_extd_entry {
 	int			bg;
 	int			us;
 	u_int			link;
+	u_int			range;
 } __packed;
 
 /* Grid cell entry. */
@@ -928,7 +931,7 @@ struct grid {
 	u_int			 hlimit;
 
 	u_int			 scroll_added;
-	u_int			 scroll_collected;
+	uint64_t		 scroll_collected;
 	u_int			 scroll_generation;
 
 	struct grid_line	*linedata;
@@ -1107,7 +1110,50 @@ struct screen {
 	struct screen_write_cline	*write_list;
 
 	struct hyperlinks		*hyperlinks;
+	struct pane_ranges		*ranges;
 	struct progress_bar		 progress_bar;
+};
+
+enum pane_range_state {
+	PANE_RANGE_LIVE,
+	PANE_RANGE_MODIFIED,
+	PANE_RANGE_SUSPENDED,
+	PANE_RANGE_GONE
+};
+
+struct pane_range_span {
+	uint64_t		 start_line;
+	u_int			 start_x;
+	uint64_t		 end_line;
+	u_int			 end_x;
+};
+
+struct pane_range {
+	u_int			 id;
+	char			*name;
+	char			*group;
+	char			*text;
+	u_int			 cells;
+
+	enum pane_range_state	 state;
+	int			 positioned;
+	struct pane_range_span	 span;
+	int			 visible_y;
+
+	u_int			 found;
+	u_int			 found_saved;
+	struct pane_range_span	 seen;
+
+	TAILQ_ENTRY(pane_range)	 entry;
+	RB_ENTRY(pane_range)	 tree_entry;
+};
+
+struct window_copy_selection {
+	struct grid		*grid;
+	uint64_t		 collected;
+	struct pane_range_span	 span;
+	int			 rectangular;
+	int			 current;
 };
 
 /* Screen write context. */
@@ -3485,6 +3531,32 @@ int	 attributes_fromstring(const char *);
 /* fuzzy.c */
 bitstr_t	*fuzzy_match(const char *, const char *, u_int, u_int *);
 
+/* pane-ranges.c */
+void			  pane_ranges_check(void);
+void			  pane_ranges_update(struct window_pane *);
+void			  pane_ranges_free(struct screen *);
+struct pane_range	 *pane_range_first(struct window_pane *);
+struct pane_range	 *pane_range_next(struct pane_range *);
+struct pane_range	 *pane_range_get(struct window_pane *, u_int);
+struct pane_range	**pane_ranges_at(struct window_pane *, u_int, u_int *);
+u_int			  pane_ranges_count(struct window_pane *);
+char			 *pane_range_text(struct grid *, u_int, u_int, u_int,
+    u_int);
+int			  pane_range_parse(struct window_pane *, const char *,
+    struct pane_range_span *, char **);
+struct pane_range	 *pane_range_create(struct window_pane *,
+    const struct pane_range_span *, const char *, const char *,
+    char **);
+int			  pane_range_move(struct window_pane *,
+    struct pane_range *,
+    const struct pane_range_span *, char **);
+void			  pane_range_kill(struct window_pane *,
+    struct pane_range *);
+void			  pane_ranges_kill_group(struct window_pane *,
+    const char *);
+void			  pane_range_formats(struct format_tree *,
+    struct pane_range *);
+
 /* grid.c */
 extern const struct grid_cell grid_default_cell;
 void	 grid_check_is_clear(struct grid *);
@@ -3509,6 +3581,8 @@ void	 grid_clear_history(struct grid *);
 const struct grid_line *grid_peek_line(struct grid *, u_int);
 void	 grid_get_cell(struct grid *, u_int, u_int, struct grid_cell *);
 void	 grid_set_cell(struct grid *, u_int, u_int, const struct grid_cell *);
+void				 grid_set_range(struct grid *, u_int, u_int,
+    u_int);
 void	 grid_set_padding(struct grid *, u_int, u_int, int);
 void	 grid_set_cells(struct grid *, u_int, u_int, const struct grid_cell *,
 	     const char *, size_t);
@@ -4000,6 +4074,8 @@ extern const struct window_mode window_panes_mode;
 extern const struct window_mode window_client_mode;
 
 /* window-copy.c */
+int				 window_copy_get_selection_span(
+    struct window_pane *, struct window_copy_selection *);
 extern const struct window_mode window_copy_mode;
 extern const struct window_mode window_view_mode;
 void printflike(3, 4) window_copy_add(struct window_pane *, int, const char *,

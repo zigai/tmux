@@ -271,6 +271,7 @@ server_loop(void)
 	u_int		 items;
 
 	current_time = time(NULL);
+	pane_ranges_check();
 
 	do {
 		items = cmdq_next(NULL);

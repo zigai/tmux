@@ -4266,6 +4266,97 @@ if
 .Fl k
 is specified and the window is linked to only one session, it is unlinked and
 destroyed.
+.Tg new-range
+.It Xo Ic new\-range
+.Op Fl P
+.Op Fl F Ar format
+.Op Fl t Ar target-pane
+.Op Fl n Ar name
+.Op Fl g Ar group
+.Pq Fl S | Fl r Ar range
+.Xc
+Create a range over text in a pane.
+A range has an unsigned ID, unique for the lifetime of the server and never
+reused, and an optional name and group, both empty by default.
+.Fl P
+prints the new range using
+.Fl F ;
+the default format is
+.Ql #{range_id} .
+.Pp
+.Fl r
+specifies
+.Ar SL:SX-EL:EX ,
+where SL and EL are history lines and SX and EX are display columns.
+The end cell is inclusive and the start must not be after the end.
+A history line is the number of lines collected from the top of the history
+plus the row in the grid, including history, so it does not change when text
+scrolls into history or the history is cleared.
+It does change when the pane is resized and text is reflowed, and for lines
+outside a scroll region when the region scrolls a line into history.
+.Fl S
+uses the pane's copy mode selection, which must be a single row if rectangular.
+It is refused with
+.Ql selection has changed
+if the pane no longer shows the selected text.
+The text of the range is captured as copy mode would copy it, joining wrapped
+rows, omitting padding and trimming trailing spaces on rows that are not
+wrapped.
+.Pp
+Each covered cell is tagged with the range, as an OSC 8 hyperlink is, so the
+range is carried by the cell when the text scrolls into history, is trimmed
+from it, is moved by line insertion, deletion or a scroll region, is reflowed
+by a resize or is saved by the alternate screen.
+Writing a cell removes the tag, unless the new character, attributes, colours
+and hyperlink are identical to the old.
+Cells may have several ranges.
+The state of a range is derived from its cells:
+.Bl -tag -width Ds -offset indent
+.It live
+Every cell is still tagged and the text is the text captured.
+.It modified
+Some cells are still tagged, or the text has changed.
+.It suspended
+The alternate screen is shown and the cells are in the saved primary screen.
+.It gone
+No cell is tagged.
+.El
+.Pp
+Ranges created on the alternate screen are gone when it is left.
+Respawning a pane clears its screen.
+Ranges that are gone remain listed until killed.
+.Tg set-range
+.It Xo Ic set\-range
+.Op Fl t Ar target-pane
+.Op Fl n Ar name
+.Op Fl r Ar range
+.Ar range-id
+.Xc
+Change the name of a range or, with
+.Fl r ,
+move it to different cells and capture its text again.
+.Tg kill-range
+.It Xo Ic kill\-range
+.Op Fl t Ar target-pane
+.Pq Fl g Ar group | Ar range-id
+.Xc
+Remove a range, or all ranges in a group, and their tags.
+.Tg list-ranges
+.It Xo Ic list\-ranges
+.Op Fl t Ar target-pane
+.Op Fl g Ar group
+.Op Fl F Ar format
+.Op Fl f Ar filter
+.Xc
+List the ranges of a pane.
+.Fl g
+limits the list to a group.
+.Fl F
+sets the output format and
+.Fl f
+lists only ranges for which the expanded filter is true.
+See
+.Sx FORMATS .
 .El
 .Sh KEY BINDINGS
 .Nm
@@ -6540,6 +6631,8 @@ Run when a pane is moved to another window.
 Run when a prompt in a pane is closed.
 .It pane\-prompt\-opened
 Run when a prompt is opened in a pane.
+.It pane\-ranges\-changed
+Run once for a pane when the state or position of any of its ranges changes.
 .It pane\-resized
 Run when a pane is resized.
 .It pane\-set\-clipboard
@@ -7457,6 +7550,7 @@ The following variables are available, where appropriate:
 .It Li "pane_private_modes" Ta "" Ta "List of enabled DECSET private modes"
 .It Li "pane_pb_state" Ta "" Ta "Pane progress bar state, one of hidden, normal, error, indeterminate, paused (can be set by application)"
 .It Li "pane_pb_progress" Ta "" Ta "Pane progress bar progress percentage (can be set by application)"
+.It Li "pane_ranges" Ta "" Ta "Number of ranges in pane that are not gone"
 .It Li "pane_right" Ta "" Ta "Right of pane"
 .It Li "pane_search_string" Ta "" Ta "Last search string in copy mode"
 .It Li "pane_start_command" Ta "" Ta "Command pane started with"
@@ -7478,6 +7572,16 @@ The following variables are available, where appropriate:
 .It Li "pid" Ta "" Ta "Server PID"
 .It Li "prev_window_active" Ta "" Ta "1 if previous window in W: loop is active"
 .It Li "prev_window_index" Ta "" Ta "Index of previous window in W: loop"
+.It Li "range_end_line" Ta "" Ta "History line of last tagged cell, or empty if gone"
+.It Li "range_end_x" Ta "" Ta "Column of last tagged cell, or empty if gone"
+.It Li "range_group" Ta "" Ta "Range group"
+.It Li "range_id" Ta "" Ta "Range ID"
+.It Li "range_name" Ta "" Ta "Range name"
+.It Li "range_start_line" Ta "" Ta "History line of first tagged cell, or empty if gone"
+.It Li "range_start_x" Ta "" Ta "Column of first tagged cell, or empty if gone"
+.It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone"
+.It Li "range_text" Ta "" Ta "Text captured when range was created or moved"
+.It Li "range_visible_y" Ta "" Ta "First visible row with a tagged cell, or empty"
 .It Li "rectangle_toggle" Ta "" Ta "1 if rectangle selection is activated"
 .It Li "refresh_active" Ta "" Ta "1 if copy mode refresh is active"
 .It Li "scroll_position" Ta "" Ta "Scroll position in copy mode"

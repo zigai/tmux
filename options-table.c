@@ -2025,6 +2025,8 @@ const struct options_table_entry options_table[] = {
 	    "Run when a prompt in a pane is closed."),
 	OPTIONS_TABLE_PANE_HOOK("pane-prompt-opened", "",
 	    "Run when a prompt is opened in a pane."),
+	OPTIONS_TABLE_PANE_HOOK("pane-ranges-changed", "",
+	"Run when the state or position of a range in a pane changes."),
 	OPTIONS_TABLE_PANE_HOOK("pane-resized", "",
 	    "Run when a pane is resized."),
 	OPTIONS_TABLE_PANE_HOOK("pane-set-clipboard", "",
