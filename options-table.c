@@ -1978,6 +1978,8 @@ const struct options_table_entry options_table[] = {
 	    "Run when the marked pane is set or cleared."),
 	OPTIONS_TABLE_PANE_HOOK("pane-activity", "",
 	    "Run when there is new output in a pane."),
+	OPTIONS_TABLE_PANE_HOOK("pane-alternate-screen-changed", "",
+	"Run when a pane enters or leaves the alternate screen."),
 	OPTIONS_TABLE_PANE_HOOK("pane-bell", "",
 	    "Run when a pane receives a bell."),
 	OPTIONS_TABLE_PANE_HOOK("pane-command-finished", "",

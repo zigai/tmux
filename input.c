@@ -1918,6 +1918,24 @@ input_csi_dispatch_rm(struct input_ctx *ictx)
 	}
 }
 
+/* Switch to or from the alternate screen and fire an event on change. */
+static void
+input_alternate_screen(struct input_ctx *ictx, struct grid_cell *gc,
+    int cursor, int on)
+{
+	struct screen_write_ctx	*sctx = &ictx->ctx;
+	int			 was_on = SCREEN_IS_ALTERNATE(sctx->s);
+
+	if (on)
+		screen_write_alternateon(sctx, gc, cursor);
+	else
+		screen_write_alternateoff(sctx, gc, cursor);
+	if (ictx->wp != NULL &&
+	    sctx->s == &ictx->wp->base &&
+	    was_on != SCREEN_IS_ALTERNATE(sctx->s))
+		events_fire_pane("pane-alternate-screen-changed", ictx->wp);
+}
+
 /* Handle CSI private RM. */
 static void
 input_csi_dispatch_rm_private(struct input_ctx *ictx)
@@ -1968,10 +1986,10 @@ input_csi_dispatch_rm_private(struct input_ctx *ictx)
 			break;
 		case 47:
 		case 1047:
-			screen_write_alternateoff(sctx, gc, 0);
+			input_alternate_screen(ictx, gc, 0, 0);
 			break;
 		case 1049:
-			screen_write_alternateoff(sctx, gc, 1);
+			input_alternate_screen(ictx, gc, 1, 0);
 			break;
 		case 2004:
 			screen_write_mode_clear(sctx, MODE_BRACKETPASTE);
@@ -2071,10 +2089,10 @@ input_csi_dispatch_sm_private(struct input_ctx *ictx)
 			break;
 		case 47:
 		case 1047:
-			screen_write_alternateon(sctx, gc, 0);
+			input_alternate_screen(ictx, gc, 0, 1);
 			break;
 		case 1049:
-			screen_write_alternateon(sctx, gc, 1);
+			input_alternate_screen(ictx, gc, 1, 1);
 			break;
 		case 2004:
 			screen_write_mode_set(sctx, MODE_BRACKETPASTE);
