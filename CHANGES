@@ -1,5 +1,7 @@
 CHANGES FROM 3.7c TO 3.8
 
+* Add a pane-alternate-screen-changed hook.
+
 * Many improvements to floating panes:
 
   - new-pane and split-window can now set the title with -T and border lines
