@@ -1,4 +1,4 @@
-/* $OpenBSD: window-copy.c,v 1.429 2026/09/01 13:04:29 nicm Exp $ */
+/* $OpenBSD: window-copy.c,v 1.433 2026/10/05 15:52:25 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -402,7 +402,7 @@ window_copy_clone_screen(struct screen *src, struct screen *hint, u_int *cx,
 
 	sy = screen_hsize(src) + screen_size_y(src);
 	if (trim) {
-		while (sy > screen_hsize(src)) {
+		while (sy > screen_hsize(src) + 1) {
 			gl = grid_peek_line(src->grid, sy - 1);
 			if (gl == NULL || gl->cellused != 0)
 				break;
@@ -666,7 +666,7 @@ window_copy_view_init(struct window_mode_entry *wme,
 
 	data->backing = xmalloc(sizeof *data->backing);
 	screen_init(data->backing, sx, screen_size_y(base), UINT_MAX);
-	data->ictx = input_init(NULL, NULL, NULL, NULL);
+	data->ictx = input_init(NULL, NULL, NULL);
 	data->mx = data->cx;
 	data->my = screen_hsize(data->backing) + data->cy - data->oy;
 	data->showmark = 0;
@@ -769,6 +769,7 @@ window_copy_scroll(struct window_pane *wp, int sl_mpos, u_int my,
 	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
 
 	if (wme != NULL) {
+		window_redraw_active_switch(wp->window, wp);
 		window_set_active_pane(wp->window, wp, 0);
 		window_copy_scroll1(wme, wp, sl_mpos, my, tty_oy, scroll_exit);
 	}
@@ -6622,7 +6623,9 @@ window_copy_cursor_up(struct window_mode_entry *wme, int scroll_only)
 	if (data->lineflag == LINE_SEL_LEFT_RIGHT && oy == data->sely)
 		window_copy_other_end(wme);
 
-	if (scroll_only && options_get_number(oo, "mode-keys") == MODEKEY_VI) {
+	/* In vi mode, keep cursor on the same line unless dragging. */
+	if (scroll_only && data->cursordrag == CURSORDRAG_NONE &&
+	    options_get_number(oo, "mode-keys") == MODEKEY_VI) {
 		if (data->cy < screen_size_y(s) - 1)
 			window_copy_update_cursor(wme, data->cx, data->cy + 1);
 	}
@@ -6702,7 +6705,9 @@ window_copy_cursor_down(struct window_mode_entry *wme, int scroll_only)
 	if (data->lineflag == LINE_SEL_RIGHT_LEFT && oy == data->endsely)
 		window_copy_other_end(wme);
 
-	if (scroll_only && options_get_number(oo, "mode-keys") == MODEKEY_VI) {
+	/* In vi mode, keep cursor on the same line unless dragging. */
+	if (scroll_only && data->cursordrag == CURSORDRAG_NONE &&
+	    options_get_number(oo, "mode-keys") == MODEKEY_VI) {
 		if (data->cy > 0)
 			window_copy_update_cursor(wme, data->cx, data->cy - 1);
 	}

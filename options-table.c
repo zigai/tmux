@@ -1,4 +1,4 @@
-/* $OpenBSD: options-table.c,v 1.246 2026/09/11 10:17:16 nicm Exp $ */
+/* $OpenBSD: options-table.c,v 1.249 2026/10/05 09:03:11 nicm Exp $ */
 
 /*
  * Copyright (c) 2011 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -79,7 +79,7 @@ static const char *options_table_pane_border_lines_list[] = {
 	"single", "double", "heavy", "simple", "number", "spaces", "none",
 	"rounded", NULL
 };
-static const char *options_table_popup_border_lines_list[] = {
+static const char *options_table_menu_border_lines_list[] = {
 	"single", "double", "heavy", "simple", "rounded", "padded", "none", NULL
 };
 static const char *options_table_set_clipboard_list[] = {
@@ -183,7 +183,8 @@ static const char *options_table_copy_mode_line_numbers_list[] = {
 	"#[pop-default]" \
 	"#[norange default]"
 #define OPTIONS_TABLE_STATUS_FORMAT2 \
-	"#[align=left]#{R: ,#{n:#{session_name}}}P: " \
+	"#[align=left]" \
+	"#{R: ,#{e|-:#{w;T;=/#{status-left-length}:status-left},3}}P: " \
 	"#[norange default]" \
 	"#[list=on align=#{status-justify}]" \
 	"#[list=left-marker]<#[list=right-marker]>#[list=on]" \
@@ -194,7 +195,8 @@ static const char *options_table_copy_mode_line_numbers_list[] = {
 		"#[push-default]" \
 		"#{T:window-pane-status-format}" \
 		"#[pop-default]" \
-		"#[norange list=on default]  " \
+		"#[norange list=on default]" \
+		"#{?loop_last_flag,,#{E:window-status-separator}}" \
 	"," \
 		"#[range=pane|#{pane_id} list=focus " \
 			"#{?#{!=:#{E:pane-status-current-style},default}," \
@@ -205,10 +207,12 @@ static const char *options_table_copy_mode_line_numbers_list[] = {
 		"#[push-default]" \
 		"#{T:window-pane-current-status-format}" \
 		"#[pop-default]" \
-		"#[norange list=on default] " \
+		"#[norange list=on default]" \
+		"#{?loop_last_flag,,#{E:window-status-separator}}" \
 	"}"
 #define OPTIONS_TABLE_STATUS_FORMAT3 \
-	"#[align=left]#{R: ,#{n:#{session_name}}}S: " \
+	"#[align=left]" \
+	"#{R: ,#{e|-:#{w;T;=/#{status-left-length}:status-left},3}}S: " \
 	"#[norange default]" \
 	"#[list=on align=#{status-justify}]" \
 	"#[list=left-marker]<#[list=right-marker]>#[list=on]" \
@@ -217,7 +221,7 @@ static const char *options_table_copy_mode_line_numbers_list[] = {
 			"#{E:session-status-style}" \
 		"]" \
 		"#[push-default]" \
-		"#S#{session_alert}" \
+		"#S#{q/h:session_alert}" \
 		"#[pop-default]" \
 		"#[norange list=on default]  " \
 	"," \
@@ -228,7 +232,7 @@ static const char *options_table_copy_mode_line_numbers_list[] = {
 			"}" \
 		"]" \
 		"#[push-default]" \
-		"#S*#{session_alert}" \
+		"#S*#{q/h:session_alert}" \
 		"#[pop-default]" \
 		"#[norange list=on default] " \
 	"}"
@@ -493,7 +497,7 @@ const struct options_table_entry options_table[] = {
 	{ .name = "menu-border-lines",
 	  .type = OPTIONS_TABLE_CHOICE,
 	  .scope = OPTIONS_TABLE_WINDOW,
-	  .choices = options_table_popup_border_lines_list,
+	  .choices = options_table_menu_border_lines_list,
 	  .default_num = BOX_LINES_SINGLE,
 	  .text = "Type of characters used to draw menu border lines. Some of "
 		  "these are only supported on terminals with UTF-8 support."
@@ -1671,33 +1675,6 @@ const struct options_table_entry options_table[] = {
 	  .choices = options_table_pane_scrollbars_position_list,
 	  .default_num = PANE_SCROLLBARS_RIGHT,
 	  .text = "Pane scrollbar position."
-	},
-
-	{ .name = "popup-style",
-	  .type = OPTIONS_TABLE_STRING,
-	  .scope = OPTIONS_TABLE_WINDOW,
-	  .default_str = "bg=themedarkgrey,fg=themewhite",
-	  .flags = OPTIONS_TABLE_IS_STYLE,
-	  .separator = ",",
-	  .text = "Default style of popups."
-	},
-
-	{ .name = "popup-border-style",
-	  .type = OPTIONS_TABLE_STRING,
-	  .scope = OPTIONS_TABLE_WINDOW,
-	  .default_str = "bg=themedarkgrey,fg=themelightgrey",
-	  .flags = OPTIONS_TABLE_IS_STYLE,
-	  .separator = ",",
-	  .text = "Default style of popup borders."
-	},
-
-	{ .name = "popup-border-lines",
-	  .type = OPTIONS_TABLE_CHOICE,
-	  .scope = OPTIONS_TABLE_WINDOW,
-	  .choices = options_table_popup_border_lines_list,
-	  .default_num = BOX_LINES_SINGLE,
-	  .text = "Type of characters used to draw popup border lines. Some of "
-		  "these are only supported on terminals with UTF-8 support."
 	},
 
 	{ .name = "remain-on-exit",
