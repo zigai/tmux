@@ -1698,6 +1698,7 @@ RB_HEAD(sessions, session);
 struct mouse_event {
 	int		valid;
 	int		ignore;
+	int		captured;
 
 	key_code	key;
 
@@ -1848,6 +1849,7 @@ struct tty {
 	u_int		 mouse_drag_y;
 	int		 mouse_scrolling_flag;
 	int		 mouse_slider_mpos;
+	int			 mouse_capture_pane;
 	int              mouse_last_pane;
 	void		(*mouse_drag_update)(struct client *,
 			    struct mouse_event *);
@@ -3440,6 +3442,7 @@ void	 input_cancel_requests(struct client *);
 void	 input_key_build(void);
 int	 input_key_pane(struct window_pane *, key_code, struct mouse_event *);
 int	 input_key(struct screen *, struct bufferevent *, key_code);
+void	 input_key_mouse_release(struct window_pane *);
 int	 input_key_get_mouse(struct screen *, struct mouse_event *, u_int,
 	     u_int, const char **, size_t *);
 
