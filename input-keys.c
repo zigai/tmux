@@ -792,6 +792,52 @@ input_key_get_mouse(struct screen *s, struct mouse_event *m, u_int x, u_int y,
 	return (1);
 }
 
+/* Clamp a captured mouse event outside a pane to the pane's edges. */
+static void
+input_key_mouse_clamp(struct window_pane *wp, struct mouse_event *m,
+    u_int *xp, u_int *yp)
+{
+	int	x, y;
+
+	x = m->x + m->ox;
+	y = m->y + m->oy;
+	if (m->statusat == 0 && y >= (int)m->statuslines)
+		y -= m->statuslines;
+
+	x -= wp->xoff;
+	y -= wp->yoff;
+	if (x < 0)
+		x = 0;
+	else if (x >= (int)wp->sx)
+		x = wp->sx - 1;
+	if (y < 0)
+		y = 0;
+	else if (y >= (int)wp->sy)
+		y = wp->sy - 1;
+
+	*xp = x;
+	*yp = y;
+}
+
+/* Send a release for a captured drag that cannot finish normally. */
+void
+input_key_mouse_release(struct window_pane *wp)
+{
+	struct mouse_event	 m;
+	const char		*buf;
+	size_t			 len;
+
+	if (wp->fd == -1 || (wp->flags & PANE_EXITED))
+		return;
+
+	memset(&m, 0, sizeof m);
+	m.b = 3;
+	m.sgr_type = 'm';
+	if (!input_key_get_mouse(wp->screen, &m, 0, 0, &buf, &len))
+		return;
+	input_key_write(__func__, wp->event, buf, len);
+}
+
 /* Translate mouse and output. */
 static void
 input_key_mouse(struct window_pane *wp, struct mouse_event *m)
@@ -804,8 +850,11 @@ input_key_mouse(struct window_pane *wp, struct mouse_event *m)
 	/* Ignore events if no mouse mode or the pane is not visible. */
 	if (m->ignore || (s->mode & ALL_MOUSE_MODES) == 0)
 		return;
-	if (cmd_mouse_at(wp, m, &x, &y, 0) != 0)
-		return;
+	if (cmd_mouse_at(wp, m, &x, &y, 0) != 0) {
+		if (!m->captured)
+			return;
+		input_key_mouse_clamp(wp, m, &x, &y);
+	}
 	if (!window_pane_is_visible(wp))
 		return;
 	if (!input_key_get_mouse(s, m, x, y, &buf, &len))

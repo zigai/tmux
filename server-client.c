@@ -756,7 +756,7 @@ server_client_check_mouse(struct client *c, struct key_event *event)
 	struct session			*s = c->session, *fs;
 	struct window			*w = s->curw->window;
 	struct winlink			*fwl;
-	struct window_pane		*wp, *fwp, *lwp = NULL;
+	struct window_pane		*wp = NULL, *fwp, *lwp = NULL;
 	u_int				 x, y, sx, sy, px, py, n, sl_mpos = 0;
 	u_int				 b, bn;
 	int				 ignore = 0;
@@ -852,6 +852,7 @@ have_event:
 	m->w = -1;
 	m->wp = -1;
 	m->ignore = ignore;
+	m->captured = 0;
 
 	/* Is this on the status line? */
 	m->statusat = status_at_line(c);
@@ -945,15 +946,16 @@ have_event:
 		py = py + m->oy;
 		if (w->modal != NULL &&
 		    !window_pane_contains(w->modal, px, py)) {
-			if (lwp == w->modal &&
-			    c->tty.mouse_drag_flag != 0 &&
-			    (type == KEYC_TYPE_MOUSEDRAG ||
-			    type == KEYC_TYPE_MOUSEUP)) {
+			if ((type == KEYC_TYPE_MOUSEDRAG ||
+			    type == KEYC_TYPE_MOUSEUP) &&
+			    ((lwp == w->modal && c->tty.mouse_drag_flag != 0) ||
+			     c->tty.mouse_capture_pane == (int)w->modal->id)) {
 				modal_drag = 1;
-				wp = lwp;
+				wp = w->modal;
 				loc = KEYC_MOUSE_LOCATION_PANE;
 				m->wp = wp->id;
 				m->w = wp->window->id;
+				m->captured = 1;
 			} else {
 				server_client_update_scrollbar_hover(c, type,
 				    -1, -1);
@@ -963,6 +965,7 @@ have_event:
 				c->tty.mouse_scrolling_flag = 0;
 				c->tty.mouse_slider_mpos = -1;
 				c->tty.mouse_last_pane = -1;
+				c->tty.mouse_capture_pane = -1;
 				if ((w->modal->flags & PANE_CLOSEONCLICK) &&
 				    (type == KEYC_TYPE_MOUSEDOWN ||
 				    type == KEYC_TYPE_SECONDCLICK ||
@@ -1012,6 +1015,19 @@ have_event:
 		}
 	} else
 		server_client_update_scrollbar_hover(c, type, -1, -1);
+
+	/*
+	 * A press inside a modal pane captures the pointer, so a drag or
+	 * release outside it still goes to that pane.
+	 */
+	if (type == KEYC_TYPE_MOUSEDOWN) {
+		if (loc == KEYC_MOUSE_LOCATION_PANE && wp != NULL &&
+		    wp == w->modal)
+			c->tty.mouse_capture_pane = wp->id;
+		else
+			c->tty.mouse_capture_pane = -1;
+	} else if (type == KEYC_TYPE_MOUSEUP)
+		c->tty.mouse_capture_pane = -1;
 
 	/* Reset click type or add a click timer if needed. */
 	if (type == KEYC_TYPE_MOUSEDOWN ||
@@ -1101,7 +1117,9 @@ have_event:
 		c->tty.mouse_drag_flag = MOUSE_BUTTONS(b) + 1;
 
 		/* Only change pane if not already dragging a pane border. */
-		if (lwp == NULL) {
+		if (modal_drag)
+			c->tty.mouse_last_pane = wp->id;
+		else if (lwp == NULL) {
 			lwp = wp = window_get_active_at(w, px, py);
 			if (wp != NULL)
 				c->tty.mouse_last_pane = wp->id;
@@ -1657,6 +1675,14 @@ server_client_handle_key0(struct client *c, struct key_event *event,
 	if (event->key == KEYC_REPORT_DARK_THEME) {
 		server_client_report_theme(c, THEME_DARK);
 		return (0);
+	}
+
+	/* Release a captured drag if the client loses focus. */
+	if (event->key == KEYC_FOCUS_OUT && c->tty.mouse_capture_pane != -1) {
+		wp = window_pane_find_by_id(c->tty.mouse_capture_pane);
+		c->tty.mouse_capture_pane = -1;
+		if (wp != NULL)
+			input_key_mouse_release(wp);
 	}
 
 	/*
@@ -3099,6 +3125,8 @@ server_client_remove_pane(struct window_pane *wp)
 			c->tty.mouse_drag_update = NULL;
 			c->tty.mouse_scrolling_flag = 0;
 		}
+		if (c->tty.mouse_capture_pane == (int)wp->id)
+			c->tty.mouse_capture_pane = -1;
 	}
 }
 
