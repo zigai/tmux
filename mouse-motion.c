@@ -8,7 +8,7 @@ struct mouse_motion_state {
 	u_int	pane;
 	u_int	x;
 	u_int	y;
-	u_int	viewport;
+	uint64_t	viewport;
 	u_int	generation;
 };
 
@@ -20,7 +20,8 @@ mouse_motion_fire(struct client *c, struct window_pane *wp, u_int x, u_int y)
 	struct cmd_find_state		 fs;
 	struct window_mode_entry	*wme;
 	struct grid			*gd = wp->base.grid;
-	u_int				 offset, size, scroll = 0, viewport;
+	uint64_t			 viewport;
+	u_int				 offset, size, scroll = 0;
 
 	wme = TAILQ_FIRST(&wp->modes);
 	if (wme != NULL && wme->mode == &window_copy_mode &&
