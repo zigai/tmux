@@ -1914,30 +1914,3 @@ kitty_image_scroll_up(struct screen *s, u_int lines)
 	}
 	kitty_delete_unplaced_images(s, 1);
 }
-
-/* Check if an area overlaps with any Kitty placements. */
-void
-kitty_image_check_area(struct screen *s, u_int px, u_int py, u_int nx,
-    u_int ny)
-{
-	struct kitty_placement	*pl, *pl_next;
-	u_int			 plx, ply, plnx, plny;
-
-	if (nx == 0 || ny == 0)
-		return;
-
-	TAILQ_FOREACH_SAFE(pl, &s->kitty_placements, entry, pl_next) {
-		if (pl->cols == 0 || pl->rows == 0)
-			continue;
-		if (pl->pane_x < 0 || pl->pane_y < 0)
-			continue;
-		plx = (u_int)pl->pane_x;
-		ply = (u_int)pl->pane_y;
-		plnx = pl->cols;
-		plny = pl->rows;
-		if (px < plx + plnx && px + nx > plx &&
-		    py < ply + plny && py + ny > ply)
-			kitty_placement_free_one(&s->kitty_placements, pl);
-	}
-	kitty_delete_unplaced_images(s, 1);
-}

@@ -2192,11 +2192,6 @@ test_pane_resize_reflow(void)
 	pl = kitty_placement_create(&s, img, &cmd);
 	TEST_ASSERT("resize_reflow: pl created", pl != NULL);
 
-	/* Overwriting cells within placement boundaries removes it. */
-	kitty_image_check_area(&s, 12, 12, 1, 1);
-	TEST_ASSERT("resize_reflow: cell overwrite removes placement",
-	    TAILQ_EMPTY(&s.kitty_placements));
-
 	kitty_image_free_all(&s);
 	TEST_PASS("pane_resize_reflow");
 	return (0);
@@ -2910,78 +2905,6 @@ test_chunked_transmit_display_metadata(void)
 	    pl->pane_x == 4 && pl->pane_y == 5);
 	kitty_image_free_all(&s);
 	TEST_PASS("chunked_T");
-	return (0);
-}
-
-/* Test 57: Writing over an image removes overlapping placements. */
-static int
-test_check_area_removes_overlapping_placement(void)
-{
-	struct screen		 s;
-	struct kitty_command	 cmd;
-	struct kitty_image	*img;
-
-	memset(&s, 0, sizeof s);
-	TAILQ_INIT(&s.kitty_images);
-	TAILQ_INIT(&s.kitty_placements);
-
-	memset(&cmd, 0, sizeof cmd);
-	cmd.image_id = 70;
-	cmd.pixel_width = 10;
-	cmd.pixel_height = 10;
-	img = kitty_image_store(&s, &cmd);
-	TEST_ASSERT("check_area: image stored", img != NULL);
-
-	s.cx = 2;
-	s.cy = 3;
-	cmd.placement_id = 1;
-	cmd.cols = 4;
-	cmd.rows = 2;
-	TEST_ASSERT("check_area: placement created",
-	    kitty_placement_create(&s, img, &cmd) != NULL);
-	kitty_image_check_area(&s, 0, 0, 1, 1);
-	TEST_ASSERT("check_area: non-overlap preserved",
-	    TAILQ_FIRST(&s.kitty_placements) != NULL);
-	kitty_image_check_area(&s, 3, 4, 1, 1);
-	TEST_ASSERT("check_area: overlap removed",
-	    TAILQ_FIRST(&s.kitty_placements) == NULL);
-	TEST_ASSERT("check_area: named image remains",
-	    kitty_image_find(&s, 70) == img);
-
-	kitty_image_free_all(&s);
-	TEST_PASS("check_area");
-	return (0);
-}
-
-/* Screen erases remove anonymous image data with anonymous placements. */
-static int
-test_anonymous_check_area_removes_data(void)
-{
-	struct screen	 s;
-	char		*reply;
-	int		 ret;
-
-	memset(&s, 0, sizeof s);
-	TAILQ_INIT(&s.kitty_images);
-	TAILQ_INIT(&s.kitty_placements);
-	s.cx = 2;
-	s.cy = 3;
-
-	ret = kitty_image_parse(&s, "a=T,f=24,s=1,v=1,c=1,r=1;QUJD",
-	    strlen("a=T,f=24,s=1,v=1,c=1,r=1;QUJD"), &reply);
-	TEST_ASSERT("anonymous_check_area: ret == 0", ret == 0);
-	TEST_ASSERT("anonymous_check_area: no reply", reply == NULL);
-	TEST_ASSERT("anonymous_check_area: one image",
-	    test_count_images(&s) == 1);
-
-	kitty_image_check_area(&s, 2, 3, 1, 1);
-	TEST_ASSERT("anonymous_check_area: placement gone",
-	    test_count_placements(&s) == 0);
-	TEST_ASSERT("anonymous_check_area: data gone",
-	    test_count_images(&s) == 0);
-
-	kitty_image_free_all(&s);
-	TEST_PASS("anonymous_check_area");
 	return (0);
 }
 
@@ -3808,8 +3731,6 @@ main(int argc, char **argv)
 	test_anonymous_transmit_display();
 	test_anonymous_delete_removes_data();
 	test_image_number_newest();
-	test_check_area_removes_overlapping_placement();
-	test_anonymous_check_area_removes_data();
 	test_scroll_up_moves_and_removes_placements();
 	test_placement_create();
 	test_free_all();

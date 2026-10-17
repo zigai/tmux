@@ -1780,11 +1780,6 @@ screen_write_clearline(struct screen_write_ctx *ctx, u_int bg)
 	if (image_check_line(s, s->cy, 1) && ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
-#ifdef ENABLE_KITTY_IMAGES
-	kitty_image_check_area(s, 0, s->cy, sx, 1);
-	if (ctx->wp != NULL)
-		ctx->wp->flags |= PANE_REDRAW;
-#endif
 
 	flags = gl->flags & GRID_LINE_OSC133_FLAGS;
 	memcpy(&od, &gl->osc133_data, sizeof od);
@@ -2761,11 +2756,6 @@ screen_write_collect_end(struct screen_write_ctx *ctx)
 
 #ifdef ENABLE_SIXEL
 	if (image_check_area(s, s->cx, s->cy, ci->used, 1) && ctx->wp != NULL)
-		ctx->wp->flags |= PANE_REDRAW;
-#endif
-#ifdef ENABLE_KITTY_IMAGES
-	kitty_image_check_area(s, s->cx, s->cy, ci->used, 1);
-	if (ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
 #endif
 
