@@ -956,6 +956,13 @@ const struct options_table_entry options_table[] = {
 		  "Applications inside panes can use the mouse even when 'off'."
 	},
 
+	{ .name = "pane-command-prefix",
+	  .type = OPTIONS_TABLE_STRING,
+	  .scope = OPTIONS_TABLE_SESSION,
+	  .default_str = "",
+	  .text = "Launcher command prepended to new and respawned pane commands."
+	},
+
 	{ .name = "prefix",
 	  .type = OPTIONS_TABLE_KEY,
 	  .scope = OPTIONS_TABLE_SESSION,

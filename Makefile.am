@@ -193,6 +193,7 @@ dist_tmux_SOURCES = \
 	names.c \
 	options-table.c \
 	options.c \
+	pane-command.c \
 	pane-ranges.c \
 	paste.c \
 	proc.c \
