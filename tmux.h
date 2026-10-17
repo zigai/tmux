@@ -4392,8 +4392,6 @@ void		 kitty_image_free_lists(struct kitty_images *,
     struct kitty_placements *);
 void		 kitty_image_free_all(struct screen *);
 void		 kitty_image_scroll_up(struct screen *, u_int);
-void		 kitty_image_check_area(struct screen *, u_int, u_int, u_int,
-    u_int);
 #endif
 
 /* server-acl.c */
