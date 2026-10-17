@@ -5437,6 +5437,47 @@ captures the mouse and allows mouse events to be bound as key bindings.
 See the
 .Sx MOUSE SUPPORT
 section for details.
+.It Ic pane\-command\-prefix Ar command
+Set a launcher command for new and respawned panes.
+The default is empty, which runs commands without a launcher.
+The command is expanded as a format in the new pane's context before forking.
+The result is split into arguments using the quoting, escaping and environment
+expansion rules from
+.Sx PARSING SYNTAX .
+Command separators and directives are not accepted and no shell is used to run
+the launcher.
+The pane command's arguments are appended without further parsing.
+A single command string is appended as
+.Ic default\-shell
+.Fl c
+.Ar shell\-command .
+With no command, the shell is appended with
+.Fl l
+instead of a leading dash in its argument zero, so the shell must support
+.Fl l
+for login startup.
+The launcher inherits the pane's environment, working directory and terminal.
+It should replace itself with the command to preserve
+.Ql #{pane_pid} .
+Invalid quoting, command separators or an empty expanded command fail the spawn
+with an error naming this option.
+A launcher failure fails the pane without running the command unwrapped.
+This option does not affect popups or jobs such as
+.Ic run\-shell ,
+.Ic if\-shell
+and
+.Ic pipe\-pane .
+For example, to place panes in systemd scopes (the substitution removes the
+percent sign from the pane ID):
+.Bd -literal -offset indent
+set -g pane-command-prefix 'systemd-run --user --scope --quiet --collect --slice=agents.slice -p MemoryMax=25% --description=tmux-pane-#{pid}-#{s/%//:pane_id} --'
+.Ed
+An explicit
+.Fl \-unit
+name can collide on immediate respawn while the previous scope is still loaded.
+Use
+.Fl \-description
+to label scopes safely while systemd chooses a unique unit name for each spawn.
 .It Ic prefix Ar key
 Set the key accepted as a prefix key.
 In addition to the standard keys described under

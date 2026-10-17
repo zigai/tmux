@@ -3167,6 +3167,7 @@ enum cmd_retval	 cmd_attach_session(struct cmdq_item *, const char *, int, int,
 		     int, const char *, int, const char *);
 
 /* cmd-parse.c */
+int			 cmd_parse_argv(const char *, int *, char ***, char **);
 struct cmd_parse_result *cmd_parse_from_file(FILE *, struct cmd_parse_input *);
 struct cmd_parse_result *cmd_parse_from_string(const char *,
 		     struct cmd_parse_input *);
@@ -4205,6 +4206,12 @@ void		 style_set_scrollbar_style_from_option(struct style *,
 void		 style_ranges_init(struct style_ranges *);
 void		 style_ranges_free(struct style_ranges *);
 struct style_range *style_ranges_get_range(struct style_ranges *, u_int);
+
+/* pane-command.c */
+int		 pane_command_prefix(struct spawn_context *,
+    struct window_pane *,
+    int *, char ***, char **);
+void		 pane_command_exec(struct window_pane *, int, char **);
 
 /* spawn.c */
 struct winlink	*spawn_window(struct spawn_context *, char **);

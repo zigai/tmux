@@ -251,10 +251,10 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	struct environ		 *child;
 	struct environ_entry	 *ee;
 	char			**argv, *cp, **argvp, *argv0, *cwd, *new_cwd;
-	char			  path[PATH_MAX];
+	char			  path[PATH_MAX], **prefix_argv = NULL;
 	const char		 *cmd, *tmp, *home = find_home();
 	const char		 *actual_cwd = NULL;
-	int			  argc;
+	int			  argc, prefix_argc = 0;
 	u_int			  idx;
 	struct termios		  now;
 	u_int			  hlimit;
@@ -317,6 +317,10 @@ spawn_pane(struct spawn_context *sc, char **cause)
 			free(cwd);
 			return (NULL);
 		}
+		new_wp = sc->wp0;
+		if (pane_command_prefix(sc, new_wp, &prefix_argc, &prefix_argv,
+		    cause) != 0)
+			goto fail;
 		if (sc->wp0->event != NULL) {
 			bufferevent_free(sc->wp0->event);
 			sc->wp0->event = NULL;
@@ -345,7 +349,6 @@ spawn_pane(struct spawn_context *sc, char **cause)
 				control_reset_pane(loop, sc->wp0);
 		}
 
-		new_wp = sc->wp0;
 		new_wp->flags &= ~(PANE_STATUSREADY|PANE_STATUSDRAWN);
 	} else {
 		if (sc->lc == NULL) {
@@ -369,6 +372,9 @@ spawn_pane(struct spawn_context *sc, char **cause)
 		 */
 		if (w->flags & WINDOW_ZOOMED)
 			new_wp->saved_layout_cell = new_wp->layout_cell;
+		if (pane_command_prefix(sc, new_wp, &prefix_argc, &prefix_argv,
+		    cause) != 0)
+			goto fail;
 	}
 
 	/*
@@ -392,6 +398,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	if (cwd != NULL) {
 		free(new_wp->cwd);
 		new_wp->cwd = cwd;
+		cwd = NULL;
 	}
 
 	/*
@@ -479,14 +486,9 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	if (new_wp->pid == -1) {
 		xasprintf(cause, "fork failed: %s", strerror(errno));
 		new_wp->fd = -1;
-		if (~sc->flags & SPAWN_RESPAWN) {
-			server_client_remove_pane(new_wp);
-			layout_close_pane(new_wp);
-			window_remove_pane(w, new_wp);
-		}
 		sigprocmask(SIG_SETMASK, &oldset, NULL);
 		environ_free(child);
-		return (NULL);
+		goto fail;
 	}
 
 	/*
@@ -542,6 +544,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	sigprocmask(SIG_SETMASK, &oldset, NULL);
 	log_close();
 	environ_push(child);
+	pane_command_exec(new_wp, prefix_argc, prefix_argv);
 
 	/*
 	 * If given multiple arguments, use execvp(). Copy the arguments to
@@ -575,6 +578,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	_exit(1);
 
 complete:
+	cmd_free_argv(prefix_argc, prefix_argv);
 #ifdef HAVE_UTEMPTER
 	if (~new_wp->flags & PANE_EMPTY) {
 		xasprintf(&cp, "tmux(%lu).%%%u", (long)getpid(), new_wp->id);
@@ -611,6 +615,16 @@ complete:
 	if (~sc->flags & SPAWN_NONOTIFY)
 		events_fire_window("window-layout-changed", w);
 	return (new_wp);
+
+fail:
+	if (~sc->flags & SPAWN_RESPAWN) {
+		server_client_remove_pane(new_wp);
+		layout_close_pane(new_wp);
+		window_remove_pane(w, new_wp);
+	}
+	cmd_free_argv(prefix_argc, prefix_argv);
+	free(cwd);
+	return (NULL);
 }
 
 struct spawn_editor_state {

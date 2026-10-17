@@ -77,6 +77,7 @@ struct cmd_parse_state {
 	size_t				 off;
 
 	int				 condition;
+	int				 arguments;
 	int				 eol;
 	int				 eof;
 	struct cmd_parse_input		*input;
@@ -1404,6 +1405,45 @@ yylex(void)
 	return (0);
 }
 
+int
+cmd_parse_argv(const char *string, int *argc, char ***argv, char **cause)
+{
+	struct cmd_parse_state	*ps = &parse_state;
+	struct cmd_parse_state	 saved = *ps;
+	struct cmd_parse_input	 input = { 0 };
+	int			 token;
+
+	memset(ps, 0, sizeof *ps);
+	ps->input = &input;
+	ps->arguments = 1;
+	ps->buf = string;
+	ps->len = strlen(string);
+	*argc = 0;
+	*argv = NULL;
+	*cause = NULL;
+	while ((token = yylex()) != 0) {
+		if (token == '\n')
+			continue;
+		if (token != TOKEN && token != EQUALS) {
+			if (token == FORMAT)
+				free(yylval.token);
+			if (ps->error != NULL)
+				*cause = ps->error;
+			else
+				*cause = xstrdup("invalid argument list");
+			cmd_free_argv(*argc, *argv);
+			*argc = 0;
+			*argv = NULL;
+			*ps = saved;
+			return (-1);
+		}
+		cmd_append_argv(argc, argv, yylval.token);
+		free(yylval.token);
+	}
+	*ps = saved;
+	return (0);
+}
+
 static char *
 yylex_format(void)
 {
@@ -1754,6 +1794,10 @@ yylex_token(int ch)
 
 	next:
 		ch = yylex_getc();
+	}
+	if (ps->arguments && state != NONE) {
+		yyerror("unterminated quote");
+		goto error;
 	}
 	yylex_ungetc(ch);
 
