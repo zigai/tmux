@@ -1673,8 +1673,14 @@ server_client_handle_key0(struct client *c, struct key_event *event,
 		    TAILQ_EMPTY(&wp->modes) &&
 		    !KEYC_IS_MOUSE(event->key)) {
 			if (~wp->flags & PANE_EXITED) {
-				window_pane_key(wp, c, s, s->curw, event->key,
-				    &event->m);
+				if (!server_client_is_bracket_paste(c,
+				    event->key)) {
+					window_pane_key(wp, c, s, s->curw,
+					    event->key, &event->m);
+				} else if (event->buf != NULL) {
+					window_pane_paste(wp, event->key,
+					    event->buf, event->len);
+				}
 				return (0);
 			}
 		}
