@@ -43,6 +43,7 @@ static void	server_client_check_modes(struct client *);
 static void	server_client_set_title(struct client *);
 static void	server_client_set_path(struct client *);
 static void	server_client_set_progress_bar(struct client *);
+static void	server_client_set_pointer_shape(struct client *);
 static void	server_client_reset_state(struct client *);
 static void	server_client_update_latest(struct client *);
 static int	server_client_handle_dead_key(struct window_pane *, key_code);
@@ -2365,6 +2366,9 @@ server_client_reset_state(struct client *c)
 			TAILQ_FOREACH(loop, &w->panes, entry) {
 				if (loop->screen->mode & MODE_MOUSE_ALL)
 					mode |= MODE_MOUSE_ALL;
+				else if (tty_term_has(tty->term, TTYC_SPTR) &&
+				    screen_pointer_shape(loop->screen) != 0)
+					mode |= MODE_MOUSE_ALL;
 			}
 		}
 		if (options_get_number(oo, "focus-follows-mouse") ||
@@ -2382,6 +2386,7 @@ server_client_reset_state(struct client *c)
 	/* Set the terminal mode and reset attributes. */
 	tty_update_mode(tty, mode, s);
 	tty_reset(tty);
+	server_client_set_pointer_shape(c);
 
 	/* All writing must be done, send a sync end (if it was started). */
 	tty_sync_end(tty);
@@ -2748,6 +2753,64 @@ server_client_set_progress_bar(struct client *c)
 		return;
 	memcpy(&c->progress_bar, pane_pb, sizeof c->progress_bar);
 	tty_set_progress_bar(&c->tty, &c->progress_bar);
+}
+
+/* Find the pane under the mouse pointer, or the active pane if not known. */
+static struct window_pane *
+server_client_pointer_pane(struct client *c)
+{
+	struct tty		*tty = &c->tty;
+	struct window		*w = c->session->curw->window;
+	struct window_pane	*wp;
+	u_int			 x = tty->mouse_last_x, y = tty->mouse_last_y;
+	u_int			 ox, oy, sx, sy, lines, width, sl_mpos;
+	int			 at;
+
+	if (w->menu != NULL)
+		return (NULL);
+	if (!options_get_number(c->session->options, "mouse") ||
+	    (~tty->flags & TTY_MOUSEPOSITION))
+		return (w->active);
+
+	at = status_at_line(c);
+	lines = status_line_size(c);
+	if (at != -1 && y >= (u_int)at && y < at + lines)
+		return (NULL);
+	if (at == 0)
+		y -= lines;
+	at = status_side_at_column(c);
+	width = status_side_size(c);
+	if (at != -1 && x >= (u_int)at && x < at + width)
+		return (NULL);
+	if (at == 0)
+		x -= width;
+
+	tty_window_offset(tty, &ox, &oy, &sx, &sy);
+	if (x > sx || y > sy)
+		return (NULL);
+	x += ox;
+	y += oy;
+
+	wp = window_get_active_at(w, x, y);
+	if (wp == NULL || server_client_check_mouse_in_pane(wp, x, y,
+	    &sl_mpos) != KEYC_MOUSE_LOCATION_PANE)
+		return (NULL);
+	return (wp);
+}
+
+/* Set client pointer shape from the pane under the mouse. */
+static void
+server_client_set_pointer_shape(struct client *c)
+{
+	struct window_pane	*wp;
+	u_int			 shape = 0;
+
+	if (!tty_term_has(c->tty.term, TTYC_SPTR))
+		return;
+	wp = server_client_pointer_pane(c);
+	if (wp != NULL)
+		shape = screen_pointer_shape(wp->screen);
+	tty_set_pointer_shape(&c->tty, shape);
 }
 
 /* Dispatch message from client. */

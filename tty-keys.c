@@ -786,6 +786,7 @@ tty_keys_apply(struct tty *tty, const char *buf, struct tty_key_parse *kp)
 		tty->mouse_last_x = kp->m.x;
 		tty->mouse_last_y = kp->m.y;
 		tty->mouse_last_b = kp->m.b;
+		tty->flags |= TTY_MOUSEPOSITION;
 		return;
 	}
 	for (i = 0; i < nitems(tty_keys_replies); i++) {

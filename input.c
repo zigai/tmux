@@ -172,6 +172,7 @@ static void	input_osc_9_9(struct input_ctx *, const char *);
 static void	input_osc_10(struct input_ctx *, const char *);
 static void	input_osc_11(struct input_ctx *, const char *);
 static void	input_osc_12(struct input_ctx *, const char *);
+static void	input_osc_22(struct input_ctx *, const char *);
 static void	input_osc_52(struct input_ctx *, const char *);
 static void	input_osc_104(struct input_ctx *, const char *);
 static void	input_osc_110(struct input_ctx *, const char *);
@@ -2770,6 +2771,9 @@ input_exit_osc(struct input_ctx *ictx)
 	case 12:
 		input_osc_12(ictx, p);
 		break;
+	case 22:
+		input_osc_22(ictx, p);
+		break;
 	case 52:
 		input_osc_52(ictx, p);
 		break;
@@ -3272,6 +3276,106 @@ input_osc_112(struct input_ctx *ictx, const char *p)
 {
 	if (*p == '\0') /* no arguments allowed */
 		screen_set_cursor_colour(ictx->ctx.s, -1);
+}
+
+/* Can any client showing this pane set the pointer shape? */
+static int
+input_osc_22_supported(struct window_pane *wp)
+{
+	struct client	*c;
+
+	if (wp == NULL)
+		return (0);
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->flags & (CLIENT_UNATTACHEDFLAGS|CLIENT_CONTROL))
+			continue;
+		if (c->session == NULL || !session_has(c->session, wp->window))
+			continue;
+		if (tty_term_has(c->tty.term, TTYC_SPTR))
+			return (1);
+	}
+	return (0);
+}
+
+/* Reply to an OSC 22 query. */
+static void
+input_osc_22_query(struct input_ctx *ictx, const char *p)
+{
+	struct evbuffer	*buffer;
+	char		*copy, *loop, *next;
+	const char	*answer, *end;
+	int		 supported;
+
+	if (ictx->input_end == INPUT_END_BEL)
+		end = "\007";
+	else
+		end = "\033\\";
+	supported = input_osc_22_supported(ictx->wp);
+
+	buffer = evbuffer_new();
+	if (buffer == NULL)
+		fatalx("out of memory");
+	loop = copy = xstrdup(p);
+	while ((next = strsep(&loop, ",")) != NULL) {
+		if (pointer_shape_find(next) != 0)
+			answer = supported ? "1" : "0";
+		else if (strcmp(next, "__current__") == 0) {
+			answer = pointer_shape_name(
+			    screen_pointer_shape(ictx->ctx.s));
+			if (answer == NULL)
+				answer = "0";
+		} else if (strcmp(next, "__default__") == 0 ||
+		    strcmp(next, "__grabbed__") == 0)
+			answer = "default";
+		else
+			answer = "0";
+		if (EVBUFFER_LENGTH(buffer) != 0)
+			evbuffer_add(buffer, ",", 1);
+		evbuffer_add(buffer, answer, strlen(answer));
+	}
+	free(copy);
+
+	input_reply(ictx, 1, "\033]22;%.*s%s", (int)EVBUFFER_LENGTH(buffer),
+	    EVBUFFER_DATA(buffer), end);
+	evbuffer_free(buffer);
+}
+
+/* Handle the OSC 22 sequence for setting the mouse pointer shape. */
+static void
+input_osc_22(struct input_ctx *ictx, const char *p)
+{
+	struct screen	*s = ictx->ctx.s;
+	char		*copy, *loop, *next, op = '=';
+	u_int		 shape;
+
+	if (*p == '=' || *p == '>' || *p == '<' || *p == '?')
+		op = *p++;
+	if (op == '?') {
+		input_osc_22_query(ictx, p);
+		return;
+	}
+	if (op == '<') {
+		screen_pop_pointer_shape(s);
+		return;
+	}
+
+	loop = copy = xstrdup(p);
+	while ((next = strsep(&loop, ",")) != NULL) {
+		if (*next == '\0') {
+			if (op == '=')
+				screen_set_pointer_shape(s, 0);
+			continue;
+		}
+		if ((shape = pointer_shape_find_alias(next)) == 0) {
+			log_debug("unknown pointer shape: %s", next);
+			continue;
+		}
+		if (op == '=')
+			screen_set_pointer_shape(s, shape);
+		else
+			screen_push_pointer_shape(s, shape);
+	}
+	free(copy);
 }
 
 /* Parse the OSC 133 D exit status. */

@@ -418,6 +418,8 @@ tty_start_tty(struct tty *tty)
 	tty->mouse_drag_flag = 0;
 	tty->mouse_drag_update = NULL;
 	tty->mouse_drag_release = NULL;
+	tty->flags &= ~TTY_MOUSEPOSITION;
+	tty->pointer_shape = 0;
 }
 
 void
@@ -529,6 +531,8 @@ tty_stop_tty(struct tty *tty)
 	}
 	if (tty->ccolour != -1)
 		tty_raw(tty, tty_term_string(tty->term, TTYC_CR));
+	if (tty->pointer_shape != 0)
+		tty_raw(tty, tty_term_string_s(tty->term, TTYC_SPTR, ""));
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_CNORM));
 	if (tty_term_has(tty->term, TTYC_KMOUS)) {
@@ -963,6 +967,10 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 			tty_puts(tty, "\033[?1000h\033[?1002h");
 		else if (mode & MODE_MOUSE_STANDARD)
 			tty_puts(tty, "\033[?1000h");
+
+		/* Some terminals reset the pointer shape with the mouse mode. */
+		if (tty->pointer_shape != 0)
+			tty->pointer_shape = -1;
 	}
 	tty->mode = mode;
 }
@@ -3064,4 +3072,19 @@ tty_set_progress_bar(struct tty *tty, struct progress_bar *pb)
 {
 	if (tty_term_has(tty->term, TTYC_SPB))
 		tty_putcode_ii(tty, TTYC_SPB, pb->state, pb->progress);
+}
+
+void
+tty_set_pointer_shape(struct tty *tty, u_int shape)
+{
+	const char	*name;
+
+	if ((int)shape == tty->pointer_shape)
+		return;
+	if (!tty_term_has(tty->term, TTYC_SPTR))
+		return;
+	if ((name = pointer_shape_name(shape)) == NULL)
+		name = "";
+	tty_putcode_s(tty, TTYC_SPTR, name);
+	tty->pointer_shape = shape;
 }
