@@ -738,7 +738,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 	for (i = 0; i < nitems(table); i++) {
 		if (strcmp(table[i].name, name) != 0)
 			continue;
-		if (version != 0 && version < table[i].version)
+		if (version < table[i].version)
 			continue;
 		tty_parse_client_features(c, table[i].features, ",");
 	}
