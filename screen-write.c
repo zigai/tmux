@@ -1279,6 +1279,7 @@ screen_write_flush_dirty(struct window_pane *wp)
 	struct screen		*s = &wp->base;
 	u_int			 y, sy = screen_size_y(s), lines = 0;
 
+	pane_ranges_sync(wp);
 	if (wp->sync_dirty == NULL)
 		return;
 

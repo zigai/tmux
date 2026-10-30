@@ -6,6 +6,13 @@ CHANGES FROM 3.7c TO 3.8
   reflow and the alternate screen. The history_collected counter is now 64
   bits.
 
+* Add text ranges (new-range -a text), which follow their text on the visible
+  screen for applications that redraw their own screen: text may move, be
+  re-wrapped or repeated, and is matched again only after a synchronized
+  update ends. -m creates one from given text, -b and -e give the text that
+  must come before and after it, and the range_anchor format shows the anchor.
+  Ranges created on the alternate screen are text ranges by default.
+
 * Many improvements to floating panes:
 
   - new-pane and split-window can now set the title with -T and border lines

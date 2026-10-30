@@ -454,7 +454,7 @@ count_events
 output '\033[?1049h\033[HALTERNATE'
 assert_field "$a" '#{range_state}|#{range_start_line}|#{range_text}|#{range_visible_y}' 'suspended|0|PRIMARY-TEXT|'
 assert_events 1
-b=$(new -r 0:0-0:8)
+b=$(new -a grid -r 0:0-0:8)
 assert_field "$b" '#{range_state}|#{range_text}' 'live|ALTERNATE'
 output '\033[2;1Hnew'
 assert_events 1

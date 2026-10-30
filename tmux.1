@@ -4269,11 +4269,14 @@ destroyed.
 .Tg new-range
 .It Xo Ic new\-range
 .Op Fl P
+.Op Fl a Ar anchor
+.Op Fl b Ar before
+.Op Fl e Ar after
 .Op Fl F Ar format
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
 .Op Fl g Ar group
-.Pq Fl S | Fl r Ar range
+.Pq Fl S | Fl r Ar range | Fl m Ar text
 .Xc
 Create a range over text in a pane.
 A range has an unsigned ID, unique for the lifetime of the server and never
@@ -4303,6 +4306,22 @@ The text of the range is captured as copy mode would copy it, joining wrapped
 rows, omitting padding and trimming trailing spaces on rows that are not
 wrapped.
 .Pp
+.Fl a
+sets how the range follows its text, either
+.Ql grid
+or
+.Ql text .
+The default is
+.Ql text
+on the alternate screen or with
+.Fl m
+and
+.Ql grid
+otherwise.
+.Pp
+A
+.Ql grid
+range is stored in the cells.
 Each covered cell is tagged with the range, as an OSC 8 hyperlink is, so the
 range is carried by the cell when the text scrolls into history, is trimmed
 from it, is moved by line insertion, deletion or a scroll region, is reflowed
@@ -4322,11 +4341,65 @@ The alternate screen is shown and the cells are in the saved primary screen.
 No cell is tagged.
 .El
 .Pp
-Ranges created on the alternate screen are gone when it is left.
+Grid ranges created on the alternate screen are gone when it is left.
 Respawning a pane clears its screen.
 Ranges that are gone remain listed until killed.
+.Pp
+A
+.Ql text
+range follows its text on the visible screen, for applications such as
+full-screen editors that redraw their own screen.
+Its text is taken from
+.Fl S
+or
+.Fl r ,
+or given with
+.Fl m .
+The text matches where the visible screen shows the same text, with each run of
+spaces, tabs and line breaks in the text and each run of spaces and breaks
+between rows on the screen treated as one space; rows wrapped by
+.Nm
+are joined without a space.
+If given,
+.Fl b
+and
+.Fl e
+must match the text immediately before and after it, ignoring any space
+between them.
+Of several matches, the one nearest the last position of the range is used,
+first by line and then by column.
+The range is searched for only on the screen, primary or alternate, on which it
+was created or last moved, and only when the text on that screen has changed
+and no synchronized update is in progress.
+Its state is one of:
+.Bl -tag -width Ds -offset indent
+.It live
+The text is shown in full.
+.It clipped
+Part of the text is shown at the start of the top row or the end of the bottom
+row, with the rest off the screen.
+The part ends or starts at a space in the text.
+Only
+.Fl e
+is checked for text clipped at the top and only
+.Fl b
+at the bottom.
+A full match is used before a clipped one.
+.It ambiguous
+There are several matches and none is nearest, or the range has never been
+found and there are several matches.
+.It hidden
+The text is not shown.
+.It suspended
+The other screen is shown.
+.El
+.Pp
+The position of a text range is that of the text found, and is empty if it is
+ambiguous or hidden.
 .Tg set-range
 .It Xo Ic set\-range
+.Op Fl b Ar before
+.Op Fl e Ar after
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
 .Op Fl r Ar range
@@ -4335,6 +4408,11 @@ Ranges that are gone remain listed until killed.
 Change the name of a range or, with
 .Fl r ,
 move it to different cells and capture its text again.
+.Fl b
+and
+.Fl e
+change the text that must be before and after a text range; an empty string
+removes it.
 .Tg kill-range
 .It Xo Ic kill\-range
 .Op Fl t Ar target-pane
@@ -7572,16 +7650,17 @@ The following variables are available, where appropriate:
 .It Li "pid" Ta "" Ta "Server PID"
 .It Li "prev_window_active" Ta "" Ta "1 if previous window in W: loop is active"
 .It Li "prev_window_index" Ta "" Ta "Index of previous window in W: loop"
-.It Li "range_end_line" Ta "" Ta "History line of last tagged cell, or empty if gone"
-.It Li "range_end_x" Ta "" Ta "Column of last tagged cell, or empty if gone"
+.It Li "range_anchor" Ta "" Ta "Range anchor, one of grid, text"
+.It Li "range_end_line" Ta "" Ta "History line of last cell, or empty if gone, ambiguous or hidden"
+.It Li "range_end_x" Ta "" Ta "Column of last cell, or empty if gone, ambiguous or hidden"
 .It Li "range_group" Ta "" Ta "Range group"
 .It Li "range_id" Ta "" Ta "Range ID"
 .It Li "range_name" Ta "" Ta "Range name"
-.It Li "range_start_line" Ta "" Ta "History line of first tagged cell, or empty if gone"
-.It Li "range_start_x" Ta "" Ta "Column of first tagged cell, or empty if gone"
-.It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone"
+.It Li "range_start_line" Ta "" Ta "History line of first cell, or empty if gone, ambiguous or hidden"
+.It Li "range_start_x" Ta "" Ta "Column of first cell, or empty if gone, ambiguous or hidden"
+.It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone, clipped, ambiguous, hidden"
 .It Li "range_text" Ta "" Ta "Text captured when range was created or moved"
-.It Li "range_visible_y" Ta "" Ta "First visible row with a tagged cell, or empty"
+.It Li "range_visible_y" Ta "" Ta "First visible row with a cell of range, or empty"
 .It Li "rectangle_toggle" Ta "" Ta "1 if rectangle selection is activated"
 .It Li "refresh_active" Ta "" Ta "1 if copy mode refresh is active"
 .It Li "scroll_position" Ta "" Ta "Scroll position in copy mode"
