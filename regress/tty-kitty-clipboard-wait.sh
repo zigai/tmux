@@ -2,10 +2,10 @@
 
 # Kitty clipboard protocol (OSC 5522) requests waiting for the terminal: only
 # the client a request was sent to may answer it, a new request from a pane
-# fails its older one, a reply split over two reads is not taken as keys, and
-# a request is failed when its client goes. The client which answers runs in
-# a pane of a second server, which itself asks a third server; stopping the
-# third keeps requests waiting.
+# fails its waiting read but not a write, a reply split over two reads is not
+# taken as keys, and a request is failed when its client goes. The client
+# which answers runs in a pane of a second server, which itself asks a third
+# server; stopping the third keeps requests waiting.
 
 . ./regress-common.inc
 
@@ -111,6 +111,23 @@ kill -CONT $stopped || exit 1
 wait_for_output '^[]5522;type=read:status=EBUSY:id=r1^[\'\
 '^[]5522;type=write:status=DONE:id=w2^[\' cat $TMP/out ||
     fail "write after failed read"
+
+# A write already sent to the terminal is not failed by a later one, so each
+# gets the terminal's answer.
+kill -STOP $stopped || exit 1
+: >$TMP/first
+check "\\033]5522;type=write:id=w3\\033\\\\\
+\\033]5522;type=wdata:mime=$PLAIN;MQ==\\033\\\\\
+\\033]5522;type=wdata\\033\\\\\
+\\033]5522;type=write:id=w4\\033\\\\\
+\\033]5522;type=wdata:mime=$PLAIN;Mg==\\033\\\\\
+\\033]5522;type=wdata\\033\\\\" '' "two writes"
+wait_for_output 2 eval "grep -ao 'type=write:id=tmux-' $TMP/first | wc -l |
+    tr -d ' '" || fail "writes not sent"
+kill -CONT $stopped || exit 1
+wait_for_output '^[]5522;type=write:status=DONE:id=w3^[\'\
+'^[]5522;type=write:status=DONE:id=w4^[\' cat $TMP/out ||
+    fail "write failed by write"
 
 # A reply split over two reads is still a reply, and the request fails when
 # its client goes.

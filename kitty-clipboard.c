@@ -466,8 +466,9 @@ kitty_clipboard_get(struct window_pane *wp)
 }
 
 /*
- * A pane has one request at a time, so a new request fails the one still
- * waiting for the terminal.
+ * A pane has one read at a time, so a new request fails the read still waiting
+ * for the terminal. A waiting write has already been sent and only the
+ * terminal knows if it was applied, so it keeps waiting for its answer.
  */
 static void
 kitty_clipboard_cancel(struct window_pane *wp)
@@ -475,10 +476,9 @@ kitty_clipboard_cancel(struct window_pane *wp)
 	struct kitty_clipboard_request	*r, *r1;
 
 	TAILQ_FOREACH_SAFE(r, &kitty_clipboard_requests, entry, r1) {
-		if (r->pane != wp->id)
+		if (r->pane != wp->id || r->write)
 			continue;
-		kitty_clipboard_status(wp, r->write ? "write" : "read",
-		    r->pane_id, "EBUSY", r->end);
+		kitty_clipboard_status(wp, "read", r->pane_id, "EBUSY", r->end);
 		kitty_clipboard_free_request(r);
 	}
 }
