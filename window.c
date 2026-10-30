@@ -1658,6 +1658,7 @@ window_pane_destroy(struct window_pane *wp)
 		wp->ictx = NULL;
 	}
 	notification_free(wp);
+	kitty_clipboard_free(wp);
 
 	if (wp->pipe_fd != -1) {
 		bufferevent_free(wp->pipe_event);

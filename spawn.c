@@ -339,6 +339,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 			sc->wp0->ictx = NULL;
 		}
 		notification_free(sc->wp0);
+		kitty_clipboard_free(sc->wp0);
 
 		/*
 		 * The old buffer is gone and the new one starts empty, so

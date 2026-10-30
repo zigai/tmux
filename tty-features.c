@@ -427,6 +427,13 @@ static const struct tty_feature tty_feature_kittygraphics = {
 	TERM_KITTYGRAPHICS
 };
 
+/* Terminal supports the Kitty clipboard protocol (OSC 5522). */
+static const struct tty_feature tty_feature_kittyclipboard = {
+	"kittyclipboard",
+	NULL,
+	TERM_KITTYCLIPBOARD
+};
+
 /* Terminal moves images with scroll regions. */
 static const char *const tty_feature_imagescroll_capabilities[] = {
 	"Iscrl",
@@ -492,6 +499,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_focus,
 	&tty_feature_ignorefkeys,
 	&tty_feature_imagescroll,
+	&tty_feature_kittyclipboard,
 	&tty_feature_kittycolours,
 	&tty_feature_kittygraphics,
 	&tty_feature_kittykeys,
@@ -764,6 +772,10 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "kittygraphics,"
 			      "kittykeys"
 		},
+		{ .name = "ghostty",
+		  .version = 10400,
+		  .features = "kittyclipboard"
+		},
 		{ .name = "kitty",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
 			      "ccolour,"
@@ -782,6 +794,10 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "kittycolours,"
 			      "kittygraphics,"
 			      "kittykeys"
+		},
+		{ .name = "kitty",
+		  .version = 2700,
+		  .features = "kittyclipboard"
 		},
 		{ .name = "Rio",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
@@ -813,7 +829,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 	for (i = 0; i < nitems(table); i++) {
 		if (strcmp(table[i].name, name) != 0)
 			continue;
-		if (version != 0 && version < table[i].version)
+		if (version < table[i].version)
 			continue;
 		tty_parse_client_features(c, table[i].features, ",");
 	}

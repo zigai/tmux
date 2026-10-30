@@ -81,7 +81,6 @@ static void	tty_draw_pane(struct tty *, const struct tty_ctx *, u_int);
 #define TTY_BLOCK_START(tty) (1 + ((tty)->sx * (tty)->sy) * 8)
 #define TTY_BLOCK_STOP(tty) (1 + ((tty)->sx * (tty)->sy) / 8)
 
-#define TTY_QUERY_TIMEOUT 5
 #define TTY_REQUEST_LIMIT 30
 
 static struct tty_style_ctx tty_default_style_ctx = {
@@ -579,6 +578,8 @@ tty_stop_tty(struct tty *tty)
 	}
 	if (tty_term_has(tty->term, TTYC_DSBP))
 		tty_raw(tty, tty_term_string(tty->term, TTYC_DSBP));
+	if (tty->mode & MODE_PASTE_EVENTS)
+		tty_raw(tty, "\033[?5522l");
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSESC));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSFCS));
@@ -1072,6 +1073,8 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 
 	if (tty->flags & TTY_NOCURSOR)
 		mode &= ~MODE_CURSOR;
+	if (~term->flags & TERM_KITTYCLIPBOARD)
+		mode &= ~MODE_PASTE_EVENTS;
 
 	if (tty_update_cursor(tty, mode, s) & MODE_CURSOR_BLINKING)
 		mode |= MODE_CURSOR_BLINKING;
@@ -1105,6 +1108,12 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 		/* Some terminals reset the pointer shape with the mouse mode. */
 		if (tty->pointer_shape != 0)
 			tty->pointer_shape = -1;
+	}
+	if (changed & MODE_PASTE_EVENTS) {
+		if (mode & MODE_PASTE_EVENTS)
+			tty_puts(tty, "\033[?5522h");
+		else
+			tty_puts(tty, "\033[?5522l");
 	}
 	tty->mode = mode;
 }

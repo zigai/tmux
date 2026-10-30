@@ -68,6 +68,8 @@ static int	tty_keys_clipboard(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_dnd(struct tty *, const char *, size_t, size_t *,
 		    int);
+static int	tty_keys_kitty_clipboard(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_device_attributes(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_device_attributes2(struct tty *, const char *, size_t,
@@ -101,6 +103,7 @@ static const struct {
 	{ KEYC_REPORT_CLIPBOARD, tty_keys_clipboard },
 	{ KEYC_REPORT_KITTY, tty_keys_kitty_query },
 	{ KEYC_REPORT_DND, tty_keys_dnd },
+	{ KEYC_REPORT_KITTY_CLIPBOARD, tty_keys_kitty_clipboard },
 	{ KEYC_REPORT_SYNC, tty_keys_sync },
 	{ KEYC_REPORT_DA, tty_keys_device_attributes },
 	{ KEYC_REPORT_DA2, tty_keys_device_attributes2 },
@@ -972,8 +975,15 @@ partial_key:
 	if (tty->flags & (TTY_WAITFG|TTY_WAITBG|TTY_OSC52QUERY) ||
 	    tty->flags & (TTY_WINSZQUERY|TTY_WINSZPIXELS) ||
 	    (tty->flags & TTY_ALL_REQUEST_FLAGS) != TTY_ALL_REQUEST_FLAGS ||
-	    !TAILQ_EMPTY(&c->input_requests)) {
+	    !TAILQ_EMPTY(&c->input_requests) ||
+	    kitty_clipboard_waiting(c)) {
 		log_debug("%s: increasing delay (active query)", c->name);
+		if (delay < 500)
+			delay = 500;
+	}
+	if (len > 2 && tty_keys_kitty_clipboard(tty, buf, len, &size, 0) == 1) {
+		log_debug("%s: increasing delay (partial clipboard reply)",
+		    c->name);
 		if (delay < 500)
 			delay = 500;
 	}
@@ -1517,6 +1527,45 @@ tty_keys_dnd(struct tty *tty, const char *buf, size_t len, size_t *size,
 }
 
 /*
+ * Handle a Kitty clipboard protocol reply. Returns 0 for success, -1 for
+ * failure, 1 for partial.
+ */
+static int
+tty_keys_kitty_clipboard(struct tty *tty, const char *buf, size_t len,
+    size_t *size, int apply)
+{
+	static const char	 prefix[] = "\033]5522;";
+	size_t			 i, end;
+
+	*size = 0;
+
+	for (i = 0; i < (sizeof prefix) - 1; i++) {
+		if (i == len)
+			return (1);
+		if (buf[i] != prefix[i])
+			return (-1);
+	}
+
+	/* Find the terminator, either BEL or ST. */
+	for (end = i; end < len; end++) {
+		if (buf[end] == '\007')
+			break;
+		if (buf[end] == '\\' && buf[end - 1] == '\033')
+			break;
+	}
+	if (end == len)
+		return (1);
+	*size = end + 1;
+	if (!apply)
+		return (0);
+
+	if (buf[end] == '\\')
+		end--;
+	kitty_clipboard_reply(tty->client, buf + i, end - i);
+	return (0);
+}
+
+/*
  * Handle primary device attributes input. Returns 0 for success, -1 for
  * failure, 1 for partial.
  */
@@ -1786,6 +1835,17 @@ tty_keys_device_attributes2(struct tty *tty, const char *buf, size_t len,
 	return (0);
 }
 
+/* Convert a version such as 1.4.0 to a number to compare, 0 if unknown. */
+static u_int
+tty_keys_version(const char *s)
+{
+	u_int	major, minor, patch = 0;
+
+	if (sscanf(s, "%u.%u.%u", &major, &minor, &patch) < 2)
+		return (0);
+	return (major * 10000 + minor * 100 + patch);
+}
+
 /*
  * Handle extended device attributes input. Returns 0 for success, -1 for
  * failure, 1 for partial.
@@ -1847,11 +1907,11 @@ tty_keys_extended_device_attributes(struct tty *tty, const char *buf,
 	else if (strncmp(tmp, "foot(", 5) == 0)
 		tty_default_features(c, "foot", 0);
 	else if (strncmp(tmp, "kitty(", 6) == 0)
-		tty_default_features(c, "kitty", 0);
+		tty_default_features(c, "kitty", tty_keys_version(tmp + 6));
 	else if (strncmp(tmp, "WezTerm ", 7) == 0)
 		tty_default_features(c, "WezTerm", 0);
 	else if (strncmp(tmp, "ghostty ", 8) == 0)
-		tty_default_features(c, "ghostty", 0);
+		tty_default_features(c, "ghostty", tty_keys_version(tmp + 8));
 	else if (strncmp(tmp, "Rio ", 4) == 0)
 		tty_default_features(c, "Rio", 0);
 	log_debug("%s: received extended DA %.*s", c->name, (int)*size, buf);
