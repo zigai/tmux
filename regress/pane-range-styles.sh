@@ -190,6 +190,17 @@ assert_line 1 "${E}[41mhello ${E}[34mworld${E}[39m${E}[49m" 'overlap'
 new -s 'bg=green' -r 0:0-0:4 >/dev/null
 assert_line 1 "${E}[42mhello${E}[41m ${E}[34mworld${E}[39m${E}[49m" 'newest wins'
 
+# A text range is drawn where its text is shown and follows it when the
+# application redraws its screen.
+fresh text
+output '\033[?1049h\033[H\033[2Jalpha beta\r\ngamma'
+a=$(new -s 'bg=red' -m beta)
+assert_line 1 "alpha ${E}[41mbeta${E}[49m" 'text range style'
+output '\033[H\033[2Jgamma\r\nsee beta here'
+assert_line 2 "see ${E}[41mbeta${E}[49m here" 'text range moved'
+assert_line 1 'gamma' 'text range left style'
+output '\033[?1049l'
+
 # A style is a format that can depend on the range state.
 fresh state
 a=$(new -s '#{?#{==:#{range_state},live},bg=green,bg=yellow}' -r 1:0-1:5)

@@ -1731,6 +1731,7 @@ pane_ranges_resolve_now(struct pane_ranges *prs)
 
 	pane_ranges_signature(prs->wp, &signature);
 	pane_ranges_resolve_all(prs, &signature);
+	pane_ranges_restyle(prs);
 }
 
 /* Create a range from a span or, for a text range, from given text. */
@@ -2032,22 +2033,49 @@ pane_ranges_drawing(struct window_pane *wp, struct screen *s)
 	return (prs);
 }
 
-/* Apply the style of the ranges of a cell to a copy of it. */
-void
-pane_ranges_draw_cell(struct pane_ranges *prs, struct grid_cell *gc)
+/* Check if a text range is shown at a visible position of its pane. */
+static int
+pane_range_text_covers(struct window_pane *wp, struct pane_range *r, u_int x,
+    u_int y)
 {
-	struct pane_range_set	*set;
-	struct grid_cell	*sc;
+	uint64_t	line;
 
-	if (gc->range == 0 || gc->range > prs->nsets)
-		return;
-	set = prs->sets[gc->range - 1];
-	if (set->style_generation != prs->generation)
-		pane_ranges_set_style(prs, set);
-	if (!set->styled)
-		return;
+	if (r->anchor != PANE_RANGE_TEXT || !r->positioned)
+		return (0);
+	if (r->state != PANE_RANGE_LIVE && r->state != PANE_RANGE_CLIPPED)
+		return (0);
+	if (r->alternate != SCREEN_IS_ALTERNATE(&wp->base))
+		return (0);
+	line = pane_ranges_line(wp->base.grid, y);
+	if (line < r->span.start_line || line > r->span.end_line)
+		return (0);
+	if (line == r->span.start_line && x < r->span.start_x)
+		return (0);
+	if (line == r->span.end_line && x > r->span.end_x)
+		return (0);
+	return (1);
+}
 
-	sc = &set->style;
+/* Get the newest text range shown at a visible position of a pane. */
+struct pane_range *
+pane_ranges_text_at(struct window_pane *wp, u_int x, u_int y)
+{
+	struct pane_ranges	*prs = wp->base.ranges;
+	struct pane_range	*r;
+
+	if (prs == NULL || prs->ntext == 0)
+		return (NULL);
+	TAILQ_FOREACH_REVERSE(r, &prs->list, pane_range_list, entry) {
+		if (pane_range_text_covers(wp, r, x, y))
+			return (r);
+	}
+	return (NULL);
+}
+
+/* Apply a range style to a copy of a cell. */
+static void
+pane_ranges_apply_style(const struct grid_cell *sc, struct grid_cell *gc)
+{
 	if (sc->fg != 8)
 		gc->fg = sc->fg;
 	if (sc->bg != 8)
@@ -2059,6 +2087,36 @@ pane_ranges_draw_cell(struct pane_ranges *prs, struct grid_cell *gc)
 		    (gc->attr & GRID_ATTR_CHARSET);
 	} else
 		gc->attr |= sc->attr;
+}
+
+/* Apply the style of the grid ranges of a cell to a copy of it. */
+static void
+pane_ranges_draw_set(struct pane_ranges *prs, struct grid_cell *gc)
+{
+	struct pane_range_set	*set;
+
+	if (gc->range == 0 || gc->range > prs->nsets)
+		return;
+	set = prs->sets[gc->range - 1];
+	if (set->style_generation != prs->generation)
+		pane_ranges_set_style(prs, set);
+	if (set->styled)
+		pane_ranges_apply_style(&set->style, gc);
+}
+
+/*
+ * Apply the style of the ranges shown at a visible position of a pane to a copy
+ * of its cell.
+ */
+void
+pane_ranges_draw_cell(struct pane_ranges *prs, struct grid_cell *gc, u_int x,
+    u_int y)
+{
+	struct pane_range	*r;
+
+	pane_ranges_draw_set(prs, gc);
+	if ((r = pane_ranges_text_at(prs->wp, x, y)) != NULL)
+		pane_ranges_apply_style(pane_range_style(prs, r), gc);
 }
 
 /*
@@ -2075,7 +2133,7 @@ pane_ranges_copy_cell(struct window_mode_entry *wme, struct grid_cell *gc)
 	if (wme->swp == wme->wp) {
 		prs = pane_ranges_drawing(wme->wp, &wme->wp->base);
 		if (prs != NULL)
-			pane_ranges_draw_cell(prs, gc);
+			pane_ranges_draw_set(prs, gc);
 	}
 	gc->range = 0;
 }
@@ -2088,21 +2146,24 @@ int
 pane_ranges_redraw_cells(struct tty *tty, const struct tty_ctx *ctx, u_int n)
 {
 	struct grid		*gd = ctx->s->grid;
+	struct window_pane	*wp = ctx->style_ctx.ranges->wp;
 	struct grid_line	*gl;
 	struct tty_ctx		 rctx;
-	u_int			 x, end;
+	u_int			 x, end, limit;
+	int			 found = 0;
 
 	gl = grid_get_line(gd, gd->hsize + ctx->ocy);
-	if (gl->extdsize == 0)
-		return (0);
 	end = ctx->ocx + n;
-	if (end > gl->cellsize)
-		end = gl->cellsize;
-	for (x = ctx->ocx; x < end; x++) {
-		if (pane_ranges_cell_set(gl, x) != 0)
-			break;
+	if (gl->extdsize != 0) {
+		limit = end;
+		if (limit > gl->cellsize)
+			limit = gl->cellsize;
+		for (x = ctx->ocx; !found && x < limit; x++)
+			found = (pane_ranges_cell_set(gl, x) != 0);
 	}
-	if (x >= end)
+	for (x = ctx->ocx; !found && x < end; x++)
+		found = (pane_ranges_text_at(wp, x, ctx->ocy) != NULL);
+	if (!found)
 		return (0);
 
 	memcpy(&rctx, ctx, sizeof rctx);

@@ -89,6 +89,7 @@ pane_ranges_visible(struct window_pane *wp, u_int x, u_int y)
 {
 	struct window_pane	*swp;
 	struct grid		*gd;
+	struct pane_range	*r, *text;
 
 	if (x >= wp->sx || y >= wp->sy)
 		return (NULL);
@@ -96,7 +97,11 @@ pane_ranges_visible(struct window_pane *wp, u_int x, u_int y)
 		if (wp->base.ranges == NULL)
 			return (NULL);
 		gd = wp->base.grid;
-		return (pane_ranges_cell(wp, gd, x, gd->hsize + y));
+		r = pane_ranges_cell(wp, gd, x, gd->hsize + y);
+		text = pane_ranges_text_at(wp, x, y);
+		if (text != NULL && (r == NULL || text->id > r->id))
+			return (text);
+		return (r);
 	}
 	gd = window_copy_get_cell_grid(wp, &swp, &x, &y);
 	if (gd == NULL)

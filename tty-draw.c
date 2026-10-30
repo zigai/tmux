@@ -278,7 +278,7 @@ tty_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py, u_int nx,
 				grid_view_get_cell(gd, px + i, py, &gc);
 				if (style_ctx->ranges != NULL) {
 					pane_ranges_draw_cell(style_ctx->ranges,
-					    &gc);
+					    &gc, px + i, py);
 				}
 				gcp = &gc;
 

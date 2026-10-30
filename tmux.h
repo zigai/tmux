@@ -3697,8 +3697,10 @@ void			  pane_range_set_style(struct window_pane *,
 void			  pane_ranges_style_changed(struct window_pane *);
 struct pane_ranges	 *pane_ranges_drawing(struct window_pane *,
     struct screen *);
+struct pane_range	 *pane_ranges_text_at(struct window_pane *, u_int,
+    u_int);
 void			  pane_ranges_draw_cell(struct pane_ranges *,
-    struct grid_cell *);
+    struct grid_cell *, u_int, u_int);
 void			  pane_ranges_copy_cell(struct window_mode_entry *,
     struct grid_cell *);
 int			  pane_ranges_redraw_cells(struct tty *,
