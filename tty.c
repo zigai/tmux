@@ -223,6 +223,9 @@ tty_timer_callback(__unused int fd, __unused short events, void *data)
 
 	if (tty->discarded < TTY_BLOCK_STOP(tty)) {
 		tty->flags &= ~TTY_BLOCK;
+#ifdef ENABLE_IMAGES
+		image_tty_discarded(tty);
+#endif
 		tty_invalidate(tty);
 		return;
 	}

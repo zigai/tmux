@@ -174,6 +174,49 @@ with image_test(sys.argv[1]) as test:
     assert len(seen) >= 5 and second.uploads == 1, (seen, second.uploads)
 
 with image_test(sys.argv[1]) as test:
+    # Frames too large for one terminal write are not discarded.
+    client = test.attach(kitty_graphics=True)
+    terminal = KittyTerminal()
+    emit(test, animation(1, [red, green, blue], 100) + b'\033[H' +
+        kitty('a=p,i=1,C=1,c=40,r=15'), terminal)
+    seen = watch(test, client, terminal, 1.0, kitty_colour)
+    cycle(seen, [red, green, blue])
+    assert len(seen) >= 6 and terminal.frame_uploads == 2, (seen,
+        terminal.frame_uploads)
+    assert test.run('display-message', '-p', '#{client_discarded}') == \
+        '0'
+
+with image_test(sys.argv[1]) as test:
+    # Kitty output discarded while the terminal cannot keep up is sent again:
+    # tmux clears the terminal's images and the redraw uploads them again.
+    client = test.attach(kitty_graphics=True)
+    terminal = KittyTerminal()
+    test.run('split-window', '-vd', '%s wait-for go; exec yes' % sys.argv[1])
+    emit(test, animation(1, [red, green, blue], 100, state=1) + put(1),
+        terminal)
+    for frame in (2, 3, 1):
+        emit(test, kitty('a=a,i=1,c=%d' % frame), terminal)
+    assert kitty_colour(terminal) == red
+
+    # Stop reading so the pane output and then the frame switch queue up.
+    test.run('wait-for', '-S', 'go')
+    time.sleep(2)
+    test.send(kitty('a=a,i=1,c=3'))
+    time.sleep(0.3)
+    client.read(1.5)
+    test.run('respawn-pane', '-k', '-t', '{bottom}', 'exec cat')
+    client.read(1.0)
+    assert int(test.run('display-message', '-p', '#{client_discarded}')) > 0
+
+    # Sequences may be cut where output was discarded, so only check the
+    # output from the last reset onwards.
+    reset = client.data.rfind(b'\033_Ga=d,d=A,q=2\033\\')
+    assert reset != -1, 'images were not reset'
+    terminal = KittyTerminal()
+    terminal.feed(client.data[reset:])
+    assert kitty_colour(terminal) == blue, kitty_colour(terminal)
+
+with image_test(sys.argv[1]) as test:
     # Placeholder cells play the animation through the virtual placement,
     # and relative placements of an animated parent play with it.
     client = test.attach(kitty_graphics=True)

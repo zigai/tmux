@@ -590,6 +590,18 @@ kitty_free_output_state(struct tty *tty, int send)
 	}
 }
 
+/*
+ * Delete everything which may be left on the terminal after output was
+ * discarded, so the following redraw sends it again. A sequence cut by the
+ * discard is ended first, along with any image load it left unfinished.
+ */
+void
+kitty_discard_output(struct tty *tty)
+{
+	tty_puts(tty, "\033\\\033_Gq=2,m=0;\033\\\033_Ga=d,d=A,q=2\033\\");
+	kitty_free_output_state(tty, 1);
+}
+
 /* Remove cached Kitty images no longer held by the server. */
 static void
 kitty_free_stale_images(struct tty *tty)
@@ -684,7 +696,11 @@ kitty_send_frame(struct tty *tty, struct kitty_image_cache *entry,
 		memcpy(p + (h - 1) * stride, p + (h - 2) * stride, stride);
 	}
 
-	/* Encode and send the pixels in base64 chunks. */
+	/*
+	 * Encode and send the pixels in base64 chunks. The terminal must get
+	 * every frame recorded as sent, so the output may not be discarded.
+	 */
+	tty->flags |= TTY_NOBLOCK;
 	for (offset = 0; offset < total; offset += size) {
 		size = total - offset;
 		if (size > KITTY_CHUNK_SIZE)

@@ -104,6 +104,13 @@ class KittyTerminal(Terminal):
             self.images[image] = width, height, self.frames[image][frame - 1]
             self.current[image] = frame
             self.switches.append((image, frame))
+        elif action == b'd' and fields.get(b'd') == b'A':
+            # Visible placements go, then images nothing else shows.
+            assert fields[b'q'] == b'2', fields
+            self.placements.clear()
+            for image in set(self.images) - set(self.virtuals):
+                self.images.pop(image)
+                self.frames.pop(image, None)
         elif action == b'd':
             assert fields[b'q'] == b'2' and fields[b'd'] in (b'i', b'I'), fields
             self.placements = {key: value for key, value in self.placements.items()
