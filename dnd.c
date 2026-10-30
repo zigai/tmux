@@ -99,8 +99,30 @@ struct dnd_tty {
 	struct dnd_msg	 first;
 };
 
+struct dnd_mime {
+	const char		*name;
+	size_t			 size;
+	RB_ENTRY(dnd_mime)	 entry;
+};
+RB_HEAD(dnd_mimes, dnd_mime);
+
 static u_int	dnd_generation = 1;
 static u_int	dnd_registered;
+
+static int
+dnd_mime_cmp(struct dnd_mime *dm1, struct dnd_mime *dm2)
+{
+	int	result;
+
+	result = memcmp(dm1->name, dm2->name,
+	    dm1->size < dm2->size ? dm1->size : dm2->size);
+	if (result != 0)
+		return (result);
+	if (dm1->size < dm2->size)
+		return (-1);
+	return (dm1->size > dm2->size);
+}
+RB_GENERATE_STATIC(dnd_mimes, dnd_mime, entry, dnd_mime_cmp);
 
 static int
 dnd_parse(const char *s, struct dnd_msg *msg)
@@ -247,19 +269,18 @@ dnd_chunk(int *chunked, struct dnd_msg *first, const struct dnd_msg *msg,
 static int
 dnd_set_string(char **s, const char *payload, int append)
 {
-	char	*new;
-	size_t	 size = 0;
+	size_t	 size = 0, add;
 
 	if (payload == NULL)
 		payload = "";
 	if (append && *s != NULL)
 		size = strlen(*s);
-	if (size + strlen(payload) > DND_LIST_SIZE)
+	add = strlen(payload);
+	if (size + add > DND_LIST_SIZE)
 		return (-1);
 	if (append && *s != NULL) {
-		xasprintf(&new, "%s%s", *s, payload);
-		free(*s);
-		*s = new;
+		*s = xrealloc(*s, size + add + 1);
+		memcpy(*s + size, payload, add + 1);
 		return (0);
 	}
 	free(*s);
@@ -334,9 +355,13 @@ dnd_send_cb(const char *s, void *arg)
 
 	log_debug("%s: %s: %s", __func__, tty->client->name, s);
 
-	/* Dropping any part of a transfer would break it, so never block. */
+	/*
+	 * Dropping any part of a transfer would break it, so neither discard
+	 * this nor let a redraw discard it while it is waiting to be written.
+	 */
 	flags = (tty->flags & TTY_BLOCK);
 	tty->flags &= ~TTY_BLOCK;
+	tty->flags |= TTY_NOBLOCK;
 	tty_putcode_s(tty, TTYC_DND, s);
 	tty->flags |= flags;
 }
@@ -979,13 +1004,17 @@ dnd_pane_free(struct window_pane *wp)
 	wp->dnd = NULL;
 }
 
+/* Union of the MIME types the panes in a window accept, in pane order. */
 static char *
 dnd_window_mimes(struct window *w, int *accept, int *offer)
 {
 	struct window_pane	*wp;
 	struct dnd_pane		*dp;
-	char			*list = NULL, *copy, *next, *loop, *tmp;
-	size_t			 len;
+	struct dnd_mimes	 tree;
+	struct dnd_mime		*dm, *dm1;
+	const char		*s;
+	char			*list;
+	size_t			 size = 0, used = 0, n;
 
 	*accept = *offer = 0;
 	TAILQ_FOREACH(wp, &w->panes, entry) {
@@ -996,33 +1025,44 @@ dnd_window_mimes(struct window *w, int *accept, int *offer)
 		if (!dp->accept)
 			continue;
 		*accept = 1;
+		if (dp->accept_mimes != NULL)
+			size += strlen(dp->accept_mimes) + 1;
+	}
+	if (!*accept)
+		return (NULL);
+
+	RB_INIT(&tree);
+	list = xmalloc(size + 1);
+	TAILQ_FOREACH(wp, &w->panes, entry) {
+		if ((dp = wp->dnd) == NULL || !dp->accept)
+			continue;
 		if (dp->accept_mimes == NULL)
 			continue;
-		loop = copy = xstrdup(dp->accept_mimes);
-		while ((next = strsep(&loop, " ")) != NULL) {
-			if (*next == '\0')
+		for (s = dp->accept_mimes; *s != '\0'; s += n) {
+			if (*s == ' ') {
+				n = 1;
 				continue;
-			if (list != NULL) {
-				len = strlen(next);
-				tmp = list;
-				while ((tmp = strstr(tmp, next)) != NULL) {
-					if ((tmp == list || tmp[-1] == ' ') &&
-					    (tmp[len] == ' ' || tmp[len] == '\0'))
-						break;
-					tmp += len;
-				}
-				if (tmp != NULL)
-					continue;
-				xasprintf(&tmp, "%s %s", list, next);
-				free(list);
-				list = tmp;
-			} else
-				list = xstrdup(next);
+			}
+			n = strcspn(s, " ");
+			dm = xmalloc(sizeof *dm);
+			dm->name = s;
+			dm->size = n;
+			if (RB_INSERT(dnd_mimes, &tree, dm) != NULL) {
+				free(dm);
+				continue;
+			}
+			if (used != 0)
+				list[used++] = ' ';
+			memcpy(list + used, s, n);
+			used += n;
 		}
-		free(copy);
 	}
-	if (*accept && list == NULL)
-		list = xstrdup("");
+	list[used] = '\0';
+
+	RB_FOREACH_SAFE(dm, dnd_mimes, &tree, dm1) {
+		RB_REMOVE(dnd_mimes, &tree, dm);
+		free(dm);
+	}
 	return (list);
 }
 

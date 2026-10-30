@@ -92,4 +92,30 @@ wait_for_output 1 $INNER display -p -t $RIGHT '#{pane_dead}' ||
 $INNER kill-pane -t $RIGHT || exit 1
 expect_none $DIR/out "killed dead pane"
 
+# A list over 1 MB loses the chunks past that, and tmux stays responsive.
+# Each chunk has 444 types, so 262 chunks fit.
+start=$(date +%s)
+awk 'BEGIN {
+	for (c = 0; c < 270; c++) {
+		s = ""
+		for (i = 0; i < 444; i++)
+			s = s sprintf("a/%06d ", c * 444 + i)
+		printf "\033]72;%sm=1;%s\033\\", c == 0 ? "t=a:" : "", s
+	}
+	printf "\033]72;m=0;x/end\033\\"
+}' >"$(pane_tty $LEFT)"
+pane_sync $LEFT $DIR/left
+$INNER neww -d -t inner:1 'sleep 100' || exit 1
+$INNER selectw -t inner:1 || exit 1
+$INNER selectw -t inner:0 || exit 1
+[ $(($(date +%s) - start)) -le 5 ] || fail "long list too slow"
+long_end()
+{
+	[ "$(osc72 $DIR/out | tail -1 | sed 's/.* //')" = "x/end" ]
+}
+wait_until long_end || fail "long list not sent"
+[ "$(osc72 $DIR/out | sed 's/^[^;]*;//' | tr -d '\n' | tr ' ' '\n' |
+    tail -2)" = "$(printf 'a/116327\nx/end')" ] ||
+    fail "long list not cut at 1 MB"
+
 exit 0
