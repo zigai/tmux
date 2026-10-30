@@ -139,6 +139,12 @@ expect $DIR/out2 't=a;text/x-moved text/plain' "pane joined, second client"
 $INNER break-pane -d -s $THIRD || exit 1
 expect $DIR/out1 't=a;text/plain' "pane broken out"
 expect $DIR/out2 't=a;text/plain' "pane broken out, second client"
+$INNER swap-pane -s $THIRD -t $LEFT || exit 1
+expect $DIR/out1 't=a;text/x-moved text/plain' "pane swapped in"
+expect $DIR/out2 't=a;text/x-moved text/plain' "pane swapped in, second client"
+$INNER swap-pane -s $THIRD -t $LEFT || exit 1
+expect $DIR/out1 't=a;text/plain' "pane swapped out"
+expect $DIR/out2 't=a;text/plain' "pane swapped out, second client"
 
 # A pane that goes away cancels its drop.
 terminal outer:0 "t=M:$(at $((OFF + 4)) 3):o=1;text/plain"

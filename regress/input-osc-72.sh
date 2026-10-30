@@ -46,6 +46,8 @@ pane $RIGHT 't=a:i=7:m=1;text/x-lost'
 printf '\033c' >"$(pane_tty $RIGHT)"
 pane $RIGHT 't=q:i=5'
 expect $DIR/right 't=q:i=5' "query after reset"
+pane $RIGHT 't=r:x=1:i=7'
+expect $DIR/right 't=R:x=1:i=7;EPERM' "request after reset"
 expect_none $DIR/out "registration changed by reset"
 
 # Long lists go to the terminal in chunks of 4096 bytes.
