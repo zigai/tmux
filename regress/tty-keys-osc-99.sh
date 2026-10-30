@@ -94,12 +94,26 @@ wait_until has c1 '\033]99;i=tmux:p=?;\033\\' || fail "no query sent"
 listen "$A" '\033]99;i=q:p=?;\033\\' q1
 sleep 0.5
 [ -z "$(read_file q1)" ] || fail "query answered without support"
-reply c1 '\033]99;i=tmux:p=?;a=focus,report:c=1:p=title,body\033\\'
-sleep 0.5
+# Keys typed after the reply show it has been handled.
+reply c1 '\033]99;i=tmux:p=?;a=focus,report:c=1:p=title,body\033\\sync'
+wait_for_output sync read_file q1 || fail "reply not handled"
 listen "$A" '\033]99;i=q:p=?;\033\\' q2
 check q2 '^[]99;i=q:p=?;a=focus,report:c=1:p=title,body^[\' "query"
 listen "$A" '\033]99;p=?;\007' q3
 check q3 '^[]99;i=0:p=?;a=focus,report:c=1:p=title,body^G' "query with BEL"
+
+# The answer comes from the client used most recently.
+reply c2 '\033]99;i=tmux:p=?;a=focus:p=title\033\\k2'
+wait_for_output '^[]99;i=0:p=?;a=focus,report:c=1:p=title,body^Gk2' \
+    read_file q3 || fail "reply not handled"
+listen "$A" '\033]99;i=q:p=?;\033\\' q4
+check q4 '^[]99;i=q:p=?;a=focus:p=title^[\' "query after using c2"
+reply c1 k1
+wait_for_output '^[]99;i=q:p=?;a=focus:p=title^[\k1' read_file q4 ||
+    fail "key not handled"
+listen "$A" '\033]99;i=q:p=?;\033\\' q5
+check q5 '^[]99;i=q:p=?;a=focus,report:c=1:p=title,body^[\' \
+    "query after using c1"
 
 # Activation is reported, focuses the pane and closes other copies.
 listen "$B" '\033]99;i=r:a=report;Click\033\\' r

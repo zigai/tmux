@@ -69,6 +69,13 @@ wait_until has full '\033]777;notify;After;\033\\' ||
 has full '\033]777;notify;No body' && fail "notification without body"
 has full '\033]777;other' && fail "other extension forwarded"
 
+$TMUX respawn-pane -k -t "$A" "stty raw -echo;
+    printf '\033]777;notify;bad \377;x\007\033]777;notify;after-bad;\007';
+    exec cat" || exit 1
+wait_until has full '\033]777;notify;after-bad;\033\\' ||
+    fail "notification not forwarded"
+has full '\033]777;notify;bad' && fail "invalid UTF-8 forwarded"
+
 sleep 0.5
 has plain '\033]777;' && fail "sent to client without osc777"
 
