@@ -409,8 +409,6 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 	if (kk->event < KITTY_EVENT_PRESS || kk->event > KITTY_EVENT_RELEASE)
 		return (-2);
 	kk->modifiers--;
-	if (kk->modifiers & KITTY_MOD_META)
-		return (-2);
 	keymods = kk->modifiers;
 
 	nkey = tty_kitty_function(kk->number, final);
@@ -450,7 +448,7 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 
 	if (keymods & KITTY_MOD_SHIFT)
 		nkey |= KEYC_SHIFT;
-	if (keymods & KITTY_MOD_ALT)
+	if (keymods & (KITTY_MOD_ALT|KITTY_MOD_META))
 		nkey |= KEYC_META|KEYC_IMPLIED_META;
 	if (keymods & KITTY_MOD_CTRL)
 		nkey |= KEYC_CTRL;
