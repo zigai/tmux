@@ -45,8 +45,14 @@
 /* Largest chunk of payload before encoding allowed by the protocol. */
 #define NOTIFICATION_CHUNK 2048
 
-/* Largest payload kept, as kitty does; more is dropped. */
+/*
+ * Largest payload kept, as kitty does. Like kitty, longer text is replaced by
+ * a message and a longer icon is dropped.
+ */
 #define NOTIFICATION_PAYLOAD (4 * 1024 * 1024)
+
+/* Text sent instead of a payload that is too long, as kitty does. */
+#define NOTIFICATION_TOOLONG " too long, truncated"
 
 /* Most icon names or types kept for one notification. */
 #define NOTIFICATION_NAMES 32
@@ -71,6 +77,8 @@ struct notification_payload {
 
 	char				*encoded;
 	size_t				 encodedlen;
+
+	int				 truncated;
 };
 
 struct notification_key {
@@ -403,8 +411,11 @@ static void
 notification_append(struct notification_payload *np, const void *buf,
     size_t len)
 {
+	if (np->truncated)
+		return;
 	if (np->size + len > NOTIFICATION_PAYLOAD) {
 		log_debug("%s: payload too long", __func__);
+		np->truncated = 1;
 		return;
 	}
 	np->data = xrealloc(np->data, np->size + len);
@@ -462,6 +473,8 @@ notification_add_payload(struct notification_payload *np, const char *payload,
 {
 	size_t	len = strlen(payload);
 
+	if (np->truncated)
+		return;
 	if (!encoded) {
 		notification_decode(np, 1);
 		notification_append(np, payload, len);
@@ -469,6 +482,7 @@ notification_add_payload(struct notification_payload *np, const char *payload,
 	}
 	if (np->encodedlen + len > NOTIFICATION_PAYLOAD) {
 		log_debug("%s: payload too long", __func__);
+		np->truncated = 1;
 		return;
 	}
 	np->encoded = xrealloc(np->encoded, np->encodedlen + len);
@@ -631,14 +645,27 @@ notification_send(struct window_pane *wp, struct notification *n)
 	struct notifications		*ns = notification_get(wp);
 	struct notification_entry	*ne;
 	struct notification_key		*nk;
+	struct notification_payload	*np;
 	struct client			*c;
 	struct evbuffer			*evb;
 	char				*oid, *keys;
 	const char			*value;
 	u_int				 i;
 
-	for (i = 0; i < nitems(n->payloads); i++)
-		notification_decode(&n->payloads[i], 1);
+	for (i = 0; i < nitems(n->payloads); i++) {
+		np = &n->payloads[i];
+		notification_decode(np, 1);
+		if (!np->truncated)
+			continue;
+		free(np->data);
+		np->data = NULL;
+		np->size = 0;
+		if (i != NOTIFICATION_ICON) {
+			np->truncated = 0;
+			notification_append(np, NOTIFICATION_TOOLONG,
+			    strlen(NOTIFICATION_TOOLONG));
+		}
+	}
 	notification_icon(ns, n);
 
 	if (n->id != NULL) {

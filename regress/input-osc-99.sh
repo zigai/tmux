@@ -130,6 +130,25 @@ emit "$A" '\033]99;i=i2:g=key1;Again\033\\'
 check "\033]99;i=$(oid $A ii2):a=focus,report:g=key1:p=title:e=1:d=0;QWdhaW4=\033\\\\\033]99;i=$(oid $A ii2):p=icon:e=1;iVBORw==\033\\\\" \
     "notification with kept icon"
 
+# A payload longer than kitty's limit is not sent with a gap: text is replaced
+# by a message and an icon is dropped.
+cat >"$DIR/long.sh" <<'EOF2'
+stty raw -echo
+a=$(head -c 900000 /dev/zero | tr '\0' A)
+b=$(head -c 900000 /dev/zero | tr '\0' B)
+for i in 1 2 3 4; do printf '\033]99;i=t:d=0;%s\033\\' "$a"; done
+printf '\033]99;i=t:d=0;%s\033\\\033]99;i=t;Tail\033\\' "$b"
+printf '\033]99;i=g:d=0;Big icon\033\\'
+for i in 1 2 3 4; do printf '\033]99;i=g:p=icon:d=0;%s\033\\' "$a"; done
+printf '\033]99;i=g:p=icon:d=0;%s\033\\\033]99;i=g:p=icon;Tail\033\\' "$b"
+exec cat
+EOF2
+$TMUX respawn-pane -k -t "$A" "sh '$DIR/long.sh'" || exit 1
+check "\033]99;i=$(oid $A it):a=focus,report:p=title:e=1;IHRvbyBsb25nLCB0cnVuY2F0ZWQ=\033\\\\" \
+    "long title"
+check "\033]99;i=$(oid $A ig):a=focus,report:p=title:e=1;QmlnIGljb24=\033\\\\" \
+    "long icon"
+
 # The application can close its notification.
 emit "$A" '\033]99;i=x:p=close;\033\\'
 check "\033]99;i=$(oid $A ix):p=close;\033\\\\" "close not sent"
