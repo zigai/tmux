@@ -110,6 +110,7 @@ struct pane_range_match {
 /* Pane and grid state that decides whether a scan is needed. */
 struct pane_ranges_signature {
 	uint64_t		 output;
+	u_int			 written;
 	pid_t			 pid;
 	u_int			 sx;
 	u_int			 sy;
@@ -137,6 +138,7 @@ struct pane_ranges {
 	u_int				  stamp;
 
 	struct pane_ranges_signature	  signature;
+	u_int				  written;
 
 	struct pane_range_records	  index;
 	struct pane_ranges_signature	  index_signature;
@@ -377,6 +379,7 @@ pane_ranges_signature(struct window_pane *wp,
 
 	memset(signature, 0, sizeof *signature);
 	signature->output = wp->output_generation;
+	signature->written = wp->base.ranges->written;
 	signature->pid = wp->pid;
 	signature->sx = gd->sx;
 	signature->sy = gd->sy;
@@ -1291,6 +1294,16 @@ pane_ranges_sync(struct window_pane *wp)
 
 	if (prs != NULL && prs->ntext != 0 && pane_ranges_resolve_text(prs))
 		prs->changed = 1;
+}
+
+/*
+ * Note that the screen of a pane has been written, which may be without any
+ * output from the pane, for example when it is reset.
+ */
+void
+pane_ranges_written(struct screen *s)
+{
+	s->ranges->written++;
 }
 
 /* Update the states of the ranges of a pane if it has changed. */

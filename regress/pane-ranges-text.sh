@@ -264,6 +264,14 @@ output '\033[?1049h\033[3;1Hstarted again in app'
 assert_field "$b" "$span" 'live|2:14-2:19|2'
 assert_field "$a" '#{range_state}' suspended
 
+# A reset of the screen without output from the pane is seen.
+fresh reset
+output '\033[?1049h\033[4;1Hhello world'
+a=$(new -m 'hello world')
+assert_field "$a" "$span" 'live|3:0-3:10|3'
+$TMUX send-keys -R -t "$pane" || fail reset
+assert_field "$a" "$span" 'hidden|:-:|'
+
 # A text range on the primary screen keeps its history line as text scrolls
 # and is hidden when the text leaves the screen.
 fresh primary

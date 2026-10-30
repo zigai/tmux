@@ -3552,6 +3552,7 @@ bitstr_t	*fuzzy_match(const char *, const char *, u_int, u_int *);
 void			  pane_ranges_check(void);
 void			  pane_ranges_update(struct window_pane *);
 void			  pane_ranges_sync(struct window_pane *);
+void			  pane_ranges_written(struct screen *);
 void			  pane_ranges_free(struct screen *);
 struct pane_range	 *pane_range_first(struct window_pane *);
 struct pane_range	 *pane_range_next(struct pane_range *);

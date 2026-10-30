@@ -422,6 +422,8 @@ screen_write_stop(struct screen_write_ctx *ctx)
 {
 	screen_write_collect_end(ctx);
 	screen_write_collect_flush(ctx, 0, __func__);
+	if (ctx->s->ranges != NULL)
+		pane_ranges_written(ctx->s);
 
 	screen_write_free_citem(ctx->item);
 }
