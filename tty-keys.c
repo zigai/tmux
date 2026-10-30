@@ -1535,6 +1535,9 @@ tty_keys_device_attributes(struct tty *tty, const char *buf, size_t len,
 	tty_update_features(tty);
 	tty->flags |= TTY_HAVEDA;
 
+	/* Any drag and drop query reply came before this one. */
+	tty->flags |= TTY_HAVEDND;
+
 	return (0);
 }
 

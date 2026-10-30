@@ -8,8 +8,29 @@
 
 start
 
-# Without the feature, nothing is answered or sent on.
+# A terminal that does not answer the query is known not to support it once
+# it answers the queries after it, so Escape is not held for longer.
+$INNER set -g @meta "" || exit 1
+$INNER bind -n M-x set -g @meta 1 || exit 1
 attach outer $DIR/out
+$OUTER send-keys -t outer -l "$(printf '\033]10;rgb:ffff/ffff/ffff\033\\')"
+$OUTER send-keys -t outer -l "$(printf '\033]11;rgb:0000/0000/0000\033\\')"
+wait_for_text tmux $INNER display -p '#{client_termtype}' ||
+    fail "no terminal type"
+$OUTER send-keys -t outer Escape || exit 1
+sleep 0.2
+$OUTER send-keys -t outer x || exit 1
+keys()
+{
+	[ -n "$($INNER show -gv @meta)" ] || grep -q x $DIR/right
+}
+wait_until keys || fail "no keys"
+[ -z "$($INNER show -gv @meta)" ] || fail "Escape held after attach"
+$INNER display -p '#{client_termfeatures}' | grep -q dnd &&
+    fail "dnd without answer"
+: >$DIR/right
+
+# Without the feature, nothing is answered or sent on.
 pane $RIGHT 't=q:i=5'
 pane $RIGHT 't=r:x=1:i=7'
 pane $RIGHT 't=a:i=7;text/plain'
