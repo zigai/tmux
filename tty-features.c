@@ -291,6 +291,13 @@ static const struct tty_feature tty_feature_sync = {
 	0
 };
 
+/* Terminal supports the Kitty keyboard protocol. */
+static const struct tty_feature tty_feature_kittykeys = {
+	"kittykeys",
+	NULL,
+	TERM_KITTYKEYS
+};
+
 /* Terminal supports extended keys. */
 static const char *const tty_feature_extkeys_capabilities[] = {
 	"Eneks=\\E[>4;2m",
@@ -475,6 +482,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_imagescroll,
 	&tty_feature_kittycolours,
 	&tty_feature_kittygraphics,
+	&tty_feature_kittykeys,
 	&tty_feature_margins,
 	&tty_feature_mouse,
 	&tty_feature_osc7,
@@ -741,7 +749,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "usstyle,"
 			      "progressbar,"
 			      "pointershape,"
-			      "kittygraphics"
+			      "kittygraphics,"
+			      "kittykeys"
 		},
 		{ .name = "kitty",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
@@ -759,7 +768,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "sync,"
 			      "usstyle,"
 			      "kittycolours,"
-			      "kittygraphics"
+			      "kittygraphics,"
+			      "kittykeys"
 		},
 		{ .name = "Rio",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","

@@ -95,7 +95,7 @@ cmd_send_keys_inject_key(struct cmdq_item *item, struct cmdq_item *after,
 
 	wme = TAILQ_FIRST(&wp->modes);
 	if (wme == NULL || wme->mode->key_table == NULL) {
-		if (window_pane_key(wp, tc, s, wl, key, NULL) != 0)
+		if (window_pane_key(wp, tc, s, wl, key, NULL, NULL) != 0)
 			return (NULL);
 		return (item);
 	}
@@ -120,7 +120,6 @@ cmd_send_keys_inject_string(struct cmdq_item *item, struct cmdq_item *after,
 	key_code		 key;
 	char			*endptr;
 	long			 n;
-	int			 literal;
 
 	if (args_has(args, 'H')) {
 		n = strtol(s, &endptr, 16);
@@ -130,32 +129,33 @@ cmd_send_keys_inject_string(struct cmdq_item *item, struct cmdq_item *after,
 		    KEYC_LITERAL|n));
 	}
 
-	literal = args_has(args, 'l');
-	if (!literal) {
+	if (!args_has(args, 'l')) {
 		key = key_string_lookup_string(s);
 		if (key != KEYC_NONE && key != KEYC_UNKNOWN) {
+			/*
+			 * A recognized key name that the pane could not
+			 * encode is dropped, not typed as literal text.
+			 */
 			after = cmd_send_keys_inject_key(item, after, args,
 			    key);
 			if (after != NULL)
 				return (after);
+			return (item);
 		}
-		literal = 1;
 	}
-	if (literal) {
-		ud = utf8_fromcstr(s);
-		for (loop = ud; loop->size != 0; loop++) {
-			if (loop->size == 1 && loop->data[0] <= 0x7f)
-				key = loop->data[0];
-			else {
-				if (utf8_from_data(loop, &uc) != UTF8_DONE)
-					continue;
-				key = uc;
-			}
-			after = cmd_send_keys_inject_key(item, after, args,
-			    key);
+
+	ud = utf8_fromcstr(s);
+	for (loop = ud; loop->size != 0; loop++) {
+		if (loop->size == 1 && loop->data[0] <= 0x7f)
+			key = loop->data[0];
+		else {
+			if (utf8_from_data(loop, &uc) != UTF8_DONE)
+				continue;
+			key = uc;
 		}
-		free(ud);
+		after = cmd_send_keys_inject_key(item, after, args, key);
 	}
+	free(ud);
 	return (after);
 }
 
@@ -218,7 +218,7 @@ cmd_send_keys_exec(struct cmd *self, struct cmdq_item *item)
 			cmdq_error(item, "no mouse target");
 			return (CMD_RETURN_ERROR);
 		}
-		window_pane_key(wp, tc, s, wl, m->key, m);
+		window_pane_key(wp, tc, s, wl, m->key, m, NULL);
 		return (CMD_RETURN_NORMAL);
 	}
 

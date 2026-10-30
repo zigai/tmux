@@ -1635,6 +1635,34 @@ format_cb_client_height(struct format_tree *ft)
 	return (NULL);
 }
 
+/* Callback for client_key_mode. */
+static void *
+format_cb_client_key_mode(struct format_tree *ft)
+{
+	struct client	*c = ft->c;
+	const char	*mode;
+	char		*s;
+
+	if (c == NULL || (~c->tty.flags & TTY_STARTED))
+		return (NULL);
+
+	if (c->tty.flags & TTY_KKBPUSHED) {
+		xasprintf(&s, "Kitty %u", c->tty.kitty_keys);
+		return (s);
+	}
+	if (c->tty.flags & TTY_EXTKEYS)
+		mode = "Ext";
+	else
+		mode = "VT10x";
+
+	/* The terminal supports Kitty keys but they are not in use. */
+	if (c->tty.term->flags & TERM_KITTYKEYS) {
+		xasprintf(&s, "%s (Kitty)", mode);
+		return (s);
+	}
+	return (xstrdup(mode));
+}
+
 /* Callback for client_key_table. */
 static void *
 format_cb_client_key_table(struct format_tree *ft)
@@ -2564,7 +2592,15 @@ format_cb_pane_unseen_changes(struct format_tree *ft)
 static void *
 format_cb_pane_key_mode(struct format_tree *ft)
 {
+	char	*s;
+	u_int	 flags;
+
 	if (ft->wp != NULL && ft->wp->screen != NULL) {
+		flags = input_kitty_flags(ft->wp->screen);
+		if (flags != 0) {
+			xasprintf(&s, "Kitty %u", flags);
+			return (s);
+		}
 		switch (ft->wp->screen->mode & EXTENDED_KEY_MODES) {
 		case MODE_KEYS_EXTENDED:
 			return (xstrdup("Ext 1"));
@@ -3730,6 +3766,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "client_height", FORMAT_TABLE_STRING,
 	  format_cb_client_height
+	},
+	{ "client_key_mode", FORMAT_TABLE_STRING,
+	  format_cb_client_key_mode
 	},
 	{ "client_key_table", FORMAT_TABLE_STRING,
 	  format_cb_client_key_table

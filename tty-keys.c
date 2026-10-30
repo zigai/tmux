@@ -46,6 +46,7 @@ struct tty_key_parse {
 	key_code		 key;
 	size_t			 size;
 	struct mouse_event	 m;
+	struct kitty_key	 kitty;
 
 	int			 flags;
 #define TTY_KEY_PARSE_NO_META 0x1
@@ -96,6 +97,7 @@ static const struct {
 	int	      (*fn)(struct tty *, const char *, size_t, size_t *, int);
 } tty_keys_replies[] = {
 	{ KEYC_REPORT_CLIPBOARD, tty_keys_clipboard },
+	{ KEYC_REPORT_KITTY, tty_keys_kitty_query },
 	{ KEYC_REPORT_SYNC, tty_keys_sync },
 	{ KEYC_REPORT_DA, tty_keys_device_attributes },
 	{ KEYC_REPORT_DA2, tty_keys_device_attributes2 },
@@ -694,6 +696,19 @@ tty_keys_reply(struct tty *tty, const char *buf, size_t len,
 		return (1);
 	}
 
+	switch (tty_keys_kitty(tty, buf, len, &kp->size, &kp->key,
+	    &kp->kitty)) {
+	case 0:		/* yes */
+		return (0);
+	case -1:	/* no, or not valid */
+		break;
+	case -2:	/* yes, but not representable by tmux */
+		kp->key = KEYC_UNKNOWN;
+		return (0);
+	case 1:		/* partial */
+		return (1);
+	}
+
 	return (tty_keys_extended_key(tty, buf, len, &kp->size, &kp->key));
 }
 
@@ -1005,6 +1020,7 @@ complete_key:
 		event = xcalloc(1, sizeof *event);
 		event->key = kp.key;
 		memcpy(&event->m, &kp.m, sizeof event->m);
+		memcpy(&event->kitty, &kp.kitty, sizeof event->kitty);
 
 		event->buf = xmalloc(kp.size);
 		event->len = kp.size;
@@ -1053,6 +1069,8 @@ tty_keys_extended_key(struct tty *tty, const char *buf, size_t len,
 	utf8_char	 uc;
 
 	*size = 0;
+	if (tty->flags & TTY_KKBPUSHED)
+		return (-1);
 
 	/* First two bytes are always \033[. */
 	if (buf[0] != '\033')
@@ -1529,6 +1547,8 @@ tty_keys_device_attributes(struct tty *tty, const char *buf, size_t len,
 	}
 	log_debug("%s: received primary DA %.*s", c->name, (int)*size, buf);
 
+	/* The keyboard query, if sent, is answered first; else nothing is due. */
+	tty->flags |= TTY_HAVEKKB;
 	tty_update_features(tty);
 	tty->flags |= TTY_HAVEDA;
 
