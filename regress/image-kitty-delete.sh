@@ -138,11 +138,12 @@ with image_test(sys.argv[1]) as test:
     snapshot(test, client, {})
     test.run('send-keys', '-X', 'cancel')
 
-# Deletion on the alternate screen leaves the saved primary placements intact.
+# Deletion on the alternate screen, which has its own images, leaves the saved
+# primary placements intact.
 with image_test(sys.argv[1]) as test:
     client = test.attach()
     test.emit(uploads + b'\033[H' + kitty(put + ',p=1') + b'\033[?1049h\033[H' +
-        kitty(put + ',p=2'))
+        uploads + kitty(put + ',p=2'))
     snapshot(test, client, rectangle(red))
     test.emit(kitty('a=d,d=I,i=7'))
     snapshot(test, client, {})

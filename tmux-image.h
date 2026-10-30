@@ -127,6 +127,7 @@ u_int		 image_get_order_id(struct image *);
 void		 image_set_order_id(struct image *, u_int);
 int32_t			 image_get_zindex(struct image *);
 void			 image_set_zindex(struct image *, int32_t);
+void			 image_set_transient(struct image *, int);
 enum image_type	 image_get_type(struct image *);
 void		 image_ref(struct image *);
 void		 image_free(struct image *);
@@ -247,6 +248,9 @@ void		 kitty_parse_input(struct input_ctx *, struct window_pane *,
 		     size_t);
 void		 kitty_free_state(void *);
 void		 kitty_remove_image(struct image *);
+void		 kitty_clear_screen(void *, struct screen_write_ctx *);
+void		 kitty_alternate_screen(void *, struct screen_write_ctx *);
+void		 kitty_reset(void *, struct screen_write_ctx *);
 
 #endif /* ENABLE_IMAGES */
 

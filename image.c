@@ -68,6 +68,7 @@ struct image {
 	struct image_list	 children;
 	u_int			 order_id;
 	int32_t			 zindex;
+	int			 transient;
 
 	/*
 	 * RGBA pixels use four bytes each. Stride is the number of bytes
@@ -179,6 +180,13 @@ image_set_zindex(struct image *im, int32_t zindex)
 	im->zindex = zindex;
 }
 
+/* Mark an image as only needed for a short time. */
+void
+image_set_transient(struct image *im, int transient)
+{
+	im->transient = transient;
+}
+
 /* Get the type of an image. */
 enum image_type
 image_get_type(struct image *im)
@@ -199,12 +207,30 @@ image_remove_all(struct image *im)
 	image_free(im);
 }
 
-/* Find the oldest image. */
+/*
+ * Get the order to remove an image when over the limits: unused transient
+ * images first, then other unused images, then transient images. Kitty images
+ * without placements are unused.
+ */
+static int
+image_eviction_priority(struct image *im)
+{
+	int	priority = (im->transient ? 0 : 1);
+
+	if (im->parent != NULL ||
+	    im->type != IMAGE_TYPE_KITTY ||
+	    !TAILQ_EMPTY(&im->children))
+		priority += 2;
+	return (priority);
+}
+
+/* Find the image to remove first, the oldest with the lowest priority. */
 static struct image *
 image_find_oldest(struct image *keep, size_t size)
 {
-	struct image	*im, *parent;
+	struct image	*im, *parent, *found = NULL;
 	size_t		 limit;
+	int		 priority, found_priority = INT_MAX;
 
 	limit = options_get_number(global_options, "image-total-size-limit");
 	TAILQ_FOREACH_REVERSE(im, &all_images, image_list, all_entry) {
@@ -215,10 +241,15 @@ image_find_oldest(struct image *keep, size_t size)
 			if (parent == im)
 				break;
 		}
-		if (parent == NULL)
-			return (im);
+		if (parent != NULL)
+			continue;
+		priority = image_eviction_priority(im);
+		if (priority < found_priority) {
+			found = im;
+			found_priority = priority;
+		}
 	}
-	return (NULL);
+	return (found);
 }
 
 /* Is there enough space for this image or frame? */

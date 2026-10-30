@@ -45,7 +45,7 @@ with image_test(sys.argv[1]) as test:
 
     # A query must neither replace the existing source nor draw its own pixels.
     test.emit(kitty('a=q,i=7,f=32,s=1,v=1', b'\0\xff\0\xff') +
-        b'\033[2J\033[H' + kitty('a=p,i=7,p=9,C=1'))
+        kitty('a=d,d=a') + b'\033[H' + kitty('a=p,i=7,p=9,C=1'))
     expected = {(x, y): colours[y * w + x]
         for y in range(h) for x in range(w)}
     check(test, client, expected)
@@ -59,7 +59,7 @@ with image_test(sys.argv[1]) as test:
         terminal = Terminal()
         terminal.feed(client.data)
         terminal.check(expected)
-        test.emit(b'\033[2J\033[H' + kitty('a=p,i=7,p=9,C=1'))
+        test.emit(kitty('a=d,d=a') + b'\033[H' + kitty('a=p,i=7,p=9,C=1'))
         check(test, client, expected)
 
     # Text and cursor movement between chunks do not reset the upload.

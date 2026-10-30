@@ -1399,6 +1399,31 @@ image_grid_resize_width(struct grid *gd, u_int new_sx)
 	}
 }
 
+/*
+ * Find where repeated index moves the cursor and how many times it scrolls
+ * the region. Index scrolls only at the region bottom and stops at the screen
+ * bottom outside the region.
+ */
+static u_int
+image_index_lines(struct screen *s, u_int cy, u_int rows, u_int *end_y)
+{
+	u_int	y = cy, lines = 0, limit, i;
+
+	limit = screen_size_y(s);
+	if (cy >= s->rupper && cy <= s->rlower)
+		limit += s->rlower - cy;
+	if (rows > limit)
+		rows = limit;
+	for (i = 0; i < rows; i++) {
+		if (y == s->rlower)
+			lines++;
+		else if (y < screen_size_y(s) - 1)
+			y++;
+	}
+	*end_y = y;
+	return (lines);
+}
+
 /* Place an image at the cursor. */
 void
 image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
@@ -1412,24 +1437,59 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	struct image_line	*line;
 	u_int			 cx = s->cx, cy = s->cy, y, lines;
 	u_int			 sx = ig->sx, sy = ig->sy;
-	u_int			 cursor_x = 0, cursor_rows;
+	u_int			 cursor_x = 0, cursor_y, cursor_rows;
 	u_int			 origin_y = 0, h_origin_y, region_height;
 	u_int			 remaining, n;
+	int			 wrap = 0, history = 1;
 
 	if (sx > screen_size_x(s) - cx)
 		sx = screen_size_x(s) - cx;
 	if (sx == 0)
 		return;
 
-	/* Kitty moves to the last image row; SIXEL advances past it. */
+	/*
+	 * Kitty moves to the last image row, or the next row if the image
+	 * reaches the right edge; SIXEL advances past it.
+	 */
 	cursor_rows = sy;
-	if (image_get_type(im) == IMAGE_TYPE_KITTY)
-		cursor_rows--;
+	if (image_get_type(im) == IMAGE_TYPE_KITTY) {
+		wrap = (ig->sx >= screen_size_x(s) - cx);
+		if (!wrap)
+			cursor_rows--;
+	}
 
 	/* Scroll images that move the cursor. */
+	cursor_y = cy + cursor_rows;
 	if (no_cursor) {
 		if (sy > screen_size_y(s) - cy)
 			sy = screen_size_y(s) - cy;
+	} else if (image_get_type(im) == IMAGE_TYPE_KITTY &&
+	    (s->rupper != 0 || s->rlower != screen_size_y(s) - 1)) {
+		history = 0;
+		lines = image_index_lines(s, cy, cursor_rows, &cursor_y);
+		region_height = s->rlower - s->rupper + 1;
+		for (remaining = lines; remaining > 0; remaining -= n) {
+			n = (remaining < region_height ? remaining :
+			    region_height);
+			screen_write_scrollup(ctx, n, bg);
+		}
+
+		/* Only an image wholly inside the region moves with it. */
+		if (cy >= s->rupper && cy + sy - 1 <= s->rlower) {
+			if (lines > cy - s->rupper) {
+				origin_y = lines - (cy - s->rupper);
+				cy = s->rupper;
+			} else
+				cy -= lines;
+			sy = (origin_y < sy ? sy - origin_y : 0);
+		}
+		if (sy > screen_size_y(s) - cy)
+			sy = screen_size_y(s) - cy;
+		if (sy == 0) {
+			screen_write_cursormove(ctx, wrap ? 0 : cx + sx,
+			    cursor_y, 0);
+			return;
+		}
 	} else if (screen_size_y(s) - cy <= cursor_rows) {
 		lines = cursor_rows - (screen_size_y(s) - cy) + 1;
 		region_height = s->rlower - s->rupper + 1;
@@ -1454,6 +1514,7 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 		cy = s->cy;
 		sy -= origin_y;
 		cursor_rows -= origin_y;
+		cursor_y = cy + cursor_rows;
 	}
 	plmt = image_placement_create(gd, im);
 	if (sx < ig->sx) {
@@ -1462,7 +1523,7 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	}
 
 	/* Attach scrolled image rows to the available history lines. */
-	h_origin_y = origin_y;
+	h_origin_y = (history ? origin_y : 0);
 	if (h_origin_y > gd->hsize)
 		h_origin_y = gd->hsize;
 	for (y = 0; y < h_origin_y; y++) {
@@ -1481,9 +1542,9 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	image_store_prune(gd->images);
 	image_redraw_area(ctx, cx, cy, sx, sy);
 	if (!no_cursor) {
-		if (image_get_type(im) == IMAGE_TYPE_KITTY)
+		if (image_get_type(im) == IMAGE_TYPE_KITTY && !wrap)
 			cursor_x = cx + sx;
-		screen_write_cursormove(ctx, cursor_x, cy + cursor_rows, 0);
+		screen_write_cursormove(ctx, cursor_x, cursor_y, 0);
 	}
 }
 

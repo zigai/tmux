@@ -1543,21 +1543,19 @@ tty_keys_sync(struct tty *tty, const char *buf, size_t len, size_t *size,
 
 #ifdef ENABLE_IMAGES
 /*
- * Handle a Kitty graphics query response. Returns 0 for success, -1 for
- * failure, 1 for partial.
+ * Handle a Kitty graphics response. Responses other than to the query are
+ * ignored. Returns 0 for success, -1 for failure, 1 for partial.
  */
 static int
 tty_keys_kitty_graphics(struct tty *tty, const char *buf, size_t len,
     size_t *size, int apply)
 {
 	struct client		*c = tty->client;
-	static const char	 prefix[] = "\033_Gi=31;";
-	size_t			 i, end;
+	static const char	 prefix[] = "\033_G";
+	static const char	 query[] = "i=31;";
+	size_t			 i, end, qlen = (sizeof query) - 1;
 
 	*size = 0;
-	if (tty->flags & TTY_HAVEKITTYGRAPHICS)
-		return (-1);
-
 	for (i = 0; i < (sizeof prefix) - 1; i++) {
 		if (i == len)
 			return (1);
@@ -1578,12 +1576,16 @@ tty_keys_kitty_graphics(struct tty *tty, const char *buf, size_t len,
 	if (!apply)
 		return (0);
 
-	if (end - i == 2 && memcmp(buf + i, "OK", 2) == 0) {
+	log_debug("%s: received Kitty graphics response %.*s", c->name,
+	    (int)*size, buf);
+	if (end - i < qlen || memcmp(buf + i, query, qlen) != 0)
+		return (0);
+	if (~tty->flags & TTY_HAVEKITTYGRAPHICS &&
+	    end - i == qlen + 2 &&
+	    memcmp(buf + i + qlen, "OK", 2) == 0) {
 		tty_parse_client_features(c, "kittygraphics", ",");
 		tty_update_features(tty);
 	}
-	log_debug("%s: received Kitty graphics response %.*s", c->name,
-	    (int)*size, buf);
 	tty->flags |= TTY_HAVEKITTYGRAPHICS;
 
 	return (0);

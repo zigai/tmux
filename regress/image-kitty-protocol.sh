@@ -108,7 +108,8 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         pixel = '/wAA/w=='
         transmit = 'a=t,i=7,f=32,s=1,v=1'
         ok = graphics('i=7', 'OK')
-        invalid = graphics('i=7', 'EINVAL')
+        invalid = graphics('i=7', 'EINVAL: invalid data')
+        invalid_placement = graphics('i=7', 'EINVAL: invalid placement')
         check('transmit', graphics(transmit, pixel), ok)
         check('defaults', graphics('i=7,s=1,v=1', pixel), ok)
         check('rgb', graphics('a=t,i=7,f=24,s=1,v=1', '/wAA'), ok)
@@ -118,27 +119,43 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('chunks', graphics(transmit + ',m=1', '/wAA') +
               graphics('m=0', '/w=='), ok)
         check('nonzero-padding', graphics(transmit + ',m=1', '/wAA') +
-              graphics('m=0', '/z=='), invalid)
+              graphics('m=0', '/z==') + graphics('m=0', '/w=='), ok)
         check('empty-decoded-chunk', graphics(transmit + ',m=1', '    ') +
               graphics('m=0', pixel), ok)
         check('empty-final-chunk', graphics(transmit + ',m=1', pixel) +
               graphics('m=0'), ok)
         check('incomplete', graphics(transmit + ',m=1', '/wAA'), '')
         check('failed-chunk', graphics(transmit + ',m=1', '/wAA') +
-              graphics('m=0', '!!!!') + graphics(transmit, pixel), invalid + ok)
+              graphics('m=0', '!!!!') + graphics(transmit, pixel), invalid)
+        check('malformed-chunk-ignored',
+              graphics(transmit + ',m=1', '/wAA') +
+              graphics('m=1,s=bad', 'AAAA') + graphics('m=0', '/w=='), ok)
         check('quiet-ok', graphics(transmit + ',q=1', pixel), '')
         check('quiet-two', graphics(transmit + ',q=2', pixel), '')
-        check('quiet-one-error', graphics(transmit + ',q=1', '!!!!'), invalid)
-        check('quiet-two-error', graphics(transmit + ',q=2', '!!!!'), '')
+        check('quiet-one-error', graphics(transmit + ',q=1', '/wAA'), invalid)
+        check('quiet-two-error', graphics(transmit + ',q=2', '/wAA'), '')
+        check('quiet-later-chunk', graphics(transmit + ',m=1', '/wAA') +
+              graphics('m=0,q=1', '/w=='), '')
         check('quiet-continuation', graphics(transmit + ',q=2,m=1', '/wAA') +
               graphics('m=0', '/w=='), '')
         check('quiet-control-error', graphics('a=t,q=2,i=7,s=bad'), '')
         check('anonymous', graphics('a=t,f=32,s=1,v=1', pixel), '')
-        check('anonymous-error', graphics('a=t,f=32,s=1,v=1', '!!!!'), '')
-        check('query', graphics('a=q,f=32,s=1,v=1', pixel),
-              graphics('i=0', 'OK'))
-        check('query-chunks', graphics('a=q,i=7,f=32,s=1,v=1,m=1', '/wAA') +
-              graphics('m=0', '/w=='), ok)
+        check('anonymous-error', graphics('a=t,f=32,s=1,v=1', '/wAA'), '')
+        check('anonymous-query', graphics('a=q,f=32,s=1,v=1', pixel), '')
+        check('query-number', graphics('a=q,I=7,f=32,s=1,v=1', pixel),
+              graphics('I=7', 'EINVAL: image ID required'))
+        check('query', graphics('a=q,i=7,f=32,s=1,v=1', pixel), ok)
+        check('query-single-shot',
+              graphics('a=q,i=7,m=1,f=32,s=1,v=1', pixel), ok)
+        check('query-bad-png', graphics('a=q,i=7,f=100', 'QUJD'), invalid)
+        check('query-during-upload', graphics(transmit + ',m=1', '/wAA') +
+              graphics('a=q,i=8,f=32,s=1,v=1', pixel) +
+              graphics('a=p,i=9') + graphics('m=0', '/w=='),
+              graphics('i=8', 'OK') +
+              graphics('i=9', 'ENOENT: image not found') + ok)
+        check('feature-query',
+              graphics('a=q,i=31,e=T,C=1,f=32,t=f,k=1'),
+              graphics('i=31,e=T,C=1,t=f', 'OK'))
         check('replace', graphics(transmit, pixel) +
               graphics(transmit, 'AP8A/w=='), ok + ok)
         check('transmit-and-place',
@@ -153,61 +170,83 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('place-named', graphics(transmit + ',q=2', pixel) +
               graphics('a=p,i=7,p=9,C=1'), graphics('i=7,p=9', 'OK'))
         check('place-missing', graphics('a=p,i=7'),
-              graphics('i=7', 'ENOENT'))
+              graphics('i=7', 'ENOENT: image not found'))
         check('query-does-not-store',
               graphics('a=q,q=2,i=7,f=32,s=1,v=1', pixel) +
-              graphics('a=p,i=7'), graphics('i=7', 'ENOENT'))
+              graphics('a=p,i=7'), graphics('i=7', 'ENOENT: image not found'))
         check('place-chunks', graphics('a=T,i=7,f=32,s=1,v=1,'
               'c=3,r=2,C=1,m=1', '/wAA') + graphics('m=0', '/w=='), ok)
         for n, geometry in enumerate(['x=1', 'y=1', 'c=65536', 'r=65536',
                                       'c=65534,r=32767']):
             check('invalid-placement-' + str(n),
                   graphics(transmit + ',q=2', pixel) +
-                  graphics('a=p,i=7,C=1,' + geometry), invalid)
+                  graphics('a=p,i=7,C=1,' + geometry), invalid_placement)
         check('failed-transmit-keeps-source',
               graphics(transmit + ',q=2', pixel) +
               graphics('a=T,i=7,f=32,s=1,v=1,x=1,C=1', pixel) +
-              graphics('a=p,i=7,C=1'), invalid + ok)
+              graphics('a=p,i=7,C=1'), invalid_placement + ok)
         check('place-at-bottom', '\033[12;6H' +
               graphics('a=T,i=7,f=32,s=1,v=1,c=3,r=2', pixel),
               ok, cursor='8,11')
         check('stationary-at-bottom', '\033[12;6H' +
               graphics('a=T,i=7,f=32,s=1,v=1,c=3,r=2,C=1', pixel),
               ok, cursor='5,11')
-        for n, payload in enumerate(['', '    ', '!!!!', '====', '/w',
-                                     '/wAA/wAA']):
+        check('right-edge', '\033[3;40H' +
+              graphics('a=T,i=7,f=32,s=1,v=1', pixel), ok, cursor='0,3')
+        check('right-edge-at-bottom', '\033[12;39H' +
+              graphics('a=T,i=7,f=32,s=1,v=1,c=2', pixel), ok,
+              cursor='0,11')
+        for n, payload in enumerate(['', '    ', '/w', '/wAA/wAA']):
             check('invalid-payload-' + str(n),
                   graphics(transmit, payload), invalid)
-        for control in ['f=12,s=1,v=1', 'f=32,s=0,v=1', 'f=32,s=1,v=0',
-                        'f=32,s=bad,v=1', 'f=32,s=4294967296,v=1',
-                        'f=32,s=1,v=1,o=x']:
+        for n, payload in enumerate(['!!!!', '====']):
+            check('invalid-base64-' + str(n), graphics(transmit, payload), '')
+        for control, reply in [
+                ('f=12,s=1,v=1', 'EINVAL: unsupported format'),
+                ('f=32,s=0,v=1', 'EINVAL: dimensions required'),
+                ('f=32,s=1,v=0', 'EINVAL: dimensions required'),
+                ('f=32,s=bad,v=1', None), ('f=32,s=4294967296,v=1', None),
+                ('f=32,s=1,v=1,o=x', None)]:
             check('invalid-control-' + control,
-                  graphics('a=t,i=7,' + control, pixel), invalid)
+                  graphics('a=t,i=7,' + control, pixel),
+                  graphics('i=7', reply) if reply else '')
         stored = graphics(transmit + ',q=2', pixel)
         check('frame', stored + graphics('a=f,i=7,f=32,s=1,v=1', pixel),
               graphics('i=7,r=2', 'OK'))
         check('frame-chunks', stored + graphics('a=f,i=7,f=32,s=1,v=1,m=1',
               '/wAA') + graphics('m=0', '/w=='), graphics('i=7,r=2', 'OK'))
         check('frame-missing', graphics('a=f,i=7,r=3,f=32,s=1,v=1', pixel),
-              graphics('i=7,r=3', 'ENOENT'))
+              graphics('i=7,r=3', 'ENOENT: image not found'))
+        check('frame-too-large', stored + graphics('a=f,i=7,f=32,s=2,v=1',
+              '/wAA//8AAP8='), graphics('i=7', 'EINVAL: frame dimensions '
+              'exceed image'))
+        check('frame-base-missing', stored + graphics('a=f,i=7,c=5,f=32,'
+              's=1,v=1', pixel), graphics('i=7,r=2',
+              'EINVAL: base frame not found'))
+        check('frame-indexed', stored + graphics('a=f,i=7,f=8,s=1,v=1',
+              'AA=='), graphics('i=7', 'EINVAL: unsupported format'))
         check('animation-control', stored + graphics('a=a,i=7,s=3,v=1'), '')
         check('animation-missing', graphics('a=a,i=7,s=3'),
-              graphics('i=7', 'ENOENT'))
-        check('compose', stored + graphics('a=c,i=7,r=1,c=1,w=0'),
-              graphics('i=7', 'EINVAL'))
+              graphics('i=7', 'ENOENT: image not found'))
+        check('compose-bounds', stored + graphics('a=c,i=7,r=1,c=1,x=1'),
+              graphics('i=7', 'EINVAL: destination rectangle out of bounds'))
+        check('compose-overlap', stored + graphics('a=c,i=7,r=1,c=1'),
+              graphics('i=7', 'EINVAL: source and destination rectangles '
+              'overlap'))
+        check('compose-missing-frame', stored + graphics('a=c,i=7,r=1,c=2'),
+              graphics('i=7', 'ENOENT: destination frame not found'))
         check('compose-frames', stored + graphics('a=f,i=7,q=2,f=32,s=1,v=1',
               pixel) + graphics('a=c,i=7,r=1,c=2'), ok)
         check('frame-delete', stored + graphics('a=d,d=f,i=7'), '')
-        check('unsupported-medium-s', graphics('a=t,i=7,t=s'),
-              graphics('i=7', 'ENOTSUP'))
-        check('invalid-medium', graphics('a=t,i=7,t=x', pixel), invalid)
+        check('shared-memory-missing', graphics('a=t,i=7,t=s'), invalid)
+        check('invalid-medium', graphics('a=t,i=7,t=x', pixel), '')
 
         # File transfers read the named file; temporary files are removed.
         def path(name, data=b'\xff\0\0\xff'):
             file = directory / name
             file.write_bytes(data)
             return base64.b64encode(str(file).encode()).decode()
-        bad = graphics('i=7', 'EBADF')
+        bad = invalid
         check('file', graphics(transmit + ',t=f', path('pixel')), ok)
         check('file-place', graphics('a=T,i=7,f=32,s=1,v=1,C=1,t=f',
               path('pixel')), ok)
@@ -225,14 +264,43 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
               path('tty-graphics-protocol-file')), ok)
         assert (directory / 'tty-graphics-protocol-file').exists()
         check('temporary-unmarked', graphics(transmit + ',t=t',
-              path('pixel-temp')), ok)
+              path('pixel-temp')),
+              graphics('i=7', 'EINVAL: temporary file not named correctly'))
         assert (directory / 'pixel-temp').exists()
+        check('file-sensitive', graphics(transmit + ',t=f',
+              base64.b64encode(b'/proc/self/status').decode()), bad)
+        link = directory / 'tty-graphics-protocol-proc'
+        link.symlink_to('/proc/self/status')
+        check('file-sensitive-link', graphics(transmit + ',t=t',
+              base64.b64encode(str(link).encode()).decode()), bad)
         with tempfile.TemporaryDirectory(dir='/tmp') as temporary:
             file = Path(temporary) / 'tty-graphics-protocol-temp'
             file.write_bytes(b'\xff\0\0\xff')
             name = base64.b64encode(str(file).encode()).decode()
             check('temporary-marked', graphics(transmit + ',t=t', name), ok)
             assert not file.exists(), 'temporary file was not removed'
+            file.write_bytes(b'\xff\0\0')
+            check('temporary-bad-data', graphics(transmit + ',t=t', name),
+                  invalid)
+            assert not file.exists(), 'bad temporary file was not removed'
+
+        # Shared memory is read from the object and unlinked.
+        try:
+            from multiprocessing import shared_memory
+            memory = shared_memory.SharedMemory(create=True, size=4096,
+                                                track=False)
+        except (ImportError, OSError, TypeError):
+            memory = None
+        if memory is not None:
+            memory.buf[:4] = b'\xff\0\0\xff'
+            name = base64.b64encode(memory._name.encode()).decode()
+            memory.close()
+            check('shared-memory', graphics(transmit + ',t=s', name), ok)
+            try:
+                shared_memory.SharedMemory(memory._name, track=False).unlink()
+                raise AssertionError('shared memory was not unlinked')
+            except FileNotFoundError:
+                pass
 
         # Image numbers are given a free image ID, then select the newest.
         check('number', graphics('a=t,I=7,f=32,s=1,v=1', pixel),
@@ -242,14 +310,19 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('number-newest', graphics(transmit + ',q=2', pixel) +
               graphics('a=t,I=3,f=32,s=1,v=1,q=2', pixel) +
               graphics('a=t,I=3,f=32,s=1,v=1,q=2', pixel) +
-              graphics('a=p,I=3,C=1'), graphics('i=9,I=3', 'OK'))
+              graphics('a=p,I=3,C=1'), graphics('i=2,I=3', 'OK'))
         check('number-missing', graphics('a=p,I=7,C=1'),
-              graphics('I=7', 'ENOENT'))
+              graphics('I=7', 'ENOENT: image not found'))
         check('number-delete', graphics('a=t,I=7,f=32,s=1,v=1,q=2', pixel) +
               graphics('a=p,I=7,q=2,C=1') + graphics('a=d,d=N,I=7') +
-              graphics('a=p,I=7,C=1'), graphics('I=7', 'ENOENT'))
+              graphics('a=p,I=7,C=1'),
+              graphics('I=7', 'ENOENT: image not found'))
+        mutual = 'EINVAL: image ID and number are mutually exclusive'
         check('id-and-number', graphics('a=t,i=7,I=8,f=32,s=1,v=1', pixel),
-              graphics('i=7,I=8', 'EINVAL'))
+              graphics('i=7,I=8', mutual))
+        check('id-and-number-delete', graphics(transmit + ',q=2', pixel) +
+              graphics('a=d,d=I,i=7,I=8') + graphics('a=p,i=7,C=1'),
+              graphics('i=7,I=8', mutual) + ok)
         check('unknown-extension', graphics(transmit + ',k=9', pixel), ok)
         check('unknown-extension-string',
               graphics(transmit + ',k=unused', pixel), ok)
@@ -264,7 +337,8 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
                   graphics(transmit + ',z=' + str(z), pixel), ok)
         for action, reply, cursor in [('t', named, '5,2'),
                                       ('T', named, '6,2'),
-                                      ('p', graphics('i=7,p=9', 'ENOENT'),
+                                      ('p', graphics('i=7,p=9',
+                                       'ENOENT: image not found'),
                                        '5,2'),
                                       ('q', named, '5,2'),
                                       ('d', '', '5,2')]:
@@ -284,20 +358,14 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
               graphics('i=7,p=9', 'ENOTSUP'))
         check('quiet-after-invalid-control',
               graphics('a=t,i=7,s=bad,q=2', pixel), '')
+        # Malformed control data is ignored without a reply.
         check('id-after-invalid-control',
-              graphics('s=bad,a=t,i=7,p=9', pixel),
-              graphics('i=7,p=9', 'EINVAL'))
+              graphics('s=bad,a=t,i=7,p=9', pixel), '')
         check('id-after-malformed-control',
-              graphics('broken,a=q,i=7,p=9', pixel),
-              graphics('i=7,p=9', 'EINVAL'))
-        check('quiet-after-malformed-control',
-              graphics('broken,a=t,i=7,q=2', pixel), '')
-        check('first-error-invalid',
-              graphics('s=bad,z=1,a=q,i=7,p=9', pixel),
-              graphics('i=7,p=9', 'EINVAL'))
-        check('first-error-unsupported',
-              graphics('U=1,s=bad,a=q,i=7,p=9', pixel),
-              graphics('i=7,p=9', 'ENOTSUP'))
+              graphics('broken,a=q,i=7,p=9', pixel), '')
+        check('malformed-after-unsupported',
+              graphics('U=1,s=bad,a=q,i=7,p=9', pixel), '')
+        check('long-key-ignored', graphics(transmit + ',ss=1', pixel), ok)
         for control in ['U=1', 'P=99', 'Q=9', 'H=1', 'H=-1', 'V=1', 'V=-1']:
             check('unsupported-placement-' + control,
                   graphics('a=T,i=7,f=32,s=1,v=1,' + control, pixel),
@@ -308,20 +376,17 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
               ',U=0,P=0,Q=0,H=0,V=0', pixel), ok)
         for z in ['-2147483649', '2147483648', '1x', '', 'bad']:
             check('invalid-layer-' + z,
-                  graphics(transmit + ',z=' + z, pixel), invalid)
+                  graphics(transmit + ',z=' + z, pixel), '')
         for n, control in enumerate(['s=', 's=-1', 's=1x', 'a=tt', 't=dd',
-                                     'o=zz', '=1', 'ss=1', ',s=1',
-                                     's=1,,v=1']):
+                                     'o=zz', '=1', ',s=1', 's=1,,v=1',
+                                     'a=Z', 'd=?']):
             check('malformed-control-' + str(n),
-                  graphics('i=7,' + control, pixel), invalid)
-        check('failed-control-resets-transfer',
-              graphics(transmit + ',m=1', '/wAA') +
-              graphics('m=0,s=bad') + graphics(transmit, pixel), invalid + ok)
+                  graphics('i=7,' + control, pixel), '')
         check('quiet-resets', graphics(transmit + ',q=2', pixel) +
               graphics(transmit, pixel), ok)
         check('oversized-dimensions',
               graphics('a=t,i=7,f=32,s=4294967295,v=4294967295', pixel),
-              invalid)
+              graphics('i=7', 'EINVAL: dimensions too large'))
         check('delete-aborts-upload', graphics(transmit + ',q=2,m=1', '/wAA') +
               graphics('a=d,d=I,q=2') + graphics(transmit, pixel), ok)
 
@@ -330,7 +395,7 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         put = 'a=p,q=2,i=7,C=1'
         first = graphics(put + ',p=1')
         second = graphics(put + ',p=2')
-        missing = graphics('i=7', 'ENOENT')
+        missing = graphics('i=7', 'ENOENT: image not found')
         check('delete-soft-image', stored + first + graphics('a=d,d=i,i=7') +
               graphics('a=p,i=7,C=1'), ok)
         check('delete-hard-image', stored + first + graphics('a=d,d=I,i=7') +
@@ -373,9 +438,24 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('delete-abort-does-not-inherit-id', stored +
               graphics(transmit + ',q=2,m=1', '/wAA') +
               graphics('a=d,d=I') + graphics('a=p,i=7,C=1'), ok)
-        check('unsupported-delete', stored + graphics('a=d,d=?,i=7'),
-              graphics('i=7', 'ENOTSUP'))
-        check('malformed-delete', stored + graphics('a=d,i=7,d=ii'), invalid)
+        # Clearing the screen frees unplaced images; placements scrolled into
+        # history are kept. The alternate screen has separate images, and a
+        # reset frees everything.
+        check('clear-frees-unplaced', stored + '\033[2J' +
+              graphics('a=p,i=7,C=1'), missing)
+        check('clear-keeps-history', stored + first + '\033[2J' +
+              graphics('a=p,i=7,C=1'), ok)
+        check('alternate-separate', stored + '\033[?1049h' +
+              graphics('a=p,i=7,C=1') + '\033[?1049l' +
+              graphics('a=p,i=7,C=1'), missing + ok)
+        check('alternate-freed', '\033[?1049h' + stored +
+              '\033[?1049l\033[?1049h' + graphics('a=p,i=7,C=1') +
+              '\033[?1049l', missing)
+        check('reset-frees', stored + first + '\033c' +
+              graphics('a=p,i=7,C=1'), missing, cursor='0,0')
+        check('unknown-delete', stored + first + graphics('a=d,d=?,i=7') +
+              graphics('a=p,i=7,p=1,q=1,C=1'), '')
+        check('malformed-delete', stored + graphics('a=d,i=7,d=ii'), '')
         check('delete-frame-image', stored + first + graphics('a=d,d=F,i=7') +
               graphics('a=p,i=7,C=1'), missing)
 
@@ -395,18 +475,11 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
             check('delete-selector-miss-' + selector + '-' + control,
                   stored + first + graphics('a=d,d=%s,%s' %
                   (selector, control)) + graphics('a=p,i=7,C=1'), ok)
-        for quiet in [1, 2]:
-            check('unsupported-delete-quiet-' + str(quiet), stored + first +
-                  graphics('a=d,d=?,i=7,q=%d' % quiet) +
-                  graphics('a=p,i=7,C=1'),
-                  (unsupported if quiet == 1 else '') + ok)
-        check('unsupported-delete-named', stored + first +
-              graphics('a=d,d=?,i=7,p=1') + graphics('a=p,i=7,C=1'),
-              graphics('i=7,p=1', 'ENOTSUP') + ok)
-        check('unsupported-delete-aborts-upload', stored +
+        check('frame-delete-no-reply', stored + first +
+              graphics('a=d,d=f,i=7,p=1') + graphics('a=p,i=7,C=1'), ok)
+        check('frame-delete-aborts-upload', stored +
               graphics(transmit + ',q=2,m=1', '/wAA') +
-              graphics('a=d,d=?,i=7') + graphics('a=p,i=7,C=1'),
-              unsupported + ok)
+              graphics('a=d,d=f,i=7') + graphics('a=p,i=7,C=1'), ok)
         check('unsupported-delete-does-not-inherit-id', stored +
               graphics(transmit + ',m=1', '/wAA') + graphics('a=d,d=?') +
               graphics('a=p,i=7,C=1'), ok)
@@ -446,13 +519,14 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('compressed-chunks', graphics(control + ',m=1',
               compressed[:split]) + graphics('m=0', compressed[split:]), ok)
         check('compressed-truncated', graphics(control, compressed[:-4]),
-              invalid)
+              graphics('i=7', 'EINVAL: decompression failed'))
         check('compressed-wrong-size',
               graphics(control.replace('s=1', 's=2'), compressed), invalid)
         large = base64.b64encode(zlib.compress(
             b'\0' * (128 * 129 * 3))).decode()
         check('oversized-rgb',
-              graphics('a=t,i=7,f=24,s=128,v=129,o=z', large), invalid)
+              graphics('a=t,i=7,f=24,s=128,v=129,o=z', large),
+              graphics('i=7', 'EINVAL: dimensions too large'))
 
         # PNG uploads require a test build with libpng.
         png = b'\x89PNG\r\n\x1a\n'
@@ -482,15 +556,10 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('compressed-png-chunks',
               graphics(sized + ',m=1', payload[:split]) +
               graphics('m=0', payload[split:]), ok)
-        check('compressed-png-missing-size', graphics(control, payload),
-              invalid)
-        check('compressed-png-wrong-size',
-              graphics(control + ',S=' + str(len(png) + 1), payload),
-              invalid)
-        check('compressed-png-oversized',
-              graphics(control + ',S=' + str(size_limit + 1), payload), invalid)
+        # The decompressed size is found without S.
+        check('compressed-png-without-size', graphics(control, payload), ok)
         check('compressed-png-truncated', graphics(sized, payload[:-4]),
-              invalid)
+              graphics('i=7', 'EINVAL: decompression failed'))
         check('decoder-controls-reset', graphics(sized + ',q=2', payload) +
               graphics('a=T,i=7,s=1,v=1', pixel), ok, cursor='6,2')
     finally:
