@@ -821,7 +821,7 @@ input_key_mouse_clamp(struct window_pane *wp, struct mouse_event *m,
 
 /* Send a release for a captured drag that cannot finish normally. */
 void
-input_key_mouse_release(struct window_pane *wp)
+input_key_mouse_release(struct window_pane *wp, u_int button)
 {
 	struct mouse_event	 m;
 	const char		*buf;
@@ -832,6 +832,7 @@ input_key_mouse_release(struct window_pane *wp)
 
 	memset(&m, 0, sizeof m);
 	m.b = 3;
+	m.sgr_b = button;
 	m.sgr_type = 'm';
 	if (!input_key_get_mouse(wp->screen, &m, 0, 0, &buf, &len))
 		return;

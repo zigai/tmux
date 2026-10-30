@@ -1845,6 +1845,7 @@ struct tty {
 	u_int		 mouse_last_y;
 	u_int		 mouse_last_b;
 	int		 mouse_drag_flag;
+	int			 mouse_button_pressed;
 	u_int		 mouse_drag_x;
 	u_int		 mouse_drag_y;
 	int		 mouse_scrolling_flag;
@@ -3442,7 +3443,7 @@ void	 input_cancel_requests(struct client *);
 void	 input_key_build(void);
 int	 input_key_pane(struct window_pane *, key_code, struct mouse_event *);
 int	 input_key(struct screen *, struct bufferevent *, key_code);
-void	 input_key_mouse_release(struct window_pane *);
+void	 input_key_mouse_release(struct window_pane *, u_int);
 int	 input_key_get_mouse(struct screen *, struct mouse_event *, u_int,
 	     u_int, const char **, size_t *);
 
