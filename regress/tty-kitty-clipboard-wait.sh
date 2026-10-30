@@ -3,9 +3,9 @@
 # Kitty clipboard protocol (OSC 5522) requests waiting for the terminal: only
 # the client a request was sent to may answer it, a new request from a pane
 # fails its waiting read but not a write, a reply split over two reads is not
-# taken as keys, and a request is failed when its client goes. The client
-# which answers runs in a pane of a second server, which itself asks a third
-# server; stopping the third keeps requests waiting.
+# taken as keys, and a request is failed when its client goes or does not
+# answer. The client which answers runs in a pane of a second server, which
+# itself asks a third server; stopping the third keeps requests waiting.
 
 . ./regress-common.inc
 
@@ -128,6 +128,14 @@ kill -CONT $stopped || exit 1
 wait_for_output '^[]5522;type=write:status=DONE:id=w3^[\'\
 '^[]5522;type=write:status=DONE:id=w4^[\' cat $TMP/out ||
     fail "write failed by write"
+
+# A request the terminal does not answer fails after a time, as other queries
+# to the terminal end.
+kill -STOP $stopped || exit 1
+: >$TMP/first
+check "\\033]5522;type=read:id=r6;$PLAIN\\033\\\\" \
+    '^[]5522;type=read:status=EBUSY:id=r6^[\' "read not answered"
+kill -CONT $stopped || exit 1
 
 # A reply split over two reads is still a reply.
 kill -STOP $stopped || exit 1

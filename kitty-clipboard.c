@@ -94,6 +94,7 @@ struct kitty_clipboard_request {
 	int				 write;
 	char				*pane_id;
 	const char			*end;
+	struct event			 timer;
 
 	int				 collect;
 	char				*textmime;
@@ -396,11 +397,37 @@ kitty_clipboard_client_ready(struct client *c, struct window *w)
 	return (1);
 }
 
+static void
+kitty_clipboard_free_request(struct kitty_clipboard_request *r)
+{
+	evtimer_del(&r->timer);
+	TAILQ_REMOVE(&kitty_clipboard_requests, r, entry);
+	free(r->pane_id);
+	free(r->textmime);
+	free(r->text);
+	free(r);
+}
+
+/* Fail a request the terminal has not answered. */
+static void
+kitty_clipboard_timer(__unused int fd, __unused short events, void *data)
+{
+	struct kitty_clipboard_request	*r = data;
+	struct window_pane		*wp;
+
+	if ((wp = window_pane_find_by_id(r->pane)) != NULL) {
+		kitty_clipboard_status(wp, r->write ? "write" : "read",
+		    r->pane_id, "EBUSY", r->end);
+	}
+	kitty_clipboard_free_request(r);
+}
+
 static struct kitty_clipboard_request *
 kitty_clipboard_add_request(struct window_pane *wp, struct client *c,
     int write, const char *id, const char *end)
 {
 	struct kitty_clipboard_request	*r;
+	struct timeval			 tv = { .tv_sec = TTY_QUERY_TIMEOUT };
 
 	r = xcalloc(1, sizeof *r);
 	xsnprintf(r->id, sizeof r->id, "tmux-%u", ++kitty_clipboard_next_id);
@@ -410,17 +437,9 @@ kitty_clipboard_add_request(struct window_pane *wp, struct client *c,
 	r->pane_id = xstrdup(id);
 	r->end = end;
 	TAILQ_INSERT_TAIL(&kitty_clipboard_requests, r, entry);
+	evtimer_set(&r->timer, kitty_clipboard_timer, r);
+	evtimer_add(&r->timer, &tv);
 	return (r);
-}
-
-static void
-kitty_clipboard_free_request(struct kitty_clipboard_request *r)
-{
-	TAILQ_REMOVE(&kitty_clipboard_requests, r, entry);
-	free(r->pane_id);
-	free(r->textmime);
-	free(r->text);
-	free(r);
 }
 
 /* Forget any write transaction. */
@@ -939,6 +958,7 @@ kitty_clipboard_reply(struct client *c, const char *buf, size_t len)
 	struct kitty_clipboard_request	*r;
 	struct window_pane		*wp;
 	struct evbuffer			*evb;
+	struct timeval			 tv = { .tv_sec = TTY_QUERY_TIMEOUT };
 	char				*copy, *metadata, *record, *value;
 	char				*payload, *next;
 	const char			*type = "", *status = "", *id = "";
@@ -995,6 +1015,7 @@ kitty_clipboard_reply(struct client *c, const char *buf, size_t len)
 			kitty_clipboard_free_request(r);
 			goto out;
 		}
+		evtimer_add(&r->timer, &tv);
 	}
 
 	evb = evbuffer_new();

@@ -1832,6 +1832,9 @@ struct tty_style_ctx {
 /* Maximum reported terminal size. */
 #define CLIENT_MAX_TERM_SIZE 10000
 
+/* Seconds to wait for the terminal to answer a query. */
+#define TTY_QUERY_TIMEOUT 5
+
 /* Client terminal. */
 struct tty {
 	struct client	*client;
