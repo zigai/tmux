@@ -685,7 +685,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "sync,"
 			      "usstyle,"
 			      "progressbar,"
-			      "kittygraphics"
+			      "kittygraphics,"
+			      "kittykeys"
 		},
 		{ .name = "kitty",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
@@ -698,7 +699,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "osc7,"
 			      "sync,"
 			      "usstyle,"
-			      "kittygraphics"
+			      "kittygraphics,"
+			      "kittykeys"
 		},
 		{ .name = "Rio",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
