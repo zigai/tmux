@@ -208,6 +208,13 @@ output '\033[1;1Hh\033[1;3Hl'
 assert_line 1 "${E}[41mhello${E}[49m world" 'identical cells lost style'
 output '\033[1;1HJ'
 assert_line 1 "J${E}[41mello${E}[49m world" 'overwritten cell still styled'
+output '\033[2;1H\303\251t\303\251'
+b=$(new -s 'bg=blue' -r 1:0-1:2)
+e=$(printf '\303\251')
+assert_line 2 "${E}[44m${e}t${e}${E}[49mond line" 'UTF-8 style'
+output '\033[2;1H\303\251'
+assert_line 2 "${E}[44m${e}t${e}${E}[49mond line" \
+    'identical UTF-8 rewrite lost style'
 
 # Copy mode shows range styles below search matches and the selection, and
 # shows ranges created while it is active.
