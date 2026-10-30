@@ -301,7 +301,19 @@ key_string_get_modifiers(const char **string)
 	key_code	modifiers;
 
 	modifiers = 0;
-	while (((*string)[0] != '\0') && (*string)[1] == '-') {
+	for (;;) {
+		if (strncmp(*string, "Super-", 6) == 0) {
+			modifiers |= KEYC_SUPER;
+			*string += 6;
+			continue;
+		}
+		if (strncmp(*string, "Hyper-", 6) == 0) {
+			modifiers |= KEYC_HYPER;
+			*string += 6;
+			continue;
+		}
+		if ((*string)[0] == '\0' || (*string)[1] != '-')
+			break;
 		switch ((*string)[0]) {
 		case 'C':
 		case 'c':
@@ -312,13 +324,8 @@ key_string_get_modifiers(const char **string)
 			modifiers |= KEYC_META;
 			break;
 		case 'S':
-			modifiers |= KEYC_SHIFT;
-			break;
 		case 's':
-			modifiers |= KEYC_SUPER;
-			break;
-		case 'H':
-			modifiers |= KEYC_HYPER;
+			modifiers |= KEYC_SHIFT;
 			break;
 		default:
 			*string = NULL;
@@ -441,9 +448,9 @@ key_string_lookup_key(key_code key, int with_flags)
 	if (key & KEYC_SHIFT)
 		strlcat(out, "S-", sizeof out);
 	if (key & KEYC_SUPER)
-		strlcat(out, "s-", sizeof out);
+		strlcat(out, "Super-", sizeof out);
 	if (key & KEYC_HYPER)
-		strlcat(out, "H-", sizeof out);
+		strlcat(out, "Hyper-", sizeof out);
 	key &= KEYC_MASK_KEY;
 
 	/* Handle no key. */

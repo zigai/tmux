@@ -121,7 +121,7 @@ CHANGES FROM 3.7c TO 3.8
   different capabilities may be attached at the same time. Programs inside
   tmux may ask for either the Kitty protocol or modifyOtherKeys and get keys
   in the form they asked for. The Kitty protocol can report the Super and
-  Hyper modifiers (key name prefixes s- and H-).
+  Hyper modifiers (key name prefixes Super- and Hyper-).
 
 * Add a client_key_mode format giving the extended key reporting mode in
   use for a client, alongside the existing pane_key_mode for a pane.

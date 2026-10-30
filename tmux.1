@@ -4429,9 +4429,13 @@ Ctrl keys may be prefixed with
 or
 .Ql \[ha] ,
 Shift keys with
-.Ql S\-
-and Alt (meta) with
-.Ql M\- .
+.Ql S\- ,
+Alt (meta) with
+.Ql M\- ,
+and with a terminal using the Kitty keyboard protocol, Super keys with
+.Ql Super\-
+and Hyper keys with
+.Ql Hyper\- .
 In addition, the following special key names are accepted:
 .Em Up ,
 .Em Down ,
@@ -5081,9 +5085,9 @@ and keys are sent to each program in the form it requested, whichever client
 they were typed on.
 The Kitty keyboard protocol can report the Super and Hyper modifiers, whose key
 name prefixes are
-.Ql s-
+.Ql Super-
 and
-.Ql H- ;
+.Ql Hyper- ;
 all its progressive enhancements are supported.
 .Pp
 For
