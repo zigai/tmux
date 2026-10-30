@@ -253,6 +253,16 @@ while [ "$(field "$a" "$span")" != 'live|11:7-11:16|11' ]; do
 	sleep 0.05
 done
 
+# A released frame is matched before the output that follows it, so the range
+# follows the text it showed rather than a nearer copy written afterwards.
+fresh release
+output '\033[?1049h\033[3;1Hstatus line ready'
+a=$(new -m 'line ready')
+printf '\033[?2026h\033[2J\033[9;3Hstatus line ready\033[?2026l' >"$tmp/data.bin"
+printf '\033[2;1Hstatus line ready' >>"$tmp/data.bin"
+output_file
+assert_field "$a" "$span" 'live|8:9-8:18|8'
+
 # Text ranges belong to the screen they were created on.
 fresh screens
 output 'shell prompt text'
