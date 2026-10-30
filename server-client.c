@@ -921,6 +921,34 @@ not_on_status:
 	return (0);
 }
 
+/* Convert a client position off the status lines to a window position. */
+static int
+server_client_window_position(struct client *c, u_int x, u_int y, u_int *px,
+    u_int *py, u_int *ox, u_int *oy)
+{
+	int	statusat = status_at_line(c), sideat = status_side_at_column(c);
+	u_int	statuslines = status_line_size(c);
+	u_int	sidewidth = status_side_size(c), sx, sy;
+
+	if (sideat == 0 && x >= sidewidth)
+		x -= sidewidth;
+	else if (sideat > 0 && x >= (u_int)sideat)
+		x = sideat - 1;
+	if (statusat == 0 && y >= statuslines)
+		y -= statuslines;
+	else if (statusat > 0 && y >= (u_int)statusat)
+		y = statusat - 1;
+
+	tty_window_offset(&c->tty, ox, oy, &sx, &sy);
+	log_debug("%s window @%u at %u,%u (%ux%u)", c->name,
+	    c->session->curw->window->id, *ox, *oy, sx, sy);
+	if (x > sx || y > sy)
+		return (-1);
+	*px = x + *ox;
+	*py = y + *oy;
+	return (0);
+}
+
 /* Check for mouse keys. */
 static key_code
 server_client_check_mouse(struct client *c, struct key_event *event)
@@ -929,7 +957,7 @@ server_client_check_mouse(struct client *c, struct key_event *event)
 	struct session			*s = c->session;
 	struct window			*w = s->curw->window;
 	struct window_pane		*wp, *lwp = NULL;
-	u_int				 x, y, sx, sy, px, py, n, sl_mpos = 0;
+	u_int				 x, y, px, py, n, sl_mpos = 0;
 	u_int				 b, bn;
 	int				 ignore = 0;
 	int				 modal_drag = 0;
@@ -1042,28 +1070,11 @@ have_event:
 			m->w = lwp->window->id;
 		}
 	} else if (loc == KEYC_MOUSE_LOCATION_NOWHERE) {
-		if (m->sideat == 0 && x >= m->sidewidth)
-			px = x - m->sidewidth;
-		else if (m->sideat > 0 && x >= (u_int)m->sideat)
-			px = m->sideat - 1;
-		else
-			px = x;
-		if (m->statusat == 0 && y >= m->statuslines)
-			py = y - m->statuslines;
-		else if (m->statusat > 0 && y >= (u_int)m->statusat)
-			py = m->statusat - 1;
-		else
-			py = y;
-
-		tty_window_offset(&c->tty, &m->ox, &m->oy, &sx, &sy);
-		log_debug("mouse window @%u at %u,%u (%ux%u)", w->id, m->ox,
-		    m->oy, sx, sy);
-		if (px > sx || py > sy) {
+		if (server_client_window_position(c, x, y, &px, &py, &m->ox,
+		    &m->oy) != 0) {
 			server_client_update_scrollbar_hover(c, type, -1, -1);
 			return (KEYC_UNKNOWN);
 		}
-		px = px + m->ox;
-		py = py + m->oy;
 		if (w->modal != NULL &&
 		    !window_pane_contains(w->modal, px, py)) {
 			if (lwp == w->modal &&
@@ -2763,7 +2774,7 @@ server_client_pointer_pane(struct client *c)
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
 	u_int			 x = tty->mouse_last_x, y = tty->mouse_last_y;
-	u_int			 ox, oy, sx, sy, lines, width, sl_mpos;
+	u_int			 ox, oy, lines, width, sl_mpos;
 	int			 at;
 
 	if (w->menu != NULL)
@@ -2776,20 +2787,12 @@ server_client_pointer_pane(struct client *c)
 	lines = status_line_size(c);
 	if (at != -1 && y >= (u_int)at && y < at + lines)
 		return (NULL);
-	if (at == 0)
-		y -= lines;
 	at = status_side_at_column(c);
 	width = status_side_size(c);
 	if (at != -1 && x >= (u_int)at && x < at + width)
 		return (NULL);
-	if (at == 0)
-		x -= width;
-
-	tty_window_offset(tty, &ox, &oy, &sx, &sy);
-	if (x > sx || y > sy)
+	if (server_client_window_position(c, x, y, &x, &y, &ox, &oy) != 0)
 		return (NULL);
-	x += ox;
-	y += oy;
 
 	wp = window_get_active_at(w, x, y);
 	if (wp == NULL || server_client_check_mouse_in_pane(wp, x, y,
