@@ -1729,6 +1729,9 @@ input_csi_dispatch(struct input_ctx *ictx)
 		case 2031:	/* theme update notifications */
 			n = (s->mode & MODE_THEME_UPDATES) ? 1 : 2;
 			break;
+		case 5522:	/* clipboard paste events */
+			n = (s->mode & MODE_PASTE_EVENTS) ? 1 : 2;
+			break;
 		default:
 			n = 0;
 			break;
@@ -2004,6 +2007,9 @@ input_csi_dispatch_rm_private(struct input_ctx *ictx)
 			if (ictx->wp != NULL)
 				ictx->wp->flags &= ~PANE_THEMECHANGED;
 			break;
+		case 5522:
+			screen_write_mode_clear(sctx, MODE_PASTE_EVENTS);
+			break;
 		default:
 			log_debug("%s: unknown '%c'", __func__, ictx->ch);
 			break;
@@ -2099,6 +2105,9 @@ input_csi_dispatch_sm_private(struct input_ctx *ictx)
 			break;
 		case 2004:
 			screen_write_mode_set(sctx, MODE_BRACKETPASTE);
+			break;
+		case 5522:
+			screen_write_mode_set(sctx, MODE_PASTE_EVENTS);
 			break;
 		case 2031:
 			screen_write_mode_set(sctx, MODE_THEME_UPDATES);
@@ -2772,6 +2781,12 @@ input_exit_osc(struct input_ctx *ictx)
 		break;
 	case 52:
 		input_osc_52(ictx, p);
+		break;
+	case 5522:
+		if (wp != NULL && ictx->input_end == INPUT_END_BEL)
+			kitty_clipboard_input(wp, p, "\007");
+		else if (wp != NULL)
+			kitty_clipboard_input(wp, p, "\033\\");
 		break;
 	case 104:
 		input_osc_104(ictx, p);

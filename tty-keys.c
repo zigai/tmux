@@ -65,6 +65,8 @@ static int	tty_keys_mouse(struct tty *, const char *, size_t, size_t *,
 		    struct mouse_event *);
 static int	tty_keys_clipboard(struct tty *, const char *, size_t,
 		    size_t *, int);
+static int	tty_keys_kitty_clipboard(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_device_attributes(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_device_attributes2(struct tty *, const char *, size_t,
@@ -92,6 +94,7 @@ static const struct {
 	int	      (*fn)(struct tty *, const char *, size_t, size_t *, int);
 } tty_keys_replies[] = {
 	{ KEYC_REPORT_CLIPBOARD, tty_keys_clipboard },
+	{ KEYC_REPORT_KITTY_CLIPBOARD, tty_keys_kitty_clipboard },
 	{ KEYC_REPORT_SYNC, tty_keys_sync },
 	{ KEYC_REPORT_DA, tty_keys_device_attributes },
 	{ KEYC_REPORT_DA2, tty_keys_device_attributes2 },
@@ -1402,6 +1405,45 @@ tty_keys_clipboard(struct tty *tty, const char *buf, size_t len, size_t *size,
 	}
 
 	free(out);
+	return (0);
+}
+
+/*
+ * Handle a Kitty clipboard protocol reply. Returns 0 for success, -1 for
+ * failure, 1 for partial.
+ */
+static int
+tty_keys_kitty_clipboard(struct tty *tty, const char *buf, size_t len,
+    size_t *size, int apply)
+{
+	static const char	 prefix[] = "\033]5522;";
+	size_t			 i, end;
+
+	*size = 0;
+
+	for (i = 0; i < (sizeof prefix) - 1; i++) {
+		if (i == len)
+			return (1);
+		if (buf[i] != prefix[i])
+			return (-1);
+	}
+
+	/* Find the terminator, either BEL or ST. */
+	for (end = i; end < len; end++) {
+		if (buf[end] == '\007')
+			break;
+		if (buf[end] == '\\' && buf[end - 1] == '\033')
+			break;
+	}
+	if (end == len)
+		return (1);
+	*size = end + 1;
+	if (!apply)
+		return (0);
+
+	if (buf[end] == '\\')
+		end--;
+	kitty_clipboard_reply(tty->client, buf + i, end - i);
 	return (0);
 }
 

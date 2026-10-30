@@ -61,6 +61,7 @@ struct hyperlinks_uri;
 struct hyperlinks;
 struct input_ctx;
 struct input_request;
+struct kitty_clipboard;
 struct input_requests;
 struct job;
 struct json_node;
@@ -457,6 +458,7 @@ enum {
 
 	/* Terminal replies, handled in tty-keys.c and never fired. */
 	KEYC_REPORT_CLIPBOARD,
+	KEYC_REPORT_KITTY_CLIPBOARD,
 	KEYC_REPORT_SYNC,
 	KEYC_REPORT_KITTY_GRAPHICS,
 	KEYC_REPORT_DA,
@@ -755,6 +757,7 @@ enum tty_code_code {
 #define MODE_KEYS_EXTENDED_2 0x40000
 #define MODE_THEME_UPDATES 0x80000
 #define MODE_SYNC 0x100000
+#define MODE_PASTE_EVENTS 0x200000
 
 #define ALL_MODES 0xffffff
 #define ALL_MOUSE_MODES (MODE_MOUSE_STANDARD|MODE_MOUSE_BUTTON|MODE_MOUSE_ALL)
@@ -1411,6 +1414,7 @@ struct window_pane {
 	struct timeval	 dead_time;
 	struct cmdq_item *wait_item;
 	struct spawn_editor_state *editor;
+	struct kitty_clipboard *kitty_clipboard;
 
 	uint64_t	 output_generation;
 	time_t		 last_output_time;
@@ -1810,6 +1814,7 @@ struct tty_term {
 #define TERM_INVALIDMS 0x80
 #define TERM_NOREPLACE 0x100
 #define TERM_KITTYGRAPHICS 0x200
+#define TERM_KITTYCLIPBOARD 0x400
 	int		 flags;
 
 	LIST_ENTRY(tty_term) entry;
@@ -4350,6 +4355,13 @@ struct hyperlinks	*hyperlinks_init(void);
 struct hyperlinks	*hyperlinks_copy(struct hyperlinks *);
 void			 hyperlinks_reset(struct hyperlinks *);
 void			 hyperlinks_free(struct hyperlinks *);
+
+/* kitty-clipboard.c */
+void	 kitty_clipboard_input(struct window_pane *, const char *,
+	     const char *);
+void	 kitty_clipboard_reply(struct client *, const char *, size_t);
+void	 kitty_clipboard_free(struct window_pane *);
+void	 kitty_clipboard_client_lost(struct client *);
 
 /* json.c */
 struct json_node	*json_parse(const char *, char **);

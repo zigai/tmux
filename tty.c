@@ -537,6 +537,8 @@ tty_stop_tty(struct tty *tty)
 	}
 	if (tty_term_has(tty->term, TTYC_DSBP))
 		tty_raw(tty, tty_term_string(tty->term, TTYC_DSBP));
+	if (tty->mode & MODE_PASTE_EVENTS)
+		tty_raw(tty, "\033[?5522l");
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSESC));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSFCS));
@@ -934,6 +936,8 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 
 	if (tty->flags & TTY_NOCURSOR)
 		mode &= ~MODE_CURSOR;
+	if (~term->flags & TERM_KITTYCLIPBOARD)
+		mode &= ~MODE_PASTE_EVENTS;
 
 	if (tty_update_cursor(tty, mode, s) & MODE_CURSOR_BLINKING)
 		mode |= MODE_CURSOR_BLINKING;
@@ -963,6 +967,12 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 			tty_puts(tty, "\033[?1000h\033[?1002h");
 		else if (mode & MODE_MOUSE_STANDARD)
 			tty_puts(tty, "\033[?1000h");
+	}
+	if (changed & MODE_PASTE_EVENTS) {
+		if (mode & MODE_PASTE_EVENTS)
+			tty_puts(tty, "\033[?5522h");
+		else
+			tty_puts(tty, "\033[?5522l");
 	}
 	tty->mode = mode;
 }
