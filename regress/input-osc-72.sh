@@ -120,4 +120,23 @@ wait_until long_end || fail "long list not sent"
     tail -2)" = "$(printf 'a/116327\nx/end')" ] ||
     fail "long list not cut at 1 MB"
 
+# The types of all panes together are cut at 1 MB too. 179 more fit.
+$INNER splitw -t $LEFT "$(logger third)" || exit 1
+wait_for_output ready $INNER display -p -t inner:0.1 '#{pane_title}' ||
+    exit 1
+THIRD=$($INNER display -p -t inner:0.1 '#{pane_id}')
+: >$DIR/out
+pane $THIRD "t=a;$(awk 'BEGIN { for (i = 0; i < 300; i++)
+    printf "b/%06d ", i }')"
+union_end()
+{
+	[ "$(osc72 $DIR/out | sed 's/^[^;]*;//' | tr -d '\n' | tr ' ' '\n' |
+	    tail -1)" = "b/000178" ]
+}
+wait_until union_end || fail "union not cut at 1 MB"
+sleep 0.5
+union_end || fail "union not cut at 1 MB"
+[ "$(osc72 $DIR/out | sed 's/^[^;]*;//' | tr -d '\n' | wc -c)" -le 1048576 ] ||
+    fail "union over 1 MB"
+
 exit 0

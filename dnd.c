@@ -1004,7 +1004,10 @@ dnd_pane_free(struct window_pane *wp)
 	wp->dnd = NULL;
 }
 
-/* Union of the MIME types the panes in a window accept, in pane order. */
+/*
+ * Union of the MIME types the panes in a window accept, in pane order, cut
+ * at the size the terminal keeps.
+ */
 static char *
 dnd_window_mimes(struct window *w, int *accept, int *offer)
 {
@@ -1031,6 +1034,9 @@ dnd_window_mimes(struct window *w, int *accept, int *offer)
 	if (!*accept)
 		return (NULL);
 
+	if (size > DND_LIST_SIZE)
+		size = DND_LIST_SIZE;
+
 	RB_INIT(&tree);
 	list = xmalloc(size + 1);
 	TAILQ_FOREACH(wp, &w->panes, entry) {
@@ -1051,12 +1057,15 @@ dnd_window_mimes(struct window *w, int *accept, int *offer)
 				free(dm);
 				continue;
 			}
+			if (used + (used != 0) + n > DND_LIST_SIZE)
+				goto out;
 			if (used != 0)
 				list[used++] = ' ';
 			memcpy(list + used, s, n);
 			used += n;
 		}
 	}
+out:
 	list[used] = '\0';
 
 	RB_FOREACH_SAFE(dm, dnd_mimes, &tree, dm1) {
