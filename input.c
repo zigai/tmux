@@ -168,6 +168,8 @@ static void	input_osc_4(struct input_ctx *, const char *);
 static void	input_osc_7(struct input_ctx *, const char *);
 static void	input_osc_8(struct input_ctx *, const char *);
 static void	input_osc_9(struct input_ctx *, const char *);
+static void	input_osc_99(struct input_ctx *, const char *);
+static void	input_osc_777(struct input_ctx *, const char *);
 static void	input_osc_9_9(struct input_ctx *, const char *);
 static void	input_osc_10(struct input_ctx *, const char *);
 static void	input_osc_11(struct input_ctx *, const char *);
@@ -2773,6 +2775,9 @@ input_exit_osc(struct input_ctx *ictx)
 	case 52:
 		input_osc_52(ictx, p);
 		break;
+	case 99:
+		input_osc_99(ictx, p);
+		break;
 	case 104:
 		input_osc_104(ictx, p);
 		break;
@@ -2787,6 +2792,9 @@ input_exit_osc(struct input_ctx *ictx)
 		break;
 	case 133:
 		input_osc_133(ictx, p);
+		break;
+	case 777:
+		input_osc_777(ictx, p);
 		break;
 	default:
 		log_debug("%s: unknown '%u'", __func__, option);
@@ -3103,7 +3111,42 @@ input_osc_9_9(struct input_ctx *ictx, const char *p)
 	free(uri);
 }
 
-/* Handle the OSC 9;4 sequence for progress bars and pass on OSC 9;9. */
+/*
+ * Check if OSC 9 is one of the ConEmu sequences rather than a notification.
+ * This follows what Ghostty treats as ConEmu.
+ */
+static int
+input_osc_9_conemu(const char *p)
+{
+	switch (p[0]) {
+	case '1':
+		if (p[1] == ';' || p[1] == '2')
+			return (1);
+		if (p[1] == '0')
+			return (p[2] == '\0' || (p[2] == ';' && p[3] >= '0' &&
+			    p[3] <= '3'));
+		if (p[1] == '1')
+			return (p[2] == ';');
+		return (0);
+	case '2':
+	case '3':
+	case '6':
+	case '7':
+	case '8':
+	case '9':
+		return (p[1] == ';');
+	case '4':
+		return (p[1] == ';' && p[2] >= '0' && p[2] <= '4');
+	case '5':
+		return (1);
+	}
+	return (0);
+}
+
+/*
+ * Handle the OSC 9;4 sequence for progress bars, pass on OSC 9;9 and forward
+ * anything else that is not ConEmu as a notification.
+ */
 static void
 input_osc_9(struct input_ctx *ictx, const char *p)
 {
@@ -3115,15 +3158,15 @@ input_osc_9(struct input_ctx *ictx, const char *p)
 		input_osc_9_9(ictx, pb + 2);
 		return;
 	}
+	if (!input_osc_9_conemu(pb)) {
+		if (ictx->wp != NULL && utf8_isvalid(pb))
+			notification_osc9(ictx->wp, pb);
+		return;
+	}
 	if (*pb++ != '4')
 		return;
-	if (*pb == '\0' || (*pb == ';' && pb[1] == '\0'))
-		return;
 
-	if (*pb++ != ';')
-		return;
-	if (*pb < '0' || *pb > '4')
-		goto bad;
+	pb++;
 	state = *pb++ - '0';
 
 	if (*pb == '\0' || (*pb == ';' && pb[1] == '\0')) {
@@ -3145,6 +3188,47 @@ input_osc_9(struct input_ctx *ictx, const char *p)
 
 bad:
 	log_debug("bad OSC 9;4 %s", p);
+}
+
+/* Handle the OSC 99 sequence for kitty notifications. */
+static void
+input_osc_99(struct input_ctx *ictx, const char *p)
+{
+	const char	*end;
+	char		*reply;
+
+	if (ictx->wp == NULL)
+		return;
+	if (ictx->input_end == INPUT_END_BEL)
+		end = "\007";
+	else
+		end = "\033\\";
+	reply = notification_osc99(ictx->wp, p, end);
+	if (reply != NULL) {
+		input_reply(ictx, 1, "%s", reply);
+		free(reply);
+	}
+}
+
+/* Handle the OSC 777;notify sequence for notifications. */
+static void
+input_osc_777(struct input_ctx *ictx, const char *p)
+{
+	char	*copy, *body;
+
+	if (ictx->wp == NULL || strncmp(p, "notify;", 7) != 0)
+		return;
+	if (!utf8_isvalid(p))
+		return;
+	copy = xstrdup(p + 7);
+	if ((body = strchr(copy, ';')) == NULL) {
+		log_debug("bad OSC 777 %s", p);
+		free(copy);
+		return;
+	}
+	*body++ = '\0';
+	notification_osc777(ictx->wp, copy, body);
+	free(copy);
 }
 
 /* Handle the OSC 10 sequence for setting and querying foreground colour. */

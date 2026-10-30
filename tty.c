@@ -586,6 +586,7 @@ void
 tty_free(struct tty *tty)
 {
 	tty_close(tty);
+	free(tty->notification_caps);
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 0);
 #endif
@@ -613,6 +614,13 @@ tty_update_features(struct tty *tty)
 	if (options_get_number(global_options, "focus-events"))
 		tty_puts(tty, tty_term_string(tty->term, TTYC_ENFCS));
 	tty_puts(tty, tty_term_string(tty->term, TTYC_ENESC));
+
+	/* Ask what notifications the terminal supports to answer panes. */
+	if (tty_term_has(tty->term, TTYC_SNOT99) &&
+	    (~tty->flags & TTY_NOTIFICATIONQUERY)) {
+		tty_putcode_ss(tty, TTYC_SNOT99, "i=tmux:p=?", "");
+		tty->flags |= TTY_NOTIFICATIONQUERY;
+	}
 
 	if (changed) {
 		server_redraw_client(c);
