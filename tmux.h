@@ -1163,7 +1163,15 @@ enum pane_range_state {
 	PANE_RANGE_LIVE,
 	PANE_RANGE_MODIFIED,
 	PANE_RANGE_SUSPENDED,
-	PANE_RANGE_GONE
+	PANE_RANGE_GONE,
+	PANE_RANGE_CLIPPED,
+	PANE_RANGE_AMBIGUOUS,
+	PANE_RANGE_HIDDEN
+};
+
+enum pane_range_anchor {
+	PANE_RANGE_GRID,
+	PANE_RANGE_TEXT
 };
 
 struct pane_range_span {
@@ -1179,6 +1187,15 @@ struct pane_range {
 	char			*group;
 	char			*text;
 	u_int			 cells;
+
+	enum pane_range_anchor	 anchor;
+	int			 alternate;
+	char			*match;
+	char			*before;
+	char			*after;
+	int			 has_last;
+	uint64_t		 last_line;
+	u_int			 last_x;
 
 	enum pane_range_state	 state;
 	int			 positioned;
@@ -3639,6 +3656,8 @@ bitstr_t	*fuzzy_match(const char *, const char *, u_int, u_int *);
 /* pane-ranges.c */
 void			  pane_ranges_check(void);
 void			  pane_ranges_update(struct window_pane *);
+void			  pane_ranges_sync(struct window_pane *);
+void			  pane_ranges_written(struct screen *);
 void			  pane_ranges_free(struct screen *);
 struct pane_range	 *pane_range_first(struct window_pane *);
 struct pane_range	 *pane_range_next(struct pane_range *);
@@ -3650,11 +3669,14 @@ char			 *pane_range_text(struct grid *, u_int, u_int, u_int,
 int			  pane_range_parse(struct window_pane *, const char *,
     struct pane_range_span *, char **);
 struct pane_range	 *pane_range_create(struct window_pane *,
-    const struct pane_range_span *, const char *, const char *,
-    char **);
+    const struct pane_range_span *, const char *,
+    enum pane_range_anchor, const char *, const char *,
+    const char *, const char *, char **);
 int			  pane_range_move(struct window_pane *,
     struct pane_range *,
     const struct pane_range_span *, char **);
+void			  pane_range_set_text_context(struct window_pane *,
+    struct pane_range *, const char *, const char *);
 void			  pane_range_kill(struct window_pane *,
     struct pane_range *);
 void			  pane_ranges_kill_group(struct window_pane *,

@@ -446,6 +446,8 @@ screen_write_stop(struct screen_write_ctx *ctx)
 {
 	screen_write_collect_end(ctx);
 	screen_write_collect_flush(ctx, 0, __func__);
+	if (ctx->s->ranges != NULL)
+		pane_ranges_written(ctx->s);
 
 	screen_write_free_citem(ctx->item);
 }
@@ -1312,6 +1314,7 @@ screen_write_sync_flush_dirty(struct window_pane *wp)
 	struct screen		*s = &wp->base;
 	u_int			 y, sy = screen_size_y(s), lines = 0;
 
+	pane_ranges_sync(wp);
 	if (wp->sync_dirty == NULL)
 		return;
 
