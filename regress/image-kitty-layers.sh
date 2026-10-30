@@ -60,8 +60,9 @@ with image_test(sys.argv[1]) as test:
     test.emit(kitty('a=d,d=I,i=200') + upload(200, red) + put(200))
     terminal = check(test, client, terminal, rectangle(red))
     # A retransmit-and-place also inherits the old source's drawing order.
-    test.emit(b'\033[2J\033[H' + upload(200, red) + upload(100, white) +
-        put(200) + put(100) + kitty('a=T,i=100,f=32,s=1,v=1,C=1,c=2,r=1',
+    test.emit(kitty('a=d,d=a') + b'\033[H' + upload(200, red) +
+        upload(100, white) + put(200) + put(100) +
+        kitty('a=T,i=100,f=32,s=1,v=1,C=1,c=2,r=1',
         bytes((*green, 255))))
     # 200 was recreated above, so it is newer than 100 despite retransmission.
     terminal = check(test, client, terminal, rectangle(red))
@@ -120,7 +121,7 @@ with image_test(sys.argv[1]) as test:
     test.emit(b'\033[2J\033[H' + upload(600, red) + upload(601, green) +
         put(601, ',z=-1') + put(600))
     terminal = check(test, client, Terminal(), rectangle(red))
-    test.emit(b'\033[2J\033[H' + put(600, ',z=1') + put(601))
+    test.emit(kitty('a=d,d=a') + b'\033[H' + put(600, ',z=1') + put(601))
     terminal = check(test, client, Terminal(), rectangle(red))
     term = Terminal()
     term.feed(fallback.data)
@@ -132,7 +133,8 @@ with image_test(sys.argv[1]) as test:
     terminal = check(test, client, terminal, rectangle(red))
 
     # Images at the default layer cover text and explicit backgrounds.
-    test.emit(b'\033[2J\033[H\033[44mX \033[0m\033[H' + put(600))
+    test.emit(b'\033[2J\033[H\033[44mX \033[0m\033[H' + upload(600, red) +
+        put(600))
     check(test, client, Terminal(), rectangle(red))
     term = Terminal()
     term.feed(fallback.data)

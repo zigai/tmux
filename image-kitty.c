@@ -16,6 +16,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 
 #include <errno.h>
@@ -26,6 +27,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef HAVE_LIBZ
+#include <zlib.h>
+#endif
 
 #include "tmux.h"
 
@@ -64,6 +68,8 @@ enum kitty_action {
 
 /* Kitty image formats. */
 enum kitty_format {
+	KITTY_FORMAT_INDEXED = 8,
+	KITTY_FORMAT_INDEXED_ALPHA = 16,
 	KITTY_FORMAT_RGB = 24,
 	KITTY_FORMAT_RGBA = 32,
 	KITTY_FORMAT_PNG = 100
@@ -95,15 +101,26 @@ struct kitty_command {
 	u_int			 quiet;		/* q */
 	char			 delete_action;	/* d */
 	int			 more;		/* m */
+	u_int			 hints;		/* N */
+	char			 feature;	/* e */
+};
+
+/* Usage hint for images which are only needed for a short time. */
+#define KITTY_HINT_TRANSIENT 0x1
+
+/* Image data being collected or read. */
+struct kitty_data {
+	u_char			*data;
+	size_t			 size;
+	size_t			 allocated;
 };
 
 /* State attached to an input parser. */
 struct kitty_state {
 	struct kitty_command		 cmd;
-
-	u_char				*data;
-	size_t				 size;
-	size_t				 allocated;
+	struct kitty_data		 load;
+	int				 loading;
+	int				 alt;
 
 	TAILQ_HEAD(, kitty_image_map)	 images;
 	TAILQ_ENTRY(kitty_state)	 entry;
@@ -121,11 +138,15 @@ struct kitty_placement_map {
 	TAILQ_ENTRY(kitty_placement_map)	 entry;
 };
 
-/* Map Kitty image ID and number to image ID and placement views. */
+/*
+ * Map Kitty image ID and number to image ID and placement views. The primary
+ * and alternate screens have separate images.
+ */
 struct kitty_image_map {
 	u_int					 kitty_id;
 	u_int					 number;
 	u_int					 image_id;
+	int					 alt;
 	TAILQ_HEAD(, kitty_placement_map)	 placements;
 
 	TAILQ_ENTRY(kitty_image_map)		 entry;
@@ -659,7 +680,27 @@ kitty_command_reset(struct kitty_command *cmd)
 	cmd->delete_action = 'a';
 }
 
-/* Parse Kitty graphics control data, continuing after the first error. */
+/* Check a single character value for a key. */
+static int
+kitty_check_value(char key, char value)
+{
+	switch (key) {
+	case 'a':
+		return (strchr("qtTfacpd", value) != NULL);
+	case 't':
+		return (strchr("dfts", value) != NULL);
+	case 'o':
+		return (value == 'z');
+	case 'd':
+		return (strchr("aAiInNcCpPqQrRxXyYzZfF", value) != NULL);
+	}
+	return (1);
+}
+
+/*
+ * Parse Kitty graphics control data. Returns -1 if the command is malformed
+ * and must be ignored. Errors for unsupported values are returned in m.
+ */
 static int
 kitty_parse_control(struct kitty_command *cmd, const u_char *data, size_t size,
     const char **m)
@@ -669,31 +710,38 @@ kitty_parse_control(struct kitty_command *cmd, const u_char *data, size_t size,
 	long long	 ll;
 	u_int		 number;
 	char		 key;
+	int		 error = 0;
 
 	*m = NULL;
 
 	copy = ptr = xstrndup(data, size);
-	while ((next = strsep(&ptr, ",")) != NULL) {
+	while (!error && (next = strsep(&ptr, ",")) != NULL) {
 		if (*next == '\0') {
-			if (ptr == NULL)
-				break;
-			kitty_set_error(m, "EINVAL");
+			if (ptr != NULL)
+				error = 1;
 			continue;
 		}
+		value = strchr(next, '=');
+		if (value == NULL || value == next || value[1] == '\0') {
+			error = 1;
+			continue;
+		}
+
+		/* Keys longer than one character are ignored. */
+		if (value != next + 1)
+			continue;
 		key = next[0];
-		if (next[1] != '=' || next[2] == '\0') {
-			kitty_set_error(m, "EINVAL");
-			continue;
-		}
-		value = next + 2;
+		value++;
 
 		switch (key) {
 		case 'a':
 		case 't':
 		case 'o':
 		case 'd':
-			if (value[1] != '\0') {
-				kitty_set_error(m, "EINVAL");
+		case 'e':
+			if (value[1] != '\0' ||
+			    !kitty_check_value(key, value[0])) {
+				error = 1;
 				break;
 			}
 			switch (key) {
@@ -709,19 +757,22 @@ kitty_parse_control(struct kitty_command *cmd, const u_char *data, size_t size,
 			case 'd':
 				cmd->delete_action = value[0];
 				break;
+			case 'e':
+				cmd->feature = value[0];
+				break;
 			}
 			break;
 		case 'z':
 			ll = strtonum(value, INT32_MIN, INT32_MAX, &errstr);
 			if (errstr != NULL)
-				kitty_set_error(m, "EINVAL");
+				error = 1;
 			else
 				cmd->zindex = ll;
 			break;
 		case 'O':
 			ll = strtonum(value, 0, LLONG_MAX, &errstr);
 			if (errstr != NULL || (off_t)ll != ll)
-				kitty_set_error(m, "EINVAL");
+				error = 1;
 			else
 				cmd->data_offset = ll;
 			break;
@@ -752,9 +803,10 @@ kitty_parse_control(struct kitty_command *cmd, const u_char *data, size_t size,
 		case 'c':
 		case 'r':
 		case 'C':
+		case 'N':
 			number = strtonum(value, 0, UINT_MAX, &errstr);
 			if (errstr != NULL) {
-				kitty_set_error(m, "EINVAL");
+				error = 1;
 				break;
 			}
 			switch (key) {
@@ -810,76 +862,57 @@ kitty_parse_control(struct kitty_command *cmd, const u_char *data, size_t size,
 				cmd->rows = number;
 				break;
 			case 'C':
-				cmd->cursor_no_move = (number != 0);
+				cmd->cursor_no_move = (number == 1);
+				break;
+			case 'N':
+				cmd->hints = number;
 				break;
 			}
 			break;
 		}
 	}
 	free(copy);
-	if (*m != NULL)
+	if (error)
 		return (-1);
 	return (0);
 }
 
-/* Check a complete command before acting on it. */
-static const char *
-kitty_check_command(struct kitty_command *cmd)
+/* Free collected image data. */
+static void
+kitty_data_free(struct kitty_data *kd)
 {
-	if (cmd->image_id == 0 && cmd->image_number == 0)
-		cmd->placement_id = 0;
-	if (cmd->image_id != 0 && cmd->image_number != 0)
-		return ("EINVAL");
+	free(kd->data);
+	memset(kd, 0, sizeof *kd);
+}
 
-	switch (cmd->transmission) {
-	case 'd':
-		break;
-	case 'f':
-	case 't':
-		cmd->more = 0;
-		break;
-	case 's':
-		return ("ENOTSUP");
-	default:
-		return ("EINVAL");
-	}
+/* Free a Kitty image mapping and its placement views. */
+static void
+kitty_image_map_free(struct kitty_state *ks, struct kitty_image_map *map)
+{
+	struct kitty_placement_map	*kpl;
 
-	switch (cmd->action) {
-	case KITTY_ACTION_QUERY:
-	case KITTY_ACTION_TRANSMIT:
-	case KITTY_ACTION_TRANSMIT_AND_DISPLAY:
-	case KITTY_ACTION_PLACE:
-	case KITTY_ACTION_DELETE:
-		return (NULL);
-	case KITTY_ACTION_TRANSMIT_FRAME:
-	case KITTY_ACTION_CONTROL_ANIMATION:
-	case KITTY_ACTION_COMPOSE_FRAME:
-		return ("ENOTSUP");
+	TAILQ_REMOVE(&ks->images, map, entry);
+	while ((kpl = TAILQ_FIRST(&map->placements)) != NULL) {
+		TAILQ_REMOVE(&map->placements, kpl, entry);
+		free(kpl);
 	}
-	return ("EINVAL");
+	image_free(image_find(map->image_id));
+	free(map);
 }
 
 /* Free Kitty graphics parser state. */
 void
 kitty_free_state(void *state)
 {
-	struct kitty_state		*ks = state;
-	struct kitty_image_map		*map;
-	struct kitty_placement_map	*kpl;
+	struct kitty_state	*ks = state;
+	struct kitty_image_map	*map;
 
 	if (ks == NULL)
 		return;
 	TAILQ_REMOVE(&kitty_states, ks, entry);
-	while ((map = TAILQ_FIRST(&ks->images)) != NULL) {
-		TAILQ_REMOVE(&ks->images, map, entry);
-		while ((kpl = TAILQ_FIRST(&map->placements)) != NULL) {
-			TAILQ_REMOVE(&map->placements, kpl, entry);
-			free(kpl);
-		}
-		image_free(image_find(map->image_id));
-		free(map);
-	}
-	free(ks->data);
+	while ((map = TAILQ_FIRST(&ks->images)) != NULL)
+		kitty_image_map_free(ks, map);
+	kitty_data_free(&ks->load);
 	free(ks);
 }
 
@@ -909,14 +942,14 @@ kitty_remove_image(struct image *im)
 	}
 }
 
-/* Find an image mapping by Kitty image ID. */
+/* Find an image mapping by Kitty image ID on the current screen. */
 static struct kitty_image_map *
 kitty_image_map_find(struct kitty_state *ks, u_int id)
 {
 	struct kitty_image_map	*map;
 
 	TAILQ_FOREACH(map, &ks->images, entry) {
-		if (map->kitty_id == id)
+		if (map->alt == ks->alt && map->kitty_id == id)
 			return (map);
 	}
 	return (NULL);
@@ -929,7 +962,7 @@ kitty_image_map_find_number(struct kitty_state *ks, u_int number)
 	struct kitty_image_map	*map;
 
 	TAILQ_FOREACH(map, &ks->images, entry) {
-		if (map->number == number)
+		if (map->alt == ks->alt && map->number == number)
 			return (map);
 	}
 	return (NULL);
@@ -946,19 +979,12 @@ kitty_image_map_select(struct kitty_state *ks, struct kitty_command *cmd)
 	return (NULL);
 }
 
-/* Choose an unused Kitty image ID for an image sent with only a number. */
+/* Choose the lowest unused Kitty image ID for an image sent with a number. */
 static u_int
 kitty_image_next_id(struct kitty_state *ks)
 {
-	struct kitty_image_map	*map;
-	u_int			 next = 1;
+	u_int	next = 1;
 
-	TAILQ_FOREACH(map, &ks->images, entry) {
-		if (map->kitty_id >= next)
-			next = map->kitty_id + 1;
-		if (next == 0)
-			next = 1;
-	}
 	while (kitty_image_map_find(ks, next) != NULL) {
 		if (++next == 0)
 			next = 1;
@@ -986,13 +1012,15 @@ kitty_image_map_set(struct kitty_state *ks, struct screen_write_ctx *ctx,
 			image_clear(ctx, kpl->image_id);
 			free(kpl);
 		}
-		image_free(image_find(map->image_id));
+		image_free(old);
+		TAILQ_REMOVE(&ks->images, map, entry);
 	} else {
 		map = xcalloc(1, sizeof *map);
 		map->kitty_id = id;
+		map->alt = ks->alt;
 		TAILQ_INIT(&map->placements);
-		TAILQ_INSERT_HEAD(&ks->images, map, entry);
 	}
+	TAILQ_INSERT_HEAD(&ks->images, map, entry);
 	image_ref(im);
 	map->image_id = image_get_id(im);
 	map->number = number;
@@ -1054,7 +1082,7 @@ kitty_match_zindex(struct image *im, void *arg)
 }
 
 /* Remove placements intersecting cells selected by a delete command. */
-static int
+static void
 kitty_delete_area(struct kitty_command *cmd, struct screen *s, char how)
 {
 	struct grid	*gd = s->grid;
@@ -1094,14 +1122,7 @@ kitty_delete_area(struct kitty_command *cmd, struct screen *s, char how)
 		image_grid_clear_area(gd, IMAGE_TYPE_KITTY, 0, 0, gd->sx,
 		    hsize + gd->sy, kitty_match_zindex, z);
 		break;
-	case 'i':
-	case 'n':
-	case 'r':
-		break;
-	default:
-		return (-1);
 	}
-	return (0);
 }
 
 /* Check whether a delete command selects an image mapping by ID. */
@@ -1124,10 +1145,10 @@ kitty_delete_selects(struct kitty_command *cmd, struct kitty_image_map *map,
 }
 
 /* Delete selected Kitty placements. */
-static const char *
-kitty_handle_delete(struct kitty_state *ks, struct screen_write_ctx *ctx)
+static void
+kitty_handle_delete(struct kitty_state *ks, struct kitty_command *cmd,
+    struct screen_write_ctx *ctx)
 {
-	struct kitty_command		*cmd = &ks->cmd;
 	struct screen			*s = ctx->s;
 	struct grid			*gd = s->grid;
 	struct kitty_image_map		*map, *map1, *newest = NULL;
@@ -1136,18 +1157,25 @@ kitty_handle_delete(struct kitty_state *ks, struct screen_write_ctx *ctx)
 	char				 how = cmd->delete_action;
 	int				 release;
 
+	/* Animation frames are not stored, so there is nothing to delete. */
+	if (how == 'f' || how == 'F')
+		return;
+
 	release = (how >= 'A' && how <= 'Z');
 	if (release)
 		how += 'a' - 'A';
-	TAILQ_FOREACH(map, &ks->images, entry)
-		kitty_prune_placements(map, s);
-	if (kitty_delete_area(cmd, s, how) != 0)
-		return ("ENOTSUP");
+	TAILQ_FOREACH(map, &ks->images, entry) {
+		if (map->alt == ks->alt)
+			kitty_prune_placements(map, s);
+	}
+	kitty_delete_area(cmd, s, how);
 	if (cmd->image_number != 0)
 		newest = kitty_image_map_find_number(ks, cmd->image_number);
 	placement_id = (how == 'r' ? 0 : cmd->placement_id);
 
 	TAILQ_FOREACH_SAFE(map, &ks->images, entry, map1) {
+		if (map->alt != ks->alt)
+			continue;
 		removed = 0;
 		if (kitty_delete_selects(cmd, map, newest, how)) {
 			TAILQ_FOREACH(kpl, &map->placements, entry) {
@@ -1162,25 +1190,27 @@ kitty_handle_delete(struct kitty_state *ks, struct screen_write_ctx *ctx)
 		removed += kitty_prune_placements(map, s);
 		if (!release || removed == 0 || !TAILQ_EMPTY(&map->placements))
 			continue;
-		TAILQ_REMOVE(&ks->images, map, entry);
-		image_free(image_find(map->image_id));
-		free(map);
+		kitty_image_map_free(ks, map);
 	}
 	if (ctx->wp != NULL)
 		ctx->wp->flags |= PANE_REDRAW;
-	return ("OK");
 }
 
-/* Decode and append one base64-encoded Kitty payload chunk. */
+/*
+ * Decode and append one base64-encoded Kitty payload chunk. Returns -1 for
+ * invalid base64 and -2 if the data is too large.
+ */
 static int
-kitty_append_data(struct kitty_state *ks, const u_char *data, size_t size)
+kitty_append_data(struct kitty_data *kd, const u_char *data, size_t size)
 {
 	u_char	*d;
 	size_t	 dsize, allocated, limit;
 
 	limit = options_get_number(global_options, "image-size-limit");
-	if (size > limit || ks->size > limit)
-		return (-1);
+	if (size / 4 * 3 > limit || kd->size > limit)
+		return (-2);
+	if (size == 0)
+		return (0);
 
 	d = image_base64_decode(data, size, limit, &dsize);
 	if (d == NULL)
@@ -1189,26 +1219,26 @@ kitty_append_data(struct kitty_state *ks, const u_char *data, size_t size)
 		free(d);
 		return (0);
 	}
-	if (dsize > limit - ks->size) {
+	if (dsize > limit - kd->size) {
 		free(d);
-		return (-1);
+		return (-2);
 	}
 
-	if (ks->size + dsize > ks->allocated) {
-		allocated = ks->allocated;
+	if (kd->size + dsize > kd->allocated) {
+		allocated = kd->allocated;
 		if (allocated == 0)
 			allocated = 4096;
-		while (allocated < ks->size + dsize) {
+		while (allocated < kd->size + dsize) {
 			if (allocated > limit / 2)
 				allocated = limit;
 			else
 				allocated *= 2;
 		}
-		ks->data = xrealloc(ks->data, allocated);
-		ks->allocated = allocated;
+		kd->data = xrealloc(kd->data, allocated);
+		kd->allocated = allocated;
 	}
-	memcpy(ks->data + ks->size, d, dsize);
-	ks->size += dsize;
+	memcpy(kd->data + kd->size, d, dsize);
+	kd->size += dsize;
 
 	free(d);
 	return (0);
@@ -1218,74 +1248,91 @@ kitty_append_data(struct kitty_state *ks, const u_char *data, size_t size)
 static void
 kitty_reset_transfer(struct kitty_state *ks)
 {
-	free(ks->data);
-	ks->data = NULL;
-	ks->size = 0;
-	ks->allocated = 0;
-	ks->cmd.more = 0;
+	kitty_data_free(&ks->load);
+	ks->loading = 0;
 }
 
-/* Return if a temporary file may be removed after reading. */
+/* Check if a path is inside a directory. */
 static int
-kitty_temp_path_allowed(const char *path)
+kitty_path_in_directory(const char *path, const char *directory)
 {
-	const char	*base, *tmpdir;
-	size_t		 len;
+	size_t	len;
 
-	base = strrchr(path, '/');
-	if (base == NULL)
+	if (directory == NULL || *directory == '\0')
 		return (0);
-	if (strstr(base + 1, "tty-graphics-protocol") == NULL)
-		return (0);
-
-	if (strncmp(path, "/tmp/", 5) == 0 ||
-	    strncmp(path, "/var/tmp/", 9) == 0 ||
-	    strncmp(path, "/dev/shm/", 9) == 0)
-		return (1);
-
-	tmpdir = getenv("TMPDIR");
-	if (tmpdir == NULL || *tmpdir == '\0')
-		return (0);
-	len = strlen(tmpdir);
-	while (len > 1 && tmpdir[len - 1] == '/')
+	len = strlen(directory);
+	while (len > 1 && directory[len - 1] == '/')
 		len--;
-	if (strncmp(path, tmpdir, len) == 0 && path[len] == '/')
+	if (strncmp(path, directory, len) != 0)
+		return (0);
+	return (path[len] == '/' || (len == 1 && *directory == '/'));
+}
+
+/* Check if a resolved path is in a temporary directory. */
+static int
+kitty_path_is_temporary(const char *path)
+{
+	const char	*directory;
+	char		 resolved[PATH_MAX];
+
+	if (kitty_path_in_directory(path, "/tmp") ||
+	    kitty_path_in_directory(path, "/dev/shm"))
+		return (1);
+	directory = getenv("TMPDIR");
+	if (directory == NULL || *directory == '\0')
+		directory = getenv("TMP");
+	if (directory == NULL || *directory == '\0')
+		return (0);
+	if (kitty_path_in_directory(path, directory))
+		return (1);
+	if (realpath(directory, resolved) != NULL &&
+	    kitty_path_in_directory(path, resolved))
 		return (1);
 	return (0);
 }
 
-/* Replace a file name payload with data read from the file. */
+/* Check if a resolved path is in a part of the filesystem never read. */
 static int
-kitty_read_file(struct kitty_state *ks)
+kitty_path_is_sensitive(const char *path)
 {
-	struct kitty_command	*cmd = &ks->cmd;
-	struct stat		 sb;
-	char			*path;
-	u_char			*buf = NULL;
-	size_t			 size, done = 0, limit;
-	ssize_t			 n;
-	int			 fd;
+	if (strncmp(path, "/proc/", 6) == 0 || strncmp(path, "/sys/", 5) == 0)
+		return (1);
+	if (strncmp(path, "/dev/", 5) == 0 &&
+	    strncmp(path, "/dev/shm/", 9) != 0)
+		return (1);
+	return (0);
+}
 
-	if (ks->size == 0 || memchr(ks->data, '\0', ks->size) != NULL)
+/*
+ * Read part of an open file or shared memory object. A raw size is used if
+ * no size is given.
+ */
+static int
+kitty_read_fd(struct kitty_command *cmd, int fd, size_t raw_size,
+    struct kitty_data *kd)
+{
+	struct stat	 sb;
+	u_char		*buf;
+	size_t		 size, done = 0, limit;
+	ssize_t		 n;
+
+	if (fstat(fd, &sb) != 0 || !S_ISREG(sb.st_mode) || sb.st_size < 0)
 		return (-1);
-	path = xstrndup(ks->data, ks->size);
-
-	fd = open(path, O_RDONLY|O_NONBLOCK);
-	if (fd == -1)
-		goto fail;
-	if (fstat(fd, &sb) != 0 || !S_ISREG(sb.st_mode))
-		goto fail;
 	if (cmd->data_offset > sb.st_size)
-		goto fail;
+		return (-1);
 	size = sb.st_size - cmd->data_offset;
 	if (cmd->data_size != 0) {
 		if (cmd->data_size > size)
-			goto fail;
+			return (-1);
 		size = cmd->data_size;
+	} else if (raw_size != 0) {
+		if (raw_size > size)
+			return (-1);
+		size = raw_size;
 	}
 	limit = options_get_number(global_options, "image-size-limit");
 	if (size == 0 || size > limit)
-		goto fail;
+		return (-1);
 
 	buf = xmalloc(size);
 	while (done < size) {
@@ -1293,59 +1340,360 @@ kitty_read_file(struct kitty_state *ks)
 		    cmd->data_offset + done);
 		if (n == -1 && errno == EINTR)
 			continue;
-		if (n <= 0)
-			goto fail;
+		if (n <= 0) {
+			free(buf);
+			return (-1);
+		}
 		done += n;
 	}
+	kd->data = buf;
+	kd->size = kd->allocated = size;
+	return (0);
+}
+
+/* Read image data from a file named by the payload. */
+static const char *
+kitty_read_file(struct kitty_command *cmd, struct kitty_data *name,
+    struct kitty_data *kd)
+{
+	char		*path, resolved[PATH_MAX];
+	const char	*m = "EINVAL: invalid data";
+	int		 fd = -1;
+
+	if (name->size == 0 || memchr(name->data, '\0', name->size) != NULL)
+		return (m);
+	path = xstrndup(name->data, name->size);
+
+	/* Check the real path before opening, which may have side effects. */
+	if (realpath(path, resolved) == NULL ||
+	    kitty_path_is_sensitive(resolved))
+		goto out;
+	if (cmd->transmission == 't') {
+		if (!kitty_path_is_temporary(resolved)) {
+			m = "EINVAL: temporary file not in temp dir";
+			goto out;
+		}
+		if (strstr(resolved, "tty-graphics-protocol") == NULL) {
+			m = "EINVAL: temporary file not named correctly";
+			goto out;
+		}
+	}
+
+	fd = open(resolved, O_RDONLY|O_NONBLOCK|O_NOCTTY|O_NOFOLLOW);
+	if (fd == -1)
+		goto out;
+	if (cmd->transmission == 't' && unlink(resolved) != 0)
+		log_debug("%s: failed to remove %s", __func__, resolved);
+	if (kitty_read_fd(cmd, fd, 0, kd) == 0)
+		m = NULL;
+
+out:
+	if (m != NULL)
+		log_debug("%s: failed to read %s", __func__, path);
+	if (fd != -1)
+		close(fd);
+	free(path);
+	return (m);
+}
+
+/* Get the number of bytes for each pixel of a raw format. */
+static u_int
+kitty_format_bytes(u_int format)
+{
+	switch (format) {
+	case KITTY_FORMAT_INDEXED:
+		return (1);
+	case KITTY_FORMAT_INDEXED_ALPHA:
+		return (2);
+	case KITTY_FORMAT_RGB:
+		return (3);
+	case KITTY_FORMAT_RGBA:
+		return (4);
+	}
+	return (0);
+}
+
+/* Read image data from a shared memory object named by the payload. */
+static const char *
+kitty_read_shm(struct kitty_command *cmd, struct kitty_data *name,
+    struct kitty_data *kd)
+{
+	char		*path;
+	const char	*m = "EINVAL: invalid data";
+	size_t		 raw_size = 0, limit;
+	u_int		 bytes;
+	int		 fd;
+
+	if (name->size == 0 ||
+	    name->size > NAME_MAX ||
+	    memchr(name->data, '\0', name->size) != NULL)
+		return (m);
+	path = xstrndup(name->data, name->size);
+	if (strcmp(path, "/") == 0)
+		goto out;
+
+	/* Uncompressed raw data is sized from the image dimensions. */
+	bytes = kitty_format_bytes(cmd->format);
+	if (cmd->compression == '\0' && bytes != 0) {
+		limit = options_get_number(global_options, "image-size-limit");
+		if (cmd->pixel_width != 0 &&
+		    cmd->pixel_height != 0 &&
+		    (uint64_t)cmd->pixel_width * cmd->pixel_height >
+		    limit / bytes) {
+			m = "EINVAL: dimensions too large";
+			goto out;
+		}
+		raw_size = (size_t)cmd->pixel_width * cmd->pixel_height * bytes;
+	}
+
+	fd = shm_open(path, O_RDONLY, 0);
+	if (fd == -1)
+		goto out;
+	shm_unlink(path);
+	if (kitty_read_fd(cmd, fd, raw_size, kd) == 0)
+		m = NULL;
 	close(fd);
 
-	free(ks->data);
-	ks->data = buf;
-	ks->size = ks->allocated = size;
-
-	if (cmd->transmission == 't' && kitty_temp_path_allowed(path))
-		unlink(path);
+out:
+	if (m != NULL)
+		log_debug("%s: failed to read %s", __func__, path);
 	free(path);
+	return (m);
+}
+
+/* Decompress image data. */
+#ifdef HAVE_LIBZ
+static int
+kitty_inflate(struct kitty_data *kd)
+{
+	z_stream	 z;
+	u_char		*out;
+	size_t		 allocated, limit;
+	int		 error;
+
+	limit = options_get_number(global_options, "image-size-limit");
+	if (kd->size == 0 || kd->size > UINT_MAX)
+		return (-1);
+
+	allocated = kd->size * 4;
+	if (allocated < 4096)
+		allocated = 4096;
+	if (allocated > limit)
+		allocated = limit;
+	out = xmalloc(allocated);
+
+	memset(&z, 0, sizeof z);
+	if (inflateInit(&z) != Z_OK) {
+		free(out);
+		return (-1);
+	}
+	z.next_in = kd->data;
+	z.avail_in = kd->size;
+	z.next_out = out;
+	z.avail_out = allocated;
+	for (;;) {
+		error = inflate(&z, Z_NO_FLUSH);
+		if (error == Z_STREAM_END)
+			break;
+		if (error != Z_OK && error != Z_BUF_ERROR)
+			goto fail;
+		if (z.avail_out != 0 || allocated == limit)
+			goto fail;
+		if (allocated > limit / 2)
+			allocated = limit;
+		else
+			allocated *= 2;
+		out = xrealloc(out, allocated);
+		z.next_out = out + z.total_out;
+		z.avail_out = allocated - z.total_out;
+	}
+
+	free(kd->data);
+	kd->data = out;
+	kd->size = z.total_out;
+	kd->allocated = allocated;
+	inflateEnd(&z);
 	return (0);
 
 fail:
-	log_debug("%s: failed to read %s", __func__, path);
-	if (fd != -1)
-		close(fd);
-	free(buf);
-	free(path);
+	inflateEnd(&z);
+	free(out);
 	return (-1);
 }
+#else
+static int
+kitty_inflate(__unused struct kitty_data *kd)
+{
+	return (-1);
+}
+#endif
 
-/* Reply to a Kitty graphics sequence. */
+/* Get the RGB colour used for a palette index in indexed image data. */
+static int
+kitty_indexed_colour(struct window_pane *wp, u_int idx)
+{
+	struct grid_cell	defaults;
+	int			c;
+
+	switch (idx) {
+	case 248:
+	case 251:
+	case 253:
+		c = window_pane_get_bg(wp);
+		if (c == -1 || COLOUR_DEFAULT(c))
+			c = 0;
+		break;
+	case 249:
+	case 250:
+	case 252:
+	case 254:
+	case 255:
+		c = window_pane_get_fg_control_client(wp);
+		if (c == -1) {
+			tty_default_colours(&defaults, wp, NULL);
+			if (COLOUR_DEFAULT(defaults.fg))
+				c = window_pane_get_fg(wp);
+			else
+				c = defaults.fg;
+		}
+		if (c == -1 || COLOUR_DEFAULT(c))
+			c = 7;
+		break;
+	default:
+		c = colour_palette_get(&wp->palette, idx|COLOUR_FLAG_256);
+		if (c == -1)
+			c = idx|COLOUR_FLAG_256;
+		break;
+	}
+	c = colour_force_rgb(c);
+	if (c == -1)
+		return (0);
+	return (c);
+}
+
+/* Convert indexed image data to RGBA using the pane's colours. */
+static u_char *
+kitty_indexed_decode(struct window_pane *wp, struct kitty_data *kd,
+    u_int format, u_int width, u_int height)
+{
+	int	 colours[256];
+	u_char	*out, *p, *src = kd->data;
+	size_t	 i, n = (size_t)width * height;
+	u_int	 bytes = kitty_format_bytes(format);
+
+	if (kd->size != n * bytes)
+		return (NULL);
+	for (i = 0; i < nitems(colours); i++)
+		colours[i] = kitty_indexed_colour(wp, i);
+
+	out = p = xmalloc(n * 4);
+	for (i = 0; i < n; i++, src += bytes, p += 4) {
+		colour_split_rgb(colours[src[0]], &p[0], &p[1], &p[2]);
+		p[3] = (bytes == 2 ? src[1] : 255);
+	}
+	return (out);
+}
+
+/*
+ * Read a completed upload from its medium and decode it to RGBA pixels. The
+ * payload is the data itself or the name of a file or shared memory object.
+ */
+static u_char *
+kitty_load(struct kitty_command *cmd, struct window_pane *wp,
+    struct kitty_data *payload, const char **m)
+{
+	struct kitty_data	 kd = { 0 };
+	u_char			*p = NULL;
+	size_t			 limit;
+	u_int			 bytes = kitty_format_bytes(cmd->format);
+
+	if (bytes == 0 && cmd->format != KITTY_FORMAT_PNG) {
+		*m = "EINVAL: unsupported format";
+		return (NULL);
+	}
+
+	*m = NULL;
+	switch (cmd->transmission) {
+	case 'd':
+		kd = *payload;
+		memset(payload, 0, sizeof *payload);
+		break;
+	case 'f':
+	case 't':
+		*m = kitty_read_file(cmd, payload, &kd);
+		break;
+	case 's':
+		*m = kitty_read_shm(cmd, payload, &kd);
+		break;
+	}
+	if (*m != NULL)
+		goto out;
+
+	if (cmd->compression == 'z' && kitty_inflate(&kd) != 0) {
+		*m = "EINVAL: decompression failed";
+		goto out;
+	}
+
+	limit = options_get_number(global_options, "image-size-limit");
+	if (cmd->format == KITTY_FORMAT_PNG) {
+		p = image_png_decode(kd.data, kd.size, limit, 0, 0,
+		    &cmd->pixel_width, &cmd->pixel_height);
+		if (p == NULL)
+			*m = "EINVAL: invalid data";
+		goto out;
+	}
+
+	if (cmd->pixel_width == 0 || cmd->pixel_height == 0) {
+		*m = "EINVAL: dimensions required";
+		goto out;
+	}
+	if ((uint64_t)cmd->pixel_width * cmd->pixel_height > limit / 4) {
+		*m = "EINVAL: dimensions too large";
+		goto out;
+	}
+	if (bytes >= 3) {
+		p = image_raw_decode(kd.data, kd.size, limit, cmd->format,
+		    cmd->pixel_width, cmd->pixel_height, 0);
+	} else {
+		p = kitty_indexed_decode(wp, &kd, cmd->format,
+		    cmd->pixel_width, cmd->pixel_height);
+	}
+	if (p == NULL)
+		*m = "EINVAL: invalid data";
+
+out:
+	kitty_data_free(&kd);
+	return (p);
+}
+
+/* Reply to a Kitty graphics sequence, adding any extra keys after the IDs. */
 static void
 kitty_send_reply(struct input_ctx *ictx, struct kitty_command *cmd,
-    const char *m)
+    const char *extra, const char *m)
 {
-	char	i[96] = "";
-	char	I[96] = "";
-	char	p[96] = "";
+	char	ids[128] = "", key[32];
 
 	if (cmd->quiet >= 2)
 		return;
-	if (cmd->action == KITTY_ACTION_DELETE && strcmp(m, "OK") == 0)
-		return;
 	if (cmd->quiet == 1 && strcmp(m, "OK") == 0)
 		return;
-	if (cmd->image_id == 0 && cmd->image_number == 0 &&
-	    cmd->action != KITTY_ACTION_QUERY)
+	if (cmd->image_id == 0 && cmd->image_number == 0)
 		return;
 
-	if (cmd->image_id != 0 || cmd->image_number == 0)
-		xsnprintf(i, sizeof i, "i=%u", cmd->image_id);
+	if (cmd->image_id != 0)
+		xsnprintf(ids, sizeof ids, "i=%u", cmd->image_id);
 	if (cmd->image_number != 0) {
-		if (*i != '\0')
-			strlcat(i, ",", sizeof i);
-		xsnprintf(I, sizeof I, "I=%u", cmd->image_number);
+		xsnprintf(key, sizeof key, "%sI=%u", *ids == '\0' ? "" : ",",
+		    cmd->image_number);
+		strlcat(ids, key, sizeof ids);
 	}
-	if (cmd->placement_id != 0)
-		xsnprintf(p, sizeof p, ",p=%u", cmd->placement_id);
-	input_reply(ictx, 0, "\033_G%s%s%s;%s\033\\", i, I, p, m);
+	if (cmd->placement_id != 0) {
+		xsnprintf(key, sizeof key, ",p=%u", cmd->placement_id);
+		strlcat(ids, key, sizeof ids);
+	}
+	if (extra == NULL)
+		extra = "";
+	input_reply(ictx, 0, "\033_G%s%s;%s\033\\", ids, extra, m);
 }
 
 /* Create a Kitty placement with shared source pixels and stored geometry. */
@@ -1400,7 +1748,7 @@ kitty_place_image(struct image *src, struct kitty_command *cmd, u_int xpixel,
 		    ig.src_h + ig.canvas_yoff, xpixel, ypixel, &ig.sx, &ig.sy);
 	} else if (ig.sy == 0) {
 		ig.scaled_width = (double)ig.sx * xpixel - ig.canvas_xoff;
-		ig.scaled_height = ig.src_h * ig.scaled_width / ig.src_w;
+		ig.scaled_height = round(ig.src_h * ig.scaled_width / ig.src_w);
 
 		size = ceil((ig.scaled_height + ig.canvas_yoff) / ypixel);
 		if (size > USHRT_MAX)
@@ -1408,7 +1756,7 @@ kitty_place_image(struct image *src, struct kitty_command *cmd, u_int xpixel,
 		ig.sy = size;
 	} else if (ig.sx == 0) {
 		ig.scaled_height = (double)ig.sy * ypixel - ig.canvas_yoff;
-		ig.scaled_width = ig.src_w * ig.scaled_height / ig.src_h;
+		ig.scaled_width = round(ig.src_w * ig.scaled_height / ig.src_h);
 
 		size = ceil((ig.scaled_width + ig.canvas_xoff) / xpixel);
 		if (size > USHRT_MAX)
@@ -1451,17 +1799,16 @@ kitty_display(struct screen_write_ctx *ctx, struct kitty_command *cmd,
 
 /* Place an image which was uploaded earlier. */
 static const char *
-kitty_handle_place(struct kitty_state *ks, struct window_pane *wp,
-    struct screen_write_ctx *ctx, u_int bg)
+kitty_handle_place(struct kitty_state *ks, struct kitty_command *cmd,
+    struct window_pane *wp, struct screen_write_ctx *ctx, u_int bg)
 {
-	struct kitty_command	*cmd = &ks->cmd;
 	struct window		*w = wp->window;
 	struct kitty_image_map	*map;
 	struct image		*src, *im;
 
 	map = kitty_image_map_select(ks, cmd);
 	if (map == NULL)
-		return ("ENOENT");
+		return ("ENOENT: image not found");
 	cmd->image_id = map->kitty_id;
 	src = image_find(map->image_id);
 	image_ref(src);
@@ -1469,7 +1816,7 @@ kitty_handle_place(struct kitty_state *ks, struct window_pane *wp,
 	im = kitty_place_image(src, cmd, w->xpixel, w->ypixel);
 	if (im == NULL) {
 		image_free(src);
-		return ("EINVAL");
+		return ("EINVAL: invalid placement");
 	}
 	kitty_display(ctx, cmd, map, im, bg);
 	image_free(im);
@@ -1477,43 +1824,24 @@ kitty_handle_place(struct kitty_state *ks, struct window_pane *wp,
 	return ("OK");
 }
 
-/* Decode an upload and store it, place it, or only check it for a query. */
+/* Store a completed upload, and place it for a transmit and display. */
 static const char *
-kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
+kitty_handle_transmit(struct kitty_state *ks, struct kitty_command *cmd,
+    struct kitty_data *payload, struct window_pane *wp,
     struct screen_write_ctx *ctx, u_int bg)
 {
-	struct kitty_command	*cmd = &ks->cmd;
 	struct window		*w = wp->window;
 	struct image_geom	 ig = { 0 };
 	struct kitty_image_map	*map = NULL;
 	struct image		*src, *im = NULL;
-	u_char			*p = NULL;
-	size_t			 limit;
+	const char		*m;
+	u_char			*p;
 	u_int			 sx, sy;
 	uint64_t		 cw, ch;
-	int			 z;
 
-	if (cmd->transmission != 'd' && kitty_read_file(ks) != 0)
-		return ("EBADF");
-
-	/* Decode the completed transfer into RGBA pixels. */
-	if (cmd->compression != '\0' && cmd->compression != 'z')
-		return ("EINVAL");
-	z = (cmd->compression == 'z');
-	limit = options_get_number(global_options, "image-size-limit");
-	switch (cmd->format) {
-	case KITTY_FORMAT_RGB:
-	case KITTY_FORMAT_RGBA:
-		p = image_raw_decode(ks->data, ks->size, limit, cmd->format,
-		    cmd->pixel_width, cmd->pixel_height, z);
-		break;
-	case KITTY_FORMAT_PNG:
-		p = image_png_decode(ks->data, ks->size, limit, z,
-		    cmd->data_size, &cmd->pixel_width, &cmd->pixel_height);
-		break;
-	}
+	p = kitty_load(cmd, wp, payload, &m);
 	if (p == NULL)
-		return ("EINVAL");
+		return (m);
 
 	cw = (w->xpixel == 0 ? 8 : w->xpixel);
 	ch = (w->ypixel == 0 ? 16 : w->ypixel);
@@ -1521,9 +1849,10 @@ kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
 	    &sy);
 	cw *= sx;
 	ch *= sy;
-	if (cw > UINT_MAX || ch > UINT_MAX) {
+	if (cw > UINT_MAX || ch > UINT_MAX || sx > USHRT_MAX ||
+	    sy > USHRT_MAX) {
 		free(p);
-		return ("EINVAL");
+		return ("EINVAL: dimensions too large");
 	}
 	ig.src_w = ig.scaled_width = cmd->pixel_width;
 	ig.src_h = ig.scaled_height = cmd->pixel_height;
@@ -1534,18 +1863,15 @@ kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
 	src = image_create(IMAGE_TYPE_KITTY, &ig, p);
 	if (src == NULL) {
 		free(p);
-		return ("EINVAL");
+		return ("ENOMEM: out of memory");
 	}
-	if (cmd->action == KITTY_ACTION_QUERY) {
-		image_free(src);
-		return ("OK");
-	}
+	image_set_transient(src, cmd->hints & KITTY_HINT_TRANSIENT);
 
 	if (cmd->action == KITTY_ACTION_TRANSMIT_AND_DISPLAY) {
 		im = kitty_place_image(src, cmd, w->xpixel, w->ypixel);
 		if (im == NULL) {
 			image_free(src);
-			return ("EINVAL");
+			return ("EINVAL: invalid placement");
 		}
 	}
 	if (cmd->image_id == 0 && cmd->image_number != 0)
@@ -1561,6 +1887,206 @@ kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
 	return ("OK");
 }
 
+/* Check if a key and value in a feature query are supported. */
+static int
+kitty_feature_supported(char action, char key, const char *value)
+{
+	const char	*keys;
+
+	switch (action) {
+	case KITTY_ACTION_QUERY:
+	case KITTY_ACTION_TRANSMIT:
+		keys = "ftosvSOpN";
+		break;
+	case KITTY_ACTION_TRANSMIT_AND_DISPLAY:
+		keys = "ftosvSOpNxywhXYcrCz";
+		break;
+	case KITTY_ACTION_PLACE:
+		keys = "pxywhXYcrCz";
+		break;
+	case KITTY_ACTION_DELETE:
+		keys = "dpxyz";
+		break;
+	default:
+		return (0);
+	}
+	if (strchr(keys, key) == NULL)
+		return (0);
+
+	switch (key) {
+	case 'f':
+		return (strcmp(value, "8") == 0 ||
+		    strcmp(value, "16") == 0 ||
+		    strcmp(value, "24") == 0 ||
+		    strcmp(value, "100") == 0);
+	case 't':
+		return (strchr("fts", value[0]) != NULL && value[1] == '\0');
+	case 'd':
+		return (strchr("AiInNcCpPqQrRxXyYzZ", value[0]) != NULL &&
+		    value[1] == '\0');
+	case 'C':
+		return (strcmp(value, "1") == 0);
+	case 'N':
+		return (strcmp(value, "1") == 0);
+	}
+	return (1);
+}
+
+/* Report the keys supported for an action in a feature query. */
+static void
+kitty_handle_feature_query(struct input_ctx *ictx, struct kitty_command *cmd,
+    const u_char *data, size_t size)
+{
+	char	*copy, *ptr, *next, *value, *extra = NULL, *tmp;
+	char	 key;
+
+	if (cmd->feature == KITTY_ACTION_QUERY ||
+	    cmd->feature == KITTY_ACTION_TRANSMIT ||
+	    cmd->feature == KITTY_ACTION_TRANSMIT_AND_DISPLAY ||
+	    cmd->feature == KITTY_ACTION_PLACE ||
+	    cmd->feature == KITTY_ACTION_DELETE)
+		xasprintf(&extra, ",e=%c", cmd->feature);
+
+	copy = ptr = xstrndup(data, size);
+	while (extra != NULL && (next = strsep(&ptr, ",")) != NULL) {
+		if (next[0] == '\0' || next[1] != '=')
+			continue;
+		key = next[0];
+		value = next + 2;
+		if (strchr("aiImqe", key) != NULL)
+			continue;
+
+		/* Default values are not reported. */
+		if (strspn(value, "0") == strlen(value))
+			continue;
+		if ((key == 'f' && strcmp(value, "32") == 0) ||
+		    (key == 't' && strcmp(value, "d") == 0) ||
+		    (key == 'd' && strcmp(value, "a") == 0))
+			continue;
+
+		if (!kitty_feature_supported(cmd->feature, key, value))
+			continue;
+		xasprintf(&tmp, "%s,%c=%s", extra, key, value);
+		free(extra);
+		extra = tmp;
+	}
+	free(copy);
+
+	kitty_send_reply(ictx, cmd, extra, "OK");
+	free(extra);
+}
+
+/* Check an upload without storing it, or report supported features. */
+static void
+kitty_handle_query(struct input_ctx *ictx, struct kitty_command *cmd,
+    struct window_pane *wp, const u_char *control, size_t csize,
+    const u_char *data, size_t size)
+{
+	struct kitty_data	 payload = { 0 };
+	const char		*m;
+	u_char			*p;
+
+	if (cmd->image_id == 0) {
+		kitty_send_reply(ictx, cmd, NULL, "EINVAL: image ID required");
+		return;
+	}
+	if (cmd->feature != '\0') {
+		kitty_handle_feature_query(ictx, cmd, control, csize);
+		return;
+	}
+
+	switch (kitty_append_data(&payload, data, size)) {
+	case -1:
+		return;
+	case -2:
+		m = "EINVAL: invalid data";
+		break;
+	default:
+		p = kitty_load(cmd, wp, &payload, &m);
+		if (p != NULL) {
+			free(p);
+			m = "OK";
+		}
+		break;
+	}
+	kitty_data_free(&payload);
+	kitty_send_reply(ictx, cmd, NULL, m);
+}
+
+/* Add a chunk to an unfinished upload, and store it when it is complete. */
+static void
+kitty_continue_transfer(struct input_ctx *ictx, struct kitty_state *ks,
+    struct kitty_command *next, struct window_pane *wp,
+    struct screen_write_ctx *ctx, u_int bg, const u_char *data, size_t size)
+{
+	struct kitty_command	 cmd;
+	struct kitty_data	 payload;
+	const char		*m;
+
+	/* Continuation chunks only change the quiet level and m. */
+	switch (kitty_append_data(&ks->load, data, size)) {
+	case -1:
+		return;
+	case -2:
+		if (next->quiet != 0)
+			ks->cmd.quiet = next->quiet;
+		kitty_send_reply(ictx, &ks->cmd, NULL, "EINVAL: invalid data");
+		kitty_reset_transfer(ks);
+		return;
+	}
+	if (next->quiet != 0)
+		ks->cmd.quiet = next->quiet;
+	if (next->more)
+		return;
+
+	cmd = ks->cmd;
+	payload = ks->load;
+	memset(&ks->load, 0, sizeof ks->load);
+	ks->loading = 0;
+
+	m = kitty_handle_transmit(ks, &cmd, &payload, wp, ctx, bg);
+	kitty_data_free(&payload);
+	kitty_send_reply(ictx, &cmd, NULL, m);
+}
+
+/* Start an upload, storing it if it is not sent in chunks. */
+static void
+kitty_start_transfer(struct input_ctx *ictx, struct kitty_state *ks,
+    struct kitty_command *cmd, struct window_pane *wp,
+    struct screen_write_ctx *ctx, u_int bg, const u_char *data, size_t size)
+{
+	struct kitty_data	 payload = { 0 };
+	const char		*m;
+
+	if (kitty_format_bytes(cmd->format) == 0 &&
+	    cmd->format != KITTY_FORMAT_PNG) {
+		kitty_send_reply(ictx, cmd, NULL, "EINVAL: unsupported format");
+		return;
+	}
+
+	switch (kitty_append_data(&payload, data, size)) {
+	case -1:
+		kitty_data_free(&payload);
+		return;
+	case -2:
+		kitty_data_free(&payload);
+		kitty_send_reply(ictx, cmd, NULL, "EINVAL: invalid data");
+		return;
+	}
+
+	/* Only direct uploads may be sent in chunks. */
+	if (cmd->transmission == 'd' && cmd->more) {
+		ks->cmd = *cmd;
+		ks->load = payload;
+		ks->loading = 1;
+		return;
+	}
+
+	m = kitty_handle_transmit(ks, cmd, &payload, wp, ctx, bg);
+	kitty_data_free(&payload);
+	kitty_send_reply(ictx, cmd, NULL, m);
+}
+
 /* Parse and reply to a Kitty graphics sequence. */
 void
 kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
@@ -1568,10 +2094,10 @@ kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
     size_t len)
 {
 	struct kitty_state	*ks = *state;
-	struct kitty_command	*cmd, next;
-	const u_char		*found;
+	struct kitty_command	 cmd;
+	const u_char		*found, *data = NULL;
 	const char		*m;
-	size_t			 csize, psize;
+	size_t			 csize, size = 0;
 
 	buf++;
 	len--;
@@ -1582,52 +2108,133 @@ kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
 		TAILQ_INSERT_TAIL(&kitty_states, ks, entry);
 		*state = ks;
 	}
-	cmd = &ks->cmd;
+	ks->alt = SCREEN_IS_ALTERNATE(ctx->s);
 
 	found = memchr(buf, ';', len);
-	if (found == NULL) {
+	if (found == NULL)
 		csize = len;
-		psize = 0;
-	} else {
+	else {
 		csize = found - buf;
-		psize = len - csize - 1;
+		data = found + 1;
+		size = len - csize - 1;
 	}
 
-	/* A delete aborts an unfinished transfer instead of continuing it. */
-	if (cmd->more) {
-		kitty_command_reset(&next);
-		kitty_parse_control(&next, buf, csize, &m);
-		if (next.action == KITTY_ACTION_DELETE)
-			kitty_reset_transfer(ks);
-	}
-
-	/* Continuation chunks keep the controls from the first chunk. */
-	if (!cmd->more)
-		kitty_command_reset(cmd);
-	cmd->more = 0;
-
-	if (kitty_parse_control(cmd, buf, csize, &m) != 0)
-		goto out;
-	if ((m = kitty_check_command(cmd)) != NULL)
-		goto out;
-	if (cmd->action == KITTY_ACTION_DELETE) {
-		m = kitty_handle_delete(ks, ctx);
-		goto out;
-	}
-
-	/* Collect the payload until the last chunk arrives. */
-	m = "EINVAL";
-	if (psize != 0 && kitty_append_data(ks, found + 1, psize) != 0)
-		goto out;
-	if (cmd->more)
+	/* Malformed commands are ignored without a reply. */
+	kitty_command_reset(&cmd);
+	if (kitty_parse_control(&cmd, buf, csize, &m) != 0)
 		return;
 
-	if (cmd->action == KITTY_ACTION_PLACE)
-		m = kitty_handle_place(ks, wp, ctx, bg);
-	else
-		m = kitty_handle_transmit(ks, wp, ctx, bg);
+	/*
+	 * While an upload is unfinished, direct transmissions continue it,
+	 * other transmissions and deletes abandon it, and other actions leave
+	 * it alone.
+	 */
+	if (ks->loading) {
+		switch (cmd.action) {
+		case KITTY_ACTION_TRANSMIT:
+		case KITTY_ACTION_TRANSMIT_AND_DISPLAY:
+		case KITTY_ACTION_TRANSMIT_FRAME:
+			if (cmd.transmission == 'd') {
+				kitty_continue_transfer(ictx, ks, &cmd, wp, ctx,
+				    bg, data, size);
+				return;
+			}
+			/* FALLTHROUGH */
+		case KITTY_ACTION_DELETE:
+			kitty_reset_transfer(ks);
+			break;
+		}
+	}
 
-out:
-	kitty_send_reply(ictx, cmd, m);
+	if (cmd.image_id != 0 && cmd.image_number != 0) {
+		kitty_send_reply(ictx, &cmd, NULL,
+		    "EINVAL: image ID and number are mutually exclusive");
+		return;
+	}
+	if (cmd.action == KITTY_ACTION_DELETE) {
+		kitty_handle_delete(ks, &cmd, ctx);
+		return;
+	}
+	if (m != NULL) {
+		kitty_send_reply(ictx, &cmd, NULL, m);
+		return;
+	}
+
+	switch (cmd.action) {
+	case KITTY_ACTION_QUERY:
+		kitty_handle_query(ictx, &cmd, wp, buf, csize, data, size);
+		break;
+	case KITTY_ACTION_TRANSMIT:
+	case KITTY_ACTION_TRANSMIT_AND_DISPLAY:
+		kitty_start_transfer(ictx, ks, &cmd, wp, ctx, bg, data, size);
+		break;
+	case KITTY_ACTION_PLACE:
+		m = kitty_handle_place(ks, &cmd, wp, ctx, bg);
+		kitty_send_reply(ictx, &cmd, NULL, m);
+		break;
+	default:
+		kitty_send_reply(ictx, &cmd, NULL, "ENOTSUP");
+		break;
+	}
+}
+
+/* Remove images and placements on the current screen, or on both screens. */
+static void
+kitty_free_screen(struct kitty_state *ks, struct screen_write_ctx *ctx,
+    int both)
+{
+	struct kitty_image_map		*map, *map1;
+	struct kitty_placement_map	*kpl;
+
+	TAILQ_FOREACH_SAFE(map, &ks->images, entry, map1) {
+		if (!both && map->alt != ks->alt)
+			continue;
+		TAILQ_FOREACH(kpl, &map->placements, entry)
+			image_clear(ctx, kpl->image_id);
+		kitty_image_map_free(ks, map);
+	}
+}
+
+/* Free images without placements after the screen is cleared. */
+void
+kitty_clear_screen(void *state, struct screen_write_ctx *ctx)
+{
+	struct kitty_state	*ks = state;
+	struct kitty_image_map	*map, *map1;
+
+	if (ks == NULL)
+		return;
+	ks->alt = SCREEN_IS_ALTERNATE(ctx->s);
+	TAILQ_FOREACH_SAFE(map, &ks->images, entry, map1) {
+		if (map->alt != ks->alt)
+			continue;
+		kitty_prune_placements(map, ctx->s);
+		if (TAILQ_EMPTY(&map->placements))
+			kitty_image_map_free(ks, map);
+	}
+}
+
+/* Free the alternate screen's images when it is entered or left. */
+void
+kitty_alternate_screen(void *state, struct screen_write_ctx *ctx)
+{
+	struct kitty_state	*ks = state;
+
+	if (ks == NULL)
+		return;
+	ks->alt = 1;
+	kitty_free_screen(ks, ctx, 0);
+	ks->alt = SCREEN_IS_ALTERNATE(ctx->s);
+}
+
+/* Free all images and placements after a terminal reset. */
+void
+kitty_reset(void *state, struct screen_write_ctx *ctx)
+{
+	struct kitty_state	*ks = state;
+
+	if (ks == NULL)
+		return;
 	kitty_reset_transfer(ks);
+	kitty_free_screen(ks, ctx, 1);
 }

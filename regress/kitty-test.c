@@ -77,7 +77,7 @@ test_pane_new(void)
 
 	test_window = window_create(80, 24, 8, 16);
 	test_wp = window_add_pane(test_window, NULL, 0, 0);
-	test_wp->ictx = input_init(test_wp, NULL);
+	test_wp->ictx = input_init(test_wp, &test_wp->palette);
 	window_add_ref(test_window, __func__);
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
 		abort();
@@ -220,7 +220,7 @@ test_idle(void)
 
 	if (ks == NULL)
 		return (1);
-	return (!ks->cmd.more && ks->data == NULL && ks->size == 0);
+	return (!ks->loading && ks->load.data == NULL && ks->load.size == 0);
 }
 
 /* Count the stored images of the test pane. */
@@ -545,13 +545,13 @@ test_parse_empty_payload(void)
 	test_pane_new();
 	reply = test_input("\033_Ga=t,i=1,f=32,s=1,v=1;\033\\");
 	TEST_ASSERT("parse_empty_payload: EINVAL",
-	    test_replied(reply, "i=1;EINVAL"));
+	    test_replied(reply, "i=1;EINVAL: invalid data"));
 	TEST_ASSERT("parse_empty_payload: not stored", test_map(1) == NULL);
 	TEST_PASS("parse_empty_payload");
 	return (0);
 }
 
-/* Unknown single-letter keys are ignored, longer keys are invalid. */
+/* Unknown keys are ignored. */
 static int
 test_parse_unknown_keys(void)
 {
@@ -565,10 +565,8 @@ test_parse_unknown_keys(void)
 	TEST_ASSERT("parse_unknown_keys: letter image_id == 1",
 	    cmd.image_id == 1);
 
-	TEST_ASSERT("parse_unknown_keys: word ret == -1",
-	    test_parse(&cmd, "a=q,unknownkey=42,i=1", &m) == -1);
-	TEST_ASSERT("parse_unknown_keys: word EINVAL",
-	    strcmp(m, "EINVAL") == 0);
+	TEST_ASSERT("parse_unknown_keys: word ignored",
+	    test_parse(&cmd, "a=q,unknownkey=42,i=1", &m) == 0 && m == NULL);
 	TEST_ASSERT("parse_unknown_keys: word keeps parsing",
 	    cmd.action == KITTY_ACTION_QUERY && cmd.image_id == 1);
 	TEST_PASS("parse_unknown_keys");
@@ -584,7 +582,7 @@ test_parse_malformed(void)
 
 	TEST_ASSERT("parse_malformed: ret == -1",
 	    test_parse(&cmd, "a=q,invalid", &m) == -1);
-	TEST_ASSERT("parse_malformed: EINVAL", strcmp(m, "EINVAL") == 0);
+	TEST_ASSERT("parse_malformed: no reply", m == NULL);
 	TEST_PASS("parse_malformed");
 	return (0);
 }
@@ -681,13 +679,13 @@ test_parse_relative_placement(void)
 	struct kitty_command	 cmd;
 	const char		*m;
 
-	TEST_ASSERT("parse_relative: ret == -1",
-	    test_parse(&cmd, "a=p,i=1,P=2,Q=3,H=-1,V=4", &m) == -1);
+	TEST_ASSERT("parse_relative: ret == 0",
+	    test_parse(&cmd, "a=p,i=1,P=2,Q=3,H=-1,V=4", &m) == 0);
 	TEST_ASSERT("parse_relative: ENOTSUP", strcmp(m, "ENOTSUP") == 0);
 	TEST_ASSERT("parse_relative: keeps parsing",
 	    cmd.action == KITTY_ACTION_PLACE && cmd.image_id == 1);
 	TEST_ASSERT("parse_relative: negative offset",
-	    test_parse(&cmd, "H=-1", &m) == -1 && strcmp(m, "ENOTSUP") == 0);
+	    test_parse(&cmd, "H=-1", &m) == 0 && strcmp(m, "ENOTSUP") == 0);
 	TEST_ASSERT("parse_relative: zero accepted",
 	    test_parse(&cmd, "a=p,i=1,P=0,Q=0,H=0,V=0", &m) == 0);
 	TEST_PASS("parse_relative");
@@ -719,8 +717,8 @@ test_parse_virtual(void)
 	struct kitty_command	 cmd;
 	const char		*m;
 
-	TEST_ASSERT("parse_virtual: ret == -1",
-	    test_parse(&cmd, "a=T,i=1,U=1", &m) == -1);
+	TEST_ASSERT("parse_virtual: ret == 0",
+	    test_parse(&cmd, "a=T,i=1,U=1", &m) == 0);
 	TEST_ASSERT("parse_virtual: ENOTSUP", strcmp(m, "ENOTSUP") == 0);
 	TEST_ASSERT("parse_virtual: zero accepted",
 	    test_parse(&cmd, "a=T,i=1,U=0", &m) == 0);
@@ -808,7 +806,7 @@ test_parse_large_control(void)
 	ret = test_parse(&cmd, data, &m);
 	free(data);
 	TEST_ASSERT("parse_large: ret == -1", ret == -1);
-	TEST_ASSERT("parse_large: EINVAL", strcmp(m, "EINVAL") == 0);
+	TEST_ASSERT("parse_large: no reply", m == NULL);
 	TEST_PASS("parse_large");
 	return (0);
 }
@@ -835,20 +833,15 @@ test_parse_negative_unsigned(void)
 	const char		*m;
 
 	TEST_ASSERT("parse_unsigned_bounds: negative id",
-	    test_parse(&cmd, "a=p,i=-1", &m) == -1 &&
-	    strcmp(m, "EINVAL") == 0);
+	    test_parse(&cmd, "a=p,i=-1", &m) == -1);
 	TEST_ASSERT("parse_unsigned_bounds: negative x",
-	    test_parse(&cmd, "a=p,x=-1", &m) == -1 &&
-	    strcmp(m, "EINVAL") == 0);
+	    test_parse(&cmd, "a=p,x=-1", &m) == -1);
 	TEST_ASSERT("parse_unsigned_bounds: large id",
-	    test_parse(&cmd, "a=p,i=4294967296", &m) == -1 &&
-	    strcmp(m, "EINVAL") == 0);
+	    test_parse(&cmd, "a=p,i=4294967296", &m) == -1);
 	TEST_ASSERT("parse_unsigned_bounds: large z",
-	    test_parse(&cmd, "z=2147483648", &m) == -1 &&
-	    strcmp(m, "EINVAL") == 0);
+	    test_parse(&cmd, "z=2147483648", &m) == -1);
 	TEST_ASSERT("parse_unsigned_bounds: overflow",
-	    test_parse(&cmd, "i=999999999999999999999999", &m) == -1 &&
-	    strcmp(m, "EINVAL") == 0);
+	    test_parse(&cmd, "i=999999999999999999999999", &m) == -1);
 	TEST_ASSERT("parse_unsigned_bounds: maximum id",
 	    test_parse(&cmd, "a=p,i=4294967295", &m) == 0 &&
 	    cmd.image_id == 4294967295U);
@@ -856,7 +849,7 @@ test_parse_negative_unsigned(void)
 	return (0);
 }
 
-/* An empty key between commas is invalid but parsing continues. */
+/* An empty key between commas is malformed, a trailing comma is not. */
 static int
 test_parse_multiple_commas(void)
 {
@@ -865,10 +858,7 @@ test_parse_multiple_commas(void)
 
 	TEST_ASSERT("parse_multi_commas: ret == -1",
 	    test_parse(&cmd, "a=q,,i=1", &m) == -1);
-	TEST_ASSERT("parse_multi_commas: EINVAL", strcmp(m, "EINVAL") == 0);
-	TEST_ASSERT("parse_multi_commas: action == q",
-	    cmd.action == KITTY_ACTION_QUERY);
-	TEST_ASSERT("parse_multi_commas: image_id == 1", cmd.image_id == 1);
+	TEST_ASSERT("parse_multi_commas: no reply", m == NULL);
 	TEST_ASSERT("parse_multi_commas: trailing comma",
 	    test_parse(&cmd, "a=q,i=1,", &m) == 0);
 	TEST_PASS("parse_multi_commas");
@@ -1057,12 +1047,16 @@ test_default_format_rgba(void)
 	    test_pixel(134, 0, 0, test_red));
 	reply = test_graphics("a=t,i=135,s=1,v=1", TEST_RGB);
 	TEST_ASSERT("default_format: RGB size rejected",
-	    test_replied(reply, "i=135;EINVAL") && test_map(135) == NULL);
+	    test_replied(reply, "i=135;EINVAL: invalid data") &&
+	    test_map(135) == NULL);
 	TEST_PASS("default_format");
 	return (0);
 }
 
-/* An invalid format, compression or medium is rejected. */
+/*
+ * An unknown format is rejected, and a command with an unknown compression or
+ * medium is ignored.
+ */
 static int
 test_transmit_invalid_format_compression(void)
 {
@@ -1071,13 +1065,11 @@ test_transmit_invalid_format_compression(void)
 	test_pane_new();
 	reply = test_graphics("a=t,i=135,f=7,s=1,v=1", "AAAA");
 	TEST_ASSERT("invalid_format: f EINVAL",
-	    test_replied(reply, "i=135;EINVAL"));
+	    test_replied(reply, "i=135;EINVAL: unsupported format"));
 	reply = test_graphics("a=t,i=136,f=24,o=2,s=1,v=1", TEST_RGB);
-	TEST_ASSERT("invalid_format: o EINVAL",
-	    test_replied(reply, "i=136;EINVAL"));
+	TEST_ASSERT("invalid_format: o ignored", *reply == '\0');
 	reply = test_graphics("a=t,i=138,f=24,t=x,s=1,v=1", TEST_RGB);
-	TEST_ASSERT("invalid_format: t EINVAL",
-	    test_replied(reply, "i=138;EINVAL"));
+	TEST_ASSERT("invalid_format: t ignored", *reply == '\0');
 	TEST_ASSERT("invalid_format: no images", test_count_images() == 0);
 	TEST_PASS("invalid_format");
 	return (0);
@@ -1092,10 +1084,10 @@ test_transmit_direct_rgb_size_mismatch(void)
 	test_pane_new();
 	reply = test_graphics("a=t,i=46,f=24,s=2,v=2", TEST_RGB);
 	TEST_ASSERT("direct_rgb_size: short EINVAL",
-	    test_replied(reply, "i=46;EINVAL"));
+	    test_replied(reply, "i=46;EINVAL: invalid data"));
 	reply = test_graphics("a=t,i=46,f=24,s=1,v=1", "/wAA/wAA");
 	TEST_ASSERT("direct_rgb_size: long EINVAL",
-	    test_replied(reply, "i=46;EINVAL"));
+	    test_replied(reply, "i=46;EINVAL: invalid data"));
 	TEST_ASSERT("direct_rgb_size: not stored", test_map(46) == NULL);
 	TEST_PASS("direct_rgb_size");
 	return (0);
@@ -1114,12 +1106,13 @@ test_transmit_direct_png_decodes(void)
 	TEST_ASSERT("direct_png: decoded", test_pixel(47, 0, 0, test_red));
 	reply = test_graphics("a=t,i=50,f=100,s=1,v=1", "QUJD");
 	TEST_ASSERT("direct_png: invalid EINVAL",
-	    test_replied(reply, "i=50;EINVAL") && test_map(50) == NULL);
+	    test_replied(reply, "i=50;EINVAL: invalid data") &&
+	    test_map(50) == NULL);
 	TEST_PASS("direct_png");
 	return (0);
 }
 
-/* A direct PNG payload must be base64 encoded. */
+/* A direct PNG payload which is not base64 encoded is ignored. */
 static int
 test_transmit_direct_png_rejects_raw(void)
 {
@@ -1127,8 +1120,7 @@ test_transmit_direct_png_rejects_raw(void)
 
 	test_pane_new();
 	reply = test_input("\033_Ga=t,i=49,f=100;\211PNG\033\\");
-	TEST_ASSERT("direct_png_raw: EINVAL",
-	    test_replied(reply, "i=49;EINVAL"));
+	TEST_ASSERT("direct_png_raw: no reply", *reply == '\0');
 	TEST_ASSERT("direct_png_raw: not stored", test_map(49) == NULL);
 	TEST_PASS("direct_png_raw");
 	return (0);
@@ -1146,7 +1138,8 @@ test_transmit_direct_compression_preserved(void)
 	TEST_ASSERT("direct_z: decompressed", test_pixel(54, 0, 0, test_red));
 	reply = test_graphics("a=t,i=55,f=24,o=z,s=1,v=1", TEST_RGB);
 	TEST_ASSERT("direct_z: uncompressed EINVAL",
-	    test_replied(reply, "i=55;EINVAL") && test_map(55) == NULL);
+	    test_replied(reply, "i=55;EINVAL: decompression failed") &&
+	    test_map(55) == NULL);
 	TEST_PASS("direct_z");
 	return (0);
 }
@@ -1199,13 +1192,14 @@ test_transmit_file_range(void)
 	reply = test_graphics("a=t,i=59,f=32,t=f,S=4,O=7,s=1,v=1",
 	    test_base64(path, strlen(path)));
 	unlink(path);
-	TEST_ASSERT("file_range: short EBADF",
-	    test_replied(reply, "i=59;EBADF") && test_map(59) == NULL);
+	TEST_ASSERT("file_range: short EINVAL",
+	    test_replied(reply, "i=59;EINVAL: invalid data") &&
+	    test_map(59) == NULL);
 	TEST_PASS("file_range");
 	return (0);
 }
 
-/* A file transfer rejects a path with NUL or invalid base64. */
+/* A file transfer rejects a bad path and ignores invalid base64. */
 static int
 test_transmit_file_bad_path_payload(void)
 {
@@ -1217,19 +1211,18 @@ test_transmit_file_bad_path_payload(void)
 	test_pane_new();
 	reply = test_graphics("a=t,i=59,f=32,t=f,s=1,v=1",
 	    test_base64(path, sizeof path));
-	TEST_ASSERT("file_bad_path: NUL EBADF",
-	    test_replied(reply, "i=59;EBADF"));
+	TEST_ASSERT("file_bad_path: NUL EINVAL",
+	    test_replied(reply, "i=59;EINVAL: invalid data"));
 	reply = test_graphics("a=t,i=60,f=32,t=f,s=1,v=1", "!!!");
-	TEST_ASSERT("file_bad_path: invalid EINVAL",
-	    test_replied(reply, "i=60;EINVAL"));
+	TEST_ASSERT("file_bad_path: invalid ignored", *reply == '\0');
 	reply = test_graphics("a=t,i=61,f=32,t=f,s=1,v=1",
 	    test_base64("/nonexistent/tmux-kitty", 23));
-	TEST_ASSERT("file_bad_path: missing EBADF",
-	    test_replied(reply, "i=61;EBADF"));
+	TEST_ASSERT("file_bad_path: missing EINVAL",
+	    test_replied(reply, "i=61;EINVAL: invalid data"));
 	reply = test_graphics("a=t,i=62,f=32,t=f,s=1,v=1",
 	    test_base64("/tmp", 4));
-	TEST_ASSERT("file_bad_path: directory EBADF",
-	    test_replied(reply, "i=62;EBADF"));
+	TEST_ASSERT("file_bad_path: directory EINVAL",
+	    test_replied(reply, "i=62;EINVAL: invalid data"));
 	TEST_ASSERT("file_bad_path: no images", test_count_images() == 0);
 	TEST_PASS("file_bad_path");
 	return (0);
@@ -1257,7 +1250,10 @@ test_transmit_file_temporary_removes_source(void)
 	return (0);
 }
 
-/* A temporary file transfer keeps files which are not marked. */
+/*
+ * A temporary file transfer rejects and keeps a file without the marker in its
+ * path, and removes a file in a marked directory.
+ */
 static int
 test_transmit_file_temporary_keeps_unapproved_source(void)
 {
@@ -1275,7 +1271,8 @@ test_transmit_file_temporary_keeps_unapproved_source(void)
 	    test_base64(path, strlen(path)));
 	kept = (access(path, F_OK) == 0);
 	unlink(path);
-	TEST_ASSERT("file_temp_keep: reply", test_replied(reply, "i=120;OK"));
+	TEST_ASSERT("file_temp_keep: reply", test_replied(reply,
+	    "i=120;EINVAL: temporary file not named correctly"));
 	TEST_ASSERT("file_temp_keep: source remains", kept);
 
 	TEST_ASSERT("file_temp_keep: mkdtemp", mkdtemp(dir) != NULL);
@@ -1292,7 +1289,7 @@ test_transmit_file_temporary_keeps_unapproved_source(void)
 	rmdir(dir);
 	TEST_ASSERT("file_temp_keep: nested reply",
 	    test_replied(reply, "i=122;OK"));
-	TEST_ASSERT("file_temp_keep: nested source remains", kept);
+	TEST_ASSERT("file_temp_keep: nested source removed", !kept);
 	TEST_PASS("file_temp_keep");
 	return (0);
 }
@@ -1347,6 +1344,27 @@ test_scroll_up_moves_and_removes_placements(void)
 	    test_count_placements(71) == 1 && gd->hsize >= 2 &&
 	    image_grid_get_at(gd, 1, gd->hsize - 1, &im, &sx, &sy) == 1);
 	TEST_PASS("scroll_up");
+	return (0);
+}
+
+/*
+ * Reverse index at the top moves placements down; one moved off the bottom is
+ * removed but its image is kept.
+ */
+static int
+test_reverse_index_moves_placements(void)
+{
+	test_pane_new();
+	test_cursor(1, 0);
+	test_graphics("a=T,i=72,q=2,f=32,s=1,v=1,c=2,r=2,C=1", TEST_PIXEL);
+	test_input("\033[H\033M");
+	TEST_ASSERT("reverse_index: moved", test_placement_at(72, 0, 1, 1) &&
+	    test_placement_at(72, 0, 2, 2) && !test_placed_at(1, 0));
+	test_input("\033[30T");
+	TEST_ASSERT("reverse_index: scrolled off",
+	    test_count_placements(72) == 0 && !test_placed_at(1, 23));
+	TEST_ASSERT("reverse_index: image kept", test_image(72) != NULL);
+	TEST_PASS("reverse_index");
 	return (0);
 }
 
@@ -1484,8 +1502,8 @@ test_free_saved_lists(void)
 	alternate = test_image_at(0, 0);
 	TEST_ASSERT("free_saved: placed", primary != 0 && alternate != 0 &&
 	    primary != alternate);
-	TEST_ASSERT("free_saved: saved placement",
-	    test_count_placements(2) == 1);
+	TEST_ASSERT("free_saved: primary image separate",
+	    test_map(2) == NULL && test_map(3) != NULL);
 
 	test_pane_free();
 	TEST_ASSERT("free_saved: state gone", TAILQ_EMPTY(&kitty_states));
@@ -1497,7 +1515,10 @@ test_free_saved_lists(void)
 	return (0);
 }
 
-/* The alternate screen saves and restores primary placements. */
+/*
+ * The alternate screen saves and restores primary placements, and has separate
+ * images.
+ */
 static int
 test_alternate_screen_transitions(void)
 {
@@ -1509,8 +1530,8 @@ test_alternate_screen_transitions(void)
 
 	test_input("\033[?1049h");
 	TEST_ASSERT("alt_screen: hidden in alternate", !test_placed_at(0, 0));
-	TEST_ASSERT("alt_screen: primary saved",
-	    test_placement(101, 1) != NULL);
+	TEST_ASSERT("alt_screen: primary image separate",
+	    test_map(101) == NULL);
 
 	test_graphics("a=T,i=202,q=2,f=32,s=1,v=1,c=3,r=3,p=2,C=1",
 	    TEST_GREEN);
@@ -1973,7 +1994,8 @@ test_memory_limits_payload(void)
 	reply = test_graphics("a=t,i=1,f=32,s=5,v=5",
 	    test_fill(5, 5, test_red));
 	TEST_ASSERT("memlimit_payload: too large EINVAL",
-	    test_replied(reply, "i=1;EINVAL") && test_map(1) == NULL);
+	    test_replied(reply, "i=1;EINVAL: invalid data") &&
+	    test_map(1) == NULL);
 	reply = test_graphics("a=t,i=2,f=32,s=2,v=2",
 	    test_fill(2, 2, test_red));
 	TEST_ASSERT("memlimit_payload: small ok",
@@ -1999,12 +2021,12 @@ test_build_reply(void)
 	    test_replied(reply, "i=1,I=7;OK"));
 	reply = test_graphics("a=p,I=99", NULL);
 	TEST_ASSERT("build_reply: number without id",
-	    test_replied(reply, "I=99;ENOENT"));
+	    test_replied(reply, "I=99;ENOENT: image not found"));
 	TEST_PASS("build_reply");
 	return (0);
 }
 
-/* A query without an ID replies with ID zero. */
+/* A query without an ID or number sends no reply. */
 static int
 test_build_reply_zero(void)
 {
@@ -2012,7 +2034,10 @@ test_build_reply_zero(void)
 
 	test_pane_new();
 	reply = test_graphics("a=q,f=32,s=1,v=1", TEST_PIXEL);
-	TEST_ASSERT("build_reply_zero: i=0", test_replied(reply, "i=0;OK"));
+	TEST_ASSERT("build_reply_zero: no reply", *reply == '\0');
+	reply = test_graphics("a=q,I=3,f=32,s=1,v=1", TEST_PIXEL);
+	TEST_ASSERT("build_reply_zero: number needs ID",
+	    test_replied(reply, "I=3;EINVAL: image ID required"));
 	TEST_PASS("build_reply_zero");
 	return (0);
 }
@@ -2045,7 +2070,7 @@ test_handle_query_loud(void)
 	return (0);
 }
 
-/* A query without an ID or data fails with ID zero. */
+/* A query without an ID or data sends no reply. */
 static int
 test_handle_query_missing_id(void)
 {
@@ -2053,7 +2078,7 @@ test_handle_query_missing_id(void)
 
 	test_pane_new();
 	reply = test_graphics("a=q", NULL);
-	TEST_ASSERT("query_missing: EINVAL", test_replied(reply, "i=0;EINVAL"));
+	TEST_ASSERT("query_missing: no reply", *reply == '\0');
 	TEST_PASS("query_missing");
 	return (0);
 }
@@ -2073,20 +2098,18 @@ test_handle_query_validation(void)
 
 	reply = test_graphics("a=q,i=152,f=24,s=1,v=1", "QQ==");
 	TEST_ASSERT("query_validation: short EINVAL",
-	    test_replied(reply, "i=152;EINVAL"));
+	    test_replied(reply, "i=152;EINVAL: invalid data"));
 
 	reply = test_graphics("a=q,i=153,f=24,t=s,s=1,v=1", TEST_RGB);
-	TEST_ASSERT("query_validation: shm ENOTSUP",
-	    test_replied(reply, "i=153;ENOTSUP"));
+	TEST_ASSERT("query_validation: missing shm EINVAL",
+	    test_replied(reply, "i=153;EINVAL: invalid data"));
 
 	reply = test_graphics("a=q,i=154,q=2,f=24,s=1,v=1", "QQ==");
 	TEST_ASSERT("query_validation: q2 no reply", *reply == '\0');
 
-	reply = test_graphics("a=q,i=155,f=32,s=1,v=1,m=1", "/wAA");
-	TEST_ASSERT("query_validation: chunk first no reply", *reply == '\0');
-	reply = test_graphics("m=0", "/w==");
-	TEST_ASSERT("query_validation: chunk final OK",
-	    test_replied(reply, "i=155;OK"));
+	reply = test_graphics("a=q,i=155,f=32,s=1,v=1,m=1", TEST_PIXEL);
+	TEST_ASSERT("query_validation: m ignored",
+	    test_replied(reply, "i=155;OK") && test_idle());
 	TEST_ASSERT("query_validation: chunk no image stored",
 	    test_count_images() == 0);
 	TEST_PASS("query_validation");
@@ -2117,28 +2140,100 @@ test_handle_transmit_file_no_path(void)
 
 	test_pane_new();
 	reply = test_graphics("a=t,i=1,t=f", NULL);
-	TEST_ASSERT("transmit_file_no_path: EBADF",
-	    test_replied(reply, "i=1;EBADF"));
+	TEST_ASSERT("transmit_file_no_path: EINVAL",
+	    test_replied(reply, "i=1;EINVAL: invalid data"));
 	TEST_ASSERT("transmit_file_no_path: not stored", test_map(1) == NULL);
 	TEST_PASS("transmit_file_no_path");
 	return (0);
 }
 
-/* A shared memory transfer is not supported. */
+/* Create a shared memory object with some data and return its name. */
+static const char *
+test_shm(const char *name, const void *data, size_t size, size_t total)
+{
+	int	fd;
+
+	shm_unlink(name);
+	fd = shm_open(name, O_RDWR|O_CREAT|O_EXCL, 0600);
+	if (fd == -1)
+		return (NULL);
+	if (ftruncate(fd, total) != 0 ||
+	    write(fd, data, size) != (ssize_t)size) {
+		close(fd);
+		shm_unlink(name);
+		return (NULL);
+	}
+	close(fd);
+	return (test_base64(name, strlen(name)));
+}
+
+/* Check whether a shared memory object still exists. */
+static int
+test_shm_exists(const char *name)
+{
+	int	fd;
+
+	fd = shm_open(name, O_RDONLY, 0);
+	if (fd == -1)
+		return (0);
+	close(fd);
+	shm_unlink(name);
+	return (1);
+}
+
+/*
+ * A shared memory transfer reads the object and unlinks it. Raw data without
+ * a size is read using the image size, because the object may be larger.
+ */
 static int
 test_handle_transmit_shm(void)
 {
-	const char	*reply;
+	static const u_char	 range[] = {
+		'0', '1', 0xff, 0, 0, 0xff, 0, 0xff, 0, 0xff
+	};
+	static const char	 name[] = "/tmux-kitty-test-shm";
+	const char		*reply, *payload;
 
 	test_pane_new();
-	reply = test_graphics("a=t,i=1,t=s", NULL);
-	TEST_ASSERT("transmit_shm: ENOTSUP",
-	    test_replied(reply, "i=1;ENOTSUP"));
-	reply = test_graphics("a=t,i=133,t=s,m=1", "AAAA");
-	TEST_ASSERT("transmit_shm: m ignored ENOTSUP",
-	    test_replied(reply, "i=133;ENOTSUP"));
-	TEST_ASSERT("transmit_shm: m ignored idle", test_idle());
-	TEST_ASSERT("transmit_shm: not stored", test_count_images() == 0);
+	payload = test_shm(name, test_red, sizeof test_red, 4096);
+	TEST_ASSERT("transmit_shm: create", payload != NULL);
+	reply = test_graphics("a=t,i=1,t=s,f=32,s=1,v=1", payload);
+	TEST_ASSERT("transmit_shm: reply", test_replied(reply, "i=1;OK"));
+	TEST_ASSERT("transmit_shm: content", test_pixel(1, 0, 0, test_red));
+	TEST_ASSERT("transmit_shm: unlinked", !test_shm_exists(name));
+
+	payload = test_shm(name, range, sizeof range, sizeof range);
+	reply = test_graphics("a=t,i=2,t=s,f=32,s=1,v=1,O=6,S=4", payload);
+	TEST_ASSERT("transmit_shm: range",
+	    test_replied(reply, "i=2;OK") && test_pixel(2, 0, 0, test_green));
+	TEST_ASSERT("transmit_shm: range unlinked", !test_shm_exists(name));
+
+	payload = test_shm(name, range, sizeof range, sizeof range);
+	reply = test_graphics("a=t,i=3,t=s,f=32,s=1,v=1,O=8,S=4", payload);
+	TEST_ASSERT("transmit_shm: short range EINVAL",
+	    test_replied(reply, "i=3;EINVAL: invalid data") &&
+	    test_map(3) == NULL);
+	TEST_ASSERT("transmit_shm: failure unlinked", !test_shm_exists(name));
+
+	payload = test_shm(name, test_red, sizeof test_red, sizeof test_red);
+	reply = test_graphics("a=t,i=4,t=s,f=32,s=2,v=1", payload);
+	TEST_ASSERT("transmit_shm: too small for image",
+	    test_replied(reply, "i=4;EINVAL: invalid data"));
+	TEST_ASSERT("transmit_shm: small unlinked", !test_shm_exists(name));
+
+	reply = test_graphics("a=t,i=5,t=s,f=32,s=1,v=1", payload);
+	TEST_ASSERT("transmit_shm: missing EINVAL",
+	    test_replied(reply, "i=5;EINVAL: invalid data"));
+
+	payload = test_shm(name, test_red, sizeof test_red, 4096);
+	reply = test_graphics("a=t,i=6,t=s,m=1,f=32,s=1,v=1", payload);
+	TEST_ASSERT("transmit_shm: m ignored",
+	    test_replied(reply, "i=6;OK") && test_idle());
+
+	payload = test_base64("/", 1);
+	reply = test_graphics("a=t,i=7,t=s,f=32,s=1,v=1", payload);
+	TEST_ASSERT("transmit_shm: bad name EINVAL",
+	    test_replied(reply, "i=7;EINVAL: invalid data"));
 	TEST_PASS("transmit_shm");
 	return (0);
 }
@@ -2204,10 +2299,10 @@ test_handle_place_missing(void)
 	test_pane_new();
 	reply = test_graphics("a=p,i=99", NULL);
 	TEST_ASSERT("place_missing: ENOENT",
-	    test_replied(reply, "i=99;ENOENT"));
+	    test_replied(reply, "i=99;ENOENT: image not found"));
 	reply = test_graphics("a=p,I=99,p=3", NULL);
 	TEST_ASSERT("place_missing: number ENOENT",
-	    test_replied(reply, "I=99,p=3;ENOENT"));
+	    test_replied(reply, "I=99,p=3;ENOENT: image not found"));
 	TEST_ASSERT("place_missing: nothing placed", !test_placed_at(0, 0));
 	TEST_PASS("place_missing");
 	return (0);
@@ -2285,7 +2380,7 @@ test_unsupported_animation_actions(void)
 	return (0);
 }
 
-/* Unknown actions are invalid and are not buffered. */
+/* Unknown actions are ignored and are not buffered. */
 static int
 test_unknown_actions_rejected(void)
 {
@@ -2293,11 +2388,9 @@ test_unknown_actions_rejected(void)
 
 	test_pane_new();
 	reply = test_graphics("a=Z,i=148", NULL);
-	TEST_ASSERT("unknown_actions: EINVAL",
-	    test_replied(reply, "i=148;EINVAL"));
+	TEST_ASSERT("unknown_actions: no reply", *reply == '\0');
 	reply = test_graphics("a=Z,i=149,m=1", TEST_RGB);
-	TEST_ASSERT("unknown_actions: chunk EINVAL",
-	    test_replied(reply, "i=149;EINVAL"));
+	TEST_ASSERT("unknown_actions: chunk no reply", *reply == '\0');
 	TEST_ASSERT("unknown_actions: idle", test_idle());
 	TEST_ASSERT("unknown_actions: no images", test_count_images() == 0);
 	TEST_PASS("unknown_actions");
@@ -2313,13 +2406,15 @@ test_image_id_number_conflict(void)
 	test_pane_new();
 	reply = test_graphics("a=t,i=1,I=2,f=24,s=1,v=1", TEST_RGB);
 	TEST_ASSERT("id_number_conflict: transmit EINVAL",
-	    test_replied(reply, "i=1,I=2;EINVAL"));
+	    test_replied(reply,
+	    "i=1,I=2;EINVAL: image ID and number are mutually exclusive"));
 	TEST_ASSERT("id_number_conflict: transmit no image",
 	    test_count_images() == 0);
 	test_store(1);
 	reply = test_graphics("a=p,i=1,I=2,p=3", NULL);
 	TEST_ASSERT("id_number_conflict: place EINVAL",
-	    test_replied(reply, "i=1,I=2,p=3;EINVAL"));
+	    test_replied(reply,
+	    "i=1,I=2,p=3;EINVAL: image ID and number are mutually exclusive"));
 	TEST_ASSERT("id_number_conflict: place no placement",
 	    test_count_placements(1) == 0 && !test_placed_at(0, 0));
 	TEST_PASS("id_number_conflict");
@@ -2417,7 +2512,7 @@ test_quiet_failure_modes(void)
 	test_pane_new();
 	reply = test_graphics("a=p,i=999,q=1", NULL);
 	TEST_ASSERT("quiet_failure: q=1 error replies",
-	    test_replied(reply, "i=999;ENOENT"));
+	    test_replied(reply, "i=999;ENOENT: image not found"));
 	reply = test_graphics("a=p,i=999,q=2", NULL);
 	TEST_ASSERT("quiet_failure: q=2 error no reply", *reply == '\0');
 	reply = test_graphics("a=t,i=121,f=24,s=1,v=1,q=1", TEST_RGB);
@@ -2427,6 +2522,344 @@ test_quiet_failure_modes(void)
 	TEST_ASSERT("quiet_failure: images stored",
 	    test_map(121) != NULL && test_map(122) != NULL);
 	TEST_PASS("quiet_failure");
+	return (0);
+}
+
+/* Commands other than direct transmissions leave an unfinished upload alone. */
+static int
+test_chunked_upload_interleaved(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	reply = test_graphics("a=t,i=1,f=24,s=1,v=2,m=1", TEST_RGB);
+	TEST_ASSERT("chunk_interleaved: pending", *reply == '\0');
+	reply = test_graphics("a=q,i=2,f=32,s=1,v=1", TEST_PIXEL);
+	TEST_ASSERT("chunk_interleaved: query replies",
+	    test_replied(reply, "i=2;OK") && !test_idle());
+	reply = test_graphics("a=p,i=9", NULL);
+	TEST_ASSERT("chunk_interleaved: place replies",
+	    test_replied(reply, "i=9;ENOENT: image not found") &&
+	    !test_idle());
+	reply = test_graphics("m=1", "!!!!");
+	TEST_ASSERT("chunk_interleaved: bad base64 ignored",
+	    *reply == '\0' && !test_idle());
+	reply = test_graphics("m=1,s=bad", "AP8A");
+	TEST_ASSERT("chunk_interleaved: malformed chunk ignored",
+	    *reply == '\0' && !test_idle());
+	reply = test_graphics("a=t,i=5,m=0", "AP8A");
+	TEST_ASSERT("chunk_interleaved: completes with first IDs",
+	    test_replied(reply, "i=1;OK") && test_idle());
+	TEST_ASSERT("chunk_interleaved: data",
+	    test_pixel(1, 0, 0, test_red) && test_pixel(1, 0, 1, test_green));
+	TEST_ASSERT("chunk_interleaved: no other image",
+	    test_map(2) == NULL && test_map(5) == NULL);
+
+	reply = test_graphics("a=t,i=3,f=32,s=1,v=1,m=1", "/wAA");
+	reply = test_graphics("m=0,q=1", "/w==");
+	TEST_ASSERT("chunk_interleaved: later quiet applies",
+	    *reply == '\0' && test_pixel(3, 0, 0, test_red));
+	TEST_PASS("chunk_interleaved");
+	return (0);
+}
+
+/* A transmission from a file abandons an unfinished upload. */
+static int
+test_chunked_upload_abandoned(void)
+{
+	char		 path[] = "/tmp/tmux-kitty-abandon.XXXXXX";
+	const char	*reply;
+
+	test_pane_new();
+	TEST_ASSERT("chunk_abandoned: write",
+	    test_write_file(path, test_green, sizeof test_green) == 0);
+	test_graphics("a=t,i=1,f=24,s=1,v=2,m=1", TEST_RGB);
+	reply = test_graphics("a=t,i=2,t=f,f=32,s=1,v=1",
+	    test_base64(path, strlen(path)));
+	unlink(path);
+	TEST_ASSERT("chunk_abandoned: file stored",
+	    test_replied(reply, "i=2;OK") && test_idle());
+	reply = test_graphics("m=0", "AP8A");
+	TEST_ASSERT("chunk_abandoned: later chunk is new",
+	    *reply == '\0' && test_map(1) == NULL);
+	TEST_PASS("chunk_abandoned");
+	return (0);
+}
+
+/* A query decodes the image fully without replacing the stored image. */
+static int
+test_query_decodes(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	test_store(1);
+	reply = test_graphics("a=q,i=1,f=100", "QUJD");
+	TEST_ASSERT("query_decodes: bad PNG",
+	    test_replied(reply, "i=1;EINVAL: invalid data"));
+	reply = test_graphics("a=q,i=1,f=24,o=z,s=1,v=1", TEST_RGB);
+	TEST_ASSERT("query_decodes: bad zlib",
+	    test_replied(reply, "i=1;EINVAL: decompression failed"));
+	reply = test_graphics("a=q,i=1,f=24,s=0,v=1", TEST_RGB);
+	TEST_ASSERT("query_decodes: no size",
+	    test_replied(reply, "i=1;EINVAL: dimensions required"));
+	reply = test_graphics("a=q,i=1,f=24,o=z,s=1,v=1", TEST_ZLIB);
+	TEST_ASSERT("query_decodes: zlib OK", test_replied(reply, "i=1;OK"));
+	TEST_ASSERT("query_decodes: stored image kept",
+	    test_pixel(1, 0, 0, test_red) && test_count_images() == 1);
+	TEST_PASS("query_decodes");
+	return (0);
+}
+
+/* A feature query reports the supported non-default keys for an action. */
+static int
+test_feature_query(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	reply = test_graphics("a=q,i=31,e=T,C=1,c=2,f=32,t=s,o=z,k=1,q=0",
+	    NULL);
+	TEST_ASSERT("feature_query: transmit and display",
+	    test_replied(reply, "i=31,e=T,C=1,c=2,t=s,o=z;OK"));
+	reply = test_graphics("a=q,i=31,e=q,f=8,f=16,f=12", NULL);
+	TEST_ASSERT("feature_query: formats",
+	    test_replied(reply, "i=31,e=q,f=8,f=16;OK"));
+	reply = test_graphics("a=q,i=31,e=d,d=A,d=a,x=3", NULL);
+	TEST_ASSERT("feature_query: delete",
+	    test_replied(reply, "i=31,e=d,d=A,x=3;OK"));
+	reply = test_graphics("a=q,i=31,e=Z,C=1", NULL);
+	TEST_ASSERT("feature_query: unknown action",
+	    test_replied(reply, "i=31;OK"));
+	reply = test_graphics("a=q,e=T,C=1", NULL);
+	TEST_ASSERT("feature_query: needs ID", *reply == '\0');
+
+	test_graphics("a=t,i=1,f=24,s=1,v=2,m=1", TEST_RGB);
+	reply = test_graphics("a=q,i=31,e=t,m=1", TEST_PIXEL);
+	TEST_ASSERT("feature_query: payload ignored",
+	    test_replied(reply, "i=31,e=t;OK") && !test_idle());
+	reply = test_graphics("m=0", "AP8A");
+	TEST_ASSERT("feature_query: upload continues",
+	    test_replied(reply, "i=1;OK") && test_pixel(1, 0, 1, test_green));
+	TEST_PASS("feature_query");
+	return (0);
+}
+
+/* Indexed colour data uses the pane's palette and alpha. */
+static int
+test_indexed_formats(void)
+{
+	static const u_char	 indexed[] = { 1, 196 };
+	static const u_char	 alpha[] = { 1, 0x80 };
+	static const u_char	 palette[4] = { 0x12, 0x34, 0x56, 0xff };
+	static const u_char	 cube[4] = { 0xff, 0, 0, 0xff };
+	static const u_char	 half[4] = { 0x12, 0x34, 0x56, 0x80 };
+	const char		*reply;
+
+	test_pane_new();
+	test_input("\033]4;1;rgb:12/34/56\033\\");
+	reply = test_graphics("a=t,i=1,f=8,s=2,v=1",
+	    test_base64(indexed, sizeof indexed));
+	TEST_ASSERT("indexed: f=8 reply", test_replied(reply, "i=1;OK"));
+	TEST_ASSERT("indexed: f=8 palette", test_pixel(1, 0, 0, palette));
+	TEST_ASSERT("indexed: f=8 cube", test_pixel(1, 1, 0, cube));
+	reply = test_graphics("a=t,i=2,f=16,s=1,v=1",
+	    test_base64(alpha, sizeof alpha));
+	TEST_ASSERT("indexed: f=16 alpha",
+	    test_replied(reply, "i=2;OK") && test_pixel(2, 0, 0, half));
+	reply = test_graphics("a=t,i=3,f=16,s=2,v=1",
+	    test_base64(alpha, sizeof alpha));
+	TEST_ASSERT("indexed: short EINVAL",
+	    test_replied(reply, "i=3;EINVAL: invalid data"));
+	TEST_PASS("indexed");
+	return (0);
+}
+
+/* Over the storage limit, unused and transient images are removed first. */
+static int
+test_eviction_order(void)
+{
+	const char	*fill, *reply;
+
+	test_pane_new();
+	options_set_number(global_options, "image-total-size-limit", 600);
+	fill = test_fill(8, 8, test_red);
+	reply = test_graphics("a=T,i=1,q=1,C=1,f=32,s=8,v=8", fill);
+	reply = test_graphics("a=t,i=2,q=1,f=32,s=8,v=8", fill);
+	reply = test_graphics("a=t,i=3,q=1,f=32,s=8,v=8", fill);
+	TEST_ASSERT("eviction: stored", *reply == '\0' && test_map(3) != NULL);
+	TEST_ASSERT("eviction: unused removed first",
+	    test_map(1) != NULL && test_map(2) == NULL);
+
+	test_pane_free();
+	test_pane_new();
+	options_set_number(global_options, "image-total-size-limit", 600);
+	reply = test_graphics("a=t,i=4,q=1,f=32,s=8,v=8", fill);
+	reply = test_graphics("a=t,i=5,q=1,N=1,f=32,s=8,v=8", fill);
+	reply = test_graphics("a=t,i=6,q=1,f=32,s=8,v=8", fill);
+	TEST_ASSERT("eviction: transient removed first",
+	    test_map(4) != NULL && test_map(5) == NULL && test_map(6) != NULL);
+
+	reply = test_graphics("a=t,i=7,f=32,s=16,v=16",
+	    test_fill(16, 16, test_red));
+	TEST_ASSERT("eviction: too large ENOMEM",
+	    test_replied(reply, "i=7;ENOMEM: out of memory") &&
+	    test_map(7) == NULL);
+	TEST_PASS("eviction");
+	return (0);
+}
+
+/* Clearing the screen frees images without placements. */
+static int
+test_clear_screen_frees_unused(void)
+{
+	test_pane_new();
+	test_history(100);
+	test_store(1);
+	test_store(2);
+	test_place(0, 0, "i=2,q=2");
+	test_input("\033[2J");
+	TEST_ASSERT("clear_screen: unused freed", test_map(1) == NULL);
+	TEST_ASSERT("clear_screen: placed in history kept",
+	    test_map(2) != NULL && test_count_placements(2) == 1);
+	test_input("\033[3J\033[2J");
+	TEST_ASSERT("clear_screen: freed with history", test_map(2) == NULL);
+	TEST_PASS("clear_screen");
+	return (0);
+}
+
+/* The alternate screen has its own images, freed when it is left. */
+static int
+test_alternate_screen_images(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	test_store(7);
+	test_input("\033[?1049h");
+	reply = test_graphics("a=p,i=7,C=1", NULL);
+	TEST_ASSERT("alt_images: primary hidden",
+	    test_replied(reply, "i=7;ENOENT: image not found"));
+	test_store(7);
+	test_store(8);
+	test_graphics("a=d,d=I,i=7", NULL);
+	test_input("\033[?1049l");
+	reply = test_graphics("a=p,i=7,C=1", NULL);
+	TEST_ASSERT("alt_images: primary kept", test_replied(reply, "i=7;OK"));
+	test_input("\033[?1049h");
+	reply = test_graphics("a=p,i=8,C=1", NULL);
+	TEST_ASSERT("alt_images: alternate freed",
+	    test_replied(reply, "i=8;ENOENT: image not found"));
+	TEST_PASS("alt_images");
+	return (0);
+}
+
+/* A terminal reset frees all images and placements. */
+static int
+test_reset_frees_images(void)
+{
+	u_int	placed;
+
+	test_pane_new();
+	test_history(100);
+	test_store(1);
+	test_place(0, 0, "i=1,q=2");
+	placed = test_image_at(0, 0);
+	test_input("\033c");
+	TEST_ASSERT("reset: image freed", test_map(1) == NULL);
+	TEST_ASSERT("reset: placement freed", image_find(placed) == NULL);
+	TEST_PASS("reset");
+	return (0);
+}
+
+/* An image reaching the right edge moves the cursor to the next line. */
+static int
+test_cursor_right_edge(void)
+{
+	struct screen	*s;
+
+	test_pane_new();
+	s = &test_wp->base;
+	test_cursor(78, 2);
+	test_graphics("a=T,i=1,q=2,f=32,s=1,v=1,c=2", TEST_PIXEL);
+	TEST_ASSERT("right_edge: next line", s->cx == 0 && s->cy == 3);
+	test_cursor(77, 2);
+	test_graphics("a=T,i=1,q=2,f=32,s=1,v=1,c=2", TEST_PIXEL);
+	TEST_ASSERT("right_edge: inside", s->cx == 79 && s->cy == 2);
+	test_cursor(79, 23);
+	test_graphics("a=T,i=2,q=2,f=32,s=1,v=1", TEST_PIXEL);
+	TEST_ASSERT("right_edge: scrolls",
+	    s->cx == 0 && s->cy == 23 && test_placed_at(79, 22));
+	TEST_PASS("right_edge");
+	return (0);
+}
+
+/* Scaling to columns rounds the height before finding the rows. */
+static int
+test_scaled_rows_rounded(void)
+{
+	static u_char	 data[20 * 41 * 3];
+	struct screen	*s;
+
+	test_pane_new();
+	s = &test_wp->base;
+	memset(data, 0xff, sizeof data);
+	test_graphics("a=T,i=1,q=2,f=24,s=20,v=41,c=1",
+	    test_base64(data, sizeof data));
+	TEST_ASSERT("scaled_rows: one row", s->cx == 1 && s->cy == 0 &&
+	    test_placed_at(0, 0) && !test_placed_at(0, 1));
+	TEST_PASS("scaled_rows");
+	return (0);
+}
+
+/* Files in sensitive places or outside temporary directories are rejected. */
+static int
+test_file_path_rules(void)
+{
+	char		 link[] = "/tmp/tty-graphics-protocol-link.XXXXXX";
+	char		 outside[] = "tmux-kitty-outside.XXXXXX";
+	char		 bad[] = "/tmp/tty-graphics-protocol-bad.XXXXXX";
+	char		 target[PATH_MAX];
+	const char	*reply;
+	int		 kept;
+
+	test_pane_new();
+	reply = test_graphics("a=t,i=1,t=f,f=32,s=1,v=1",
+	    test_base64("/proc/self/status", 17));
+	TEST_ASSERT("path_rules: proc",
+	    test_replied(reply, "i=1;EINVAL: invalid data"));
+	reply = test_graphics("a=t,i=1,t=f,f=32,s=1,v=1",
+	    test_base64("/dev/zero", 9));
+	TEST_ASSERT("path_rules: device",
+	    test_replied(reply, "i=1;EINVAL: invalid data"));
+
+	TEST_ASSERT("path_rules: outside",
+	    test_write_file(outside, test_red, sizeof test_red) == 0);
+	if (realpath(outside, target) == NULL ||
+	    mktemp(link) == NULL ||
+	    symlink(target, link) != 0) {
+		unlink(outside);
+		TEST_ASSERT("path_rules: symlink", 0);
+	}
+	reply = test_graphics("a=t,i=2,t=t,f=32,s=1,v=1",
+	    test_base64(link, strlen(link)));
+	kept = (access(link, F_OK) == 0 && access(outside, F_OK) == 0);
+	unlink(link);
+	unlink(outside);
+	TEST_ASSERT("path_rules: link out of temp",
+	    test_replied(reply, "i=2;EINVAL: temporary file not in temp dir"));
+	TEST_ASSERT("path_rules: link kept", kept);
+
+	TEST_ASSERT("path_rules: bad",
+	    test_write_file(bad, test_red, 3) == 0);
+	reply = test_graphics("a=t,i=3,t=t,f=32,s=1,v=1",
+	    test_base64(bad, strlen(bad)));
+	kept = (access(bad, F_OK) == 0);
+	unlink(bad);
+	TEST_ASSERT("path_rules: bad temporary",
+	    test_replied(reply, "i=3;EINVAL: invalid data"));
+	TEST_ASSERT("path_rules: bad temporary removed", !kept);
+	TEST_PASS("path_rules");
 	return (0);
 }
 
@@ -2441,8 +2874,8 @@ test_chunked_upload(void)
 	reply = test_graphics("a=t,i=1,f=24,s=1,v=2,m=1", TEST_RGB);
 	TEST_ASSERT("chunked_upload: m=1 no reply", *reply == '\0');
 	ks = test_state();
-	TEST_ASSERT("chunked_upload: pending", ks != NULL && ks->cmd.more &&
-	    ks->cmd.image_id == 1 && ks->size == 3);
+	TEST_ASSERT("chunked_upload: pending", ks != NULL && ks->loading &&
+	    ks->cmd.image_id == 1 && ks->load.size == 3);
 	reply = test_graphics("m=0", "AP8A");
 	TEST_ASSERT("chunked_upload: m=0 completes",
 	    test_replied(reply, "i=1;OK") && test_idle());
@@ -2567,6 +3000,7 @@ main(void)
 		test_anonymous_delete_removes_data,
 		test_image_number_newest,
 		test_scroll_up_moves_and_removes_placements,
+		test_reverse_index_moves_placements,
 		test_placement_create,
 		test_free_all,
 		test_free_saved_lists,
@@ -2622,6 +3056,18 @@ main(void)
 		test_handle_delete_default,
 		test_quiet_failure_modes,
 		test_chunked_upload,
+		test_chunked_upload_interleaved,
+		test_chunked_upload_abandoned,
+		test_query_decodes,
+		test_feature_query,
+		test_indexed_formats,
+		test_eviction_order,
+		test_clear_screen_frees_unused,
+		test_alternate_screen_images,
+		test_reset_frees_images,
+		test_cursor_right_edge,
+		test_scaled_rows_rounded,
+		test_file_path_rules,
 	};
 	u_int					 i;
 

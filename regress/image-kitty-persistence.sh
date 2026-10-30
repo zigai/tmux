@@ -25,7 +25,8 @@ def graphics(control, data=b''):
 red, blue = (255, 0, 0), (0, 0, 255)
 origin = b'\033[3;3H'
 upload = graphics('a=t,i=7,f=32,s=1,v=1', bytes((*red, 255)))
-place = origin + graphics('a=p,i=7,p=9,c=4,r=3,C=1')
+# Clearing the screen frees unplaced images, so each placement uploads again.
+place = upload + origin + graphics('a=p,i=7,p=9,c=4,r=3,C=1')
 cells = {(x, y): red for y in range(2, 5) for x in range(2, 6)}
 
 

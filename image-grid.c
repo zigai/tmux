@@ -1334,16 +1334,23 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	u_int			 cursor_x = 0, cursor_rows;
 	u_int			 origin_y = 0, h_origin_y, region_height;
 	u_int			 remaining, n;
+	int			 wrap = 0;
 
 	if (sx > screen_size_x(s) - cx)
 		sx = screen_size_x(s) - cx;
 	if (sx == 0)
 		return;
 
-	/* Kitty moves to the last image row; SIXEL advances past it. */
+	/*
+	 * Kitty moves to the last image row, or the next row if the image
+	 * reaches the right edge; SIXEL advances past it.
+	 */
 	cursor_rows = sy;
-	if (image_get_type(im) == IMAGE_TYPE_KITTY)
-		cursor_rows--;
+	if (image_get_type(im) == IMAGE_TYPE_KITTY) {
+		wrap = (ig->sx >= screen_size_x(s) - cx);
+		if (!wrap)
+			cursor_rows--;
+	}
 
 	/* Scroll images that move the cursor. */
 	if (no_cursor) {
@@ -1400,7 +1407,7 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	image_store_prune(gd->images);
 	image_redraw_area(ctx, cx, cy, sx, sy);
 	if (!no_cursor) {
-		if (image_get_type(im) == IMAGE_TYPE_KITTY)
+		if (image_get_type(im) == IMAGE_TYPE_KITTY && !wrap)
 			cursor_x = cx + sx;
 		screen_write_cursormove(ctx, cursor_x, cy + cursor_rows, 0);
 	}

@@ -215,6 +215,9 @@ void		 kitty_parse_input(struct input_ctx *, struct window_pane *,
 		     size_t);
 void		 kitty_free_state(void *);
 void		 kitty_remove_image(struct image *);
+void		 kitty_clear_screen(void *, struct screen_write_ctx *);
+void		 kitty_alternate_screen(void *, struct screen_write_ctx *);
+void		 kitty_reset(void *, struct screen_write_ctx *);
 
 #endif /* ENABLE_IMAGES */
 
