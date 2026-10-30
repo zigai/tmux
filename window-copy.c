@@ -276,6 +276,7 @@ struct window_copy_mode_data {
 	u_int		 sync_generation;
 
 	int		 viewmode;	/* view mode entered */
+	u_int			 source;
 
 	u_int		 oy;		/* number of lines scrolled up */
 
@@ -609,6 +610,7 @@ window_copy_init(struct window_mode_entry *wme,
 	u_int				 i, cx, cy;
 
 	data = window_copy_common_init(wme);
+	data->source = wp->id;
 	data->backing = window_copy_clone_screen(base, &data->screen, &cx, &cy,
 	    wme->swp != wme->wp);
 	window_copy_sync_snapshot(data, base->grid);
@@ -1072,6 +1074,20 @@ window_copy_cursor_hyperlink_cb(struct format_tree *ft)
 	    &data->screen));
 }
 
+/*
+ * Get the pane whose ranges the copied cells refer to. The pane given to
+ * copy-mode -s may have been destroyed since.
+ */
+static struct window_pane *
+window_copy_range_pane(struct window_mode_entry *wme)
+{
+	struct window_copy_mode_data	*data = wme->data;
+
+	if (data->viewmode)
+		return (NULL);
+	return (window_pane_find_by_id(data->source));
+}
+
 static void *
 window_copy_cursor_range_cb(struct format_tree *ft)
 {
@@ -1079,10 +1095,13 @@ window_copy_cursor_range_cb(struct format_tree *ft)
 	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
 	struct window_copy_mode_data	*data = wme->data;
 	struct grid			*gd = data->backing->grid;
+	struct window_pane		*swp;
 	struct pane_range		*r;
 	char				*value;
 
-	r = pane_ranges_cell(wme->swp, gd, data->cx,
+	if ((swp = window_copy_range_pane(wme)) == NULL)
+		return (NULL);
+	r = pane_ranges_cell(swp, gd, data->cx,
 	    gd->hsize - data->oy + data->cy);
 	if (r == NULL)
 		return (NULL);
@@ -2881,10 +2900,11 @@ window_copy_cursor_range(struct window_mode_entry *wme, int direction,
 	struct grid			*gd = data->backing->grid;
 	u_int				 px = data->cx;
 	u_int				 py = gd->hsize - data->oy + data->cy;
+	struct window_pane		*swp;
 
-	if (data->viewmode)
+	if ((swp = window_copy_range_pane(wme)) == NULL)
 		return;
-	if (pane_ranges_find(wme->swp, gd, &px, &py, direction, group))
+	if (pane_ranges_find(swp, gd, &px, &py, direction, group))
 		window_copy_scroll_to(wme, px, py, 0);
 }
 
@@ -6044,14 +6064,13 @@ window_copy_get_cell_grid(struct window_pane *wp, struct window_pane **swp,
 	if (wme == NULL || wme->mode != &window_copy_mode)
 		return (NULL);
 	data = wme->data;
-	if (data == NULL || data->viewmode)
+	if (data == NULL || (*swp = window_copy_range_pane(wme)) == NULL)
 		return (NULL);
 	sx = screen_size_x(&data->screen);
 	if (*x < window_copy_line_number_width(wme))
 		return (NULL);
 	*x = window_copy_cursor_unoffset(wme, *x, sx);
 	*y = screen_hsize(data->backing) + *y - data->oy;
-	*swp = wme->swp;
 	return (data->backing->grid);
 }
 

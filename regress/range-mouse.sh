@@ -314,4 +314,26 @@ $TMUX send -t "$pane" -X next-range g || fail next
 assert_cursor "30:1:$a" 'moved range'
 $TMUX send -t "$pane" -X cancel || fail cancel
 
+# Copy mode of another pane finds the ranges of that pane until it is
+# destroyed, then finds none.
+dst=$pane
+src=$($TMUX split-window -dP -F '#{pane_id}' -t "$dst" \
+    sh -c 'stty raw -echo; printf abc; exec cat') || fail 'source pane'
+pane=$src
+wait_format '#{cursor_x}' 3
+e=$(new -r 0:1-0:2)
+pane=$dst
+$TMUX copy-mode -s "$src" -t "$dst" || fail 'copy mode source'
+$TMUX send -t "$dst" -X history-top || fail top
+$TMUX send -t "$dst" -X next-range || fail next
+wait_format '#{copy_cursor_x}:#{copy_cursor_range_id}' "1:$e"
+$TMUX kill-pane -t "$src" || fail 'kill source'
+wait_format '#{window_panes}:#{copy_cursor_range_id}' '1:'
+$TMUX send -t "$dst" -X history-top || fail top
+$TMUX send -t "$dst" -X next-range || fail next
+wait_format '#{copy_cursor_x}:#{copy_cursor_y}' '0:0'
+click 0 2 1
+wait_got 'copy-pane:' 'click after source destroyed'
+$TMUX send -t "$dst" -X cancel || fail cancel
+
 echo 'range-mouse: PASS'
