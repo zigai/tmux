@@ -193,6 +193,7 @@ enum key_code_mouse_location {
 	KEYC_MOUSE_LOCATION_SCROLLBAR_SLIDER,
 	KEYC_MOUSE_LOCATION_SCROLLBAR_DOWN,
 	KEYC_MOUSE_LOCATION_EMPTY,
+	KEYC_MOUSE_LOCATION_RANGE,
 	KEYC_MOUSE_LOCATION_CONTROL0, /* keep order */
 	KEYC_MOUSE_LOCATION_CONTROL1,
 	KEYC_MOUSE_LOCATION_CONTROL2,
@@ -250,6 +251,7 @@ enum key_code_mouse_location {
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, SCROLLBAR_SLIDER), \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, SCROLLBAR_DOWN),   \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, EMPTY),            \
+	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, RANGE),            \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL0),         \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL1),         \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL2),         \
@@ -275,26 +277,27 @@ enum key_code_mouse_location {
 	((KEYC_SHIFT_TYPE(t)) |                                 \
 	 ((unsigned long long)(b) << KEYC_MOUSE_BUTTON_SHIFT) |	\
          ((unsigned long long)(l) << KEYC_MOUSE_LOCATION_SHIFT))
-#define KEYC_MOUSE_STRING(name, s)				      \
-	{ #s "Pane", KEYC_ ## name ## _PANE },			      \
-	{ #s "Status", KEYC_ ## name ## _STATUS },		      \
-	{ #s "StatusLeft", KEYC_ ## name ## _STATUS_LEFT },	      \
-	{ #s "StatusRight", KEYC_ ## name ## _STATUS_RIGHT },	      \
-	{ #s "StatusDefault", KEYC_ ## name ## _STATUS_DEFAULT },     \
-	{ #s "ScrollbarUp", KEYC_ ## name ## _SCROLLBAR_UP },         \
-	{ #s "ScrollbarSlider", KEYC_ ## name ## _SCROLLBAR_SLIDER }, \
-	{ #s "ScrollbarDown", KEYC_ ## name ## _SCROLLBAR_DOWN },     \
-	{ #s "Empty", KEYC_ ## name ## _EMPTY },		      \
-	{ #s "Border", KEYC_ ## name ## _BORDER },		      \
-	{ #s "Control0", KEYC_ ## name ## _CONTROL0 },		      \
-	{ #s "Control1", KEYC_ ## name ## _CONTROL1 },		      \
-	{ #s "Control2", KEYC_ ## name ## _CONTROL2 },		      \
-	{ #s "Control3", KEYC_ ## name ## _CONTROL3 },		      \
-	{ #s "Control4", KEYC_ ## name ## _CONTROL4 },		      \
-	{ #s "Control5", KEYC_ ## name ## _CONTROL5 },		      \
-	{ #s "Control6", KEYC_ ## name ## _CONTROL6 },		      \
-	{ #s "Control7", KEYC_ ## name ## _CONTROL7 },		      \
-	{ #s "Control8", KEYC_ ## name ## _CONTROL8 },		      \
+#define KEYC_MOUSE_STRING(name, s)					\
+	{ #s "Pane", KEYC_ ## name ## _PANE },				\
+	{ #s "Status", KEYC_ ## name ## _STATUS },			\
+	{ #s "StatusLeft", KEYC_ ## name ## _STATUS_LEFT },		\
+	{ #s "StatusRight", KEYC_ ## name ## _STATUS_RIGHT },		\
+	{ #s "StatusDefault", KEYC_ ## name ## _STATUS_DEFAULT },	\
+	{ #s "ScrollbarUp", KEYC_ ## name ## _SCROLLBAR_UP },		\
+	{ #s "ScrollbarSlider", KEYC_ ## name ## _SCROLLBAR_SLIDER },	\
+	{ #s "ScrollbarDown", KEYC_ ## name ## _SCROLLBAR_DOWN },	\
+	{ #s "Empty", KEYC_ ## name ## _EMPTY },			\
+	{ #s "Range", KEYC_ ## name ## _RANGE },			\
+	{ #s "Border", KEYC_ ## name ## _BORDER },			\
+	{ #s "Control0", KEYC_ ## name ## _CONTROL0 },			\
+	{ #s "Control1", KEYC_ ## name ## _CONTROL1 },			\
+	{ #s "Control2", KEYC_ ## name ## _CONTROL2 },			\
+	{ #s "Control3", KEYC_ ## name ## _CONTROL3 },			\
+	{ #s "Control4", KEYC_ ## name ## _CONTROL4 },			\
+	{ #s "Control5", KEYC_ ## name ## _CONTROL5 },			\
+	{ #s "Control6", KEYC_ ## name ## _CONTROL6 },			\
+	{ #s "Control7", KEYC_ ## name ## _CONTROL7 },			\
+	{ #s "Control8", KEYC_ ## name ## _CONTROL8 },			\
 	{ #s "Control9", KEYC_ ## name ## _CONTROL9 }
 
 /*
@@ -3557,6 +3560,18 @@ void			  pane_ranges_kill_group(struct window_pane *,
 void			  pane_range_formats(struct format_tree *,
     struct pane_range *);
 
+/* pane-ranges-find.c */
+struct pane_range	*pane_ranges_cell(struct window_pane *, struct grid *,
+    u_int, u_int);
+struct pane_range	*pane_ranges_visible(struct window_pane *, u_int,
+    u_int);
+struct pane_range	*pane_ranges_mouse(struct mouse_event *);
+key_code		 pane_ranges_mouse_key(struct window_pane *, key_code,
+    u_int, u_int);
+struct key_binding	*pane_ranges_key_binding(struct key_table *, key_code);
+int			 pane_ranges_find(struct window_pane *, struct grid *,
+    u_int *, u_int *, int, const char *);
+
 /* grid.c */
 extern const struct grid_cell grid_default_cell;
 void	 grid_check_is_clear(struct grid *);
@@ -4076,6 +4091,8 @@ extern const struct window_mode window_client_mode;
 /* window-copy.c */
 int				 window_copy_get_selection_span(
     struct window_pane *, struct window_copy_selection *);
+struct grid			*window_copy_get_cell_grid(struct window_pane *,
+    struct window_pane **, u_int *, u_int *);
 extern const struct window_mode window_copy_mode;
 extern const struct window_mode window_view_mode;
 void printflike(3, 4) window_copy_add(struct window_pane *, int, const char *,

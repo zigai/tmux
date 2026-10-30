@@ -1073,6 +1073,24 @@ window_copy_cursor_hyperlink_cb(struct format_tree *ft)
 }
 
 static void *
+window_copy_cursor_range_cb(struct format_tree *ft)
+{
+	struct window_pane		*wp = format_get_pane(ft);
+	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
+	struct window_copy_mode_data	*data = wme->data;
+	struct grid			*gd = data->backing->grid;
+	struct pane_range		*r;
+	char				*value;
+
+	r = pane_ranges_cell(wme->swp, gd, data->cx,
+	    gd->hsize - data->oy + data->cy);
+	if (r == NULL)
+		return (NULL);
+	xasprintf(&value, "%u", r->id);
+	return (value);
+}
+
+static void *
 window_copy_cursor_word_cb(struct format_tree *ft)
 {
 	struct window_pane		*wp = format_get_pane(ft);
@@ -1176,6 +1194,9 @@ window_copy_formats(struct window_mode_entry *wme, struct format_tree *ft)
 	format_add_cb(ft, "copy_cursor_line", window_copy_cursor_line_cb);
 	format_add_cb(ft, "copy_cursor_hyperlink",
 	    window_copy_cursor_hyperlink_cb);
+	if (data->viewmode == 0)
+		format_add_cb(ft, "copy_cursor_range_id",
+		    window_copy_cursor_range_cb);
 }
 
 static struct screen *
@@ -2852,6 +2873,35 @@ window_copy_cmd_previous_prompt(struct window_copy_cmd_state *cs)
 	return (WINDOW_COPY_CMD_MOVE);
 }
 
+static void
+window_copy_cursor_range(struct window_mode_entry *wme, int direction,
+    const char *group)
+{
+	struct window_copy_mode_data	*data = wme->data;
+	struct grid			*gd = data->backing->grid;
+	u_int				 px = data->cx;
+	u_int				 py = gd->hsize - data->oy + data->cy;
+
+	if (data->viewmode)
+		return;
+	if (pane_ranges_find(wme->swp, gd, &px, &py, direction, group))
+		window_copy_scroll_to(wme, px, py, 0);
+}
+
+static enum window_copy_cmd_action
+window_copy_cmd_next_range(struct window_copy_cmd_state *cs)
+{
+	window_copy_cursor_range(cs->wme, 1, args_string(cs->wargs, 0));
+	return (WINDOW_COPY_CMD_MOVE);
+}
+
+static enum window_copy_cmd_action
+window_copy_cmd_previous_range(struct window_copy_cmd_state *cs)
+{
+	window_copy_cursor_range(cs->wme, 0, args_string(cs->wargs, 0));
+	return (WINDOW_COPY_CMD_MOVE);
+}
+
 static enum window_copy_cmd_action
 window_copy_cmd_search_backward(struct window_copy_cmd_state *cs)
 {
@@ -3577,6 +3627,18 @@ static const struct {
 	  .flags = WINDOW_COPY_CMD_FLAG_READONLY,
 	  .clear = WINDOW_COPY_CMD_CLEAR_ALWAYS,
 	  .f = window_copy_cmd_previous_prompt
+	},
+	{ .command = "next-range",
+	  .args = { "", 0, 1, NULL },
+	  .flags = WINDOW_COPY_CMD_FLAG_READONLY,
+	  .clear = WINDOW_COPY_CMD_CLEAR_ALWAYS,
+	  .f = window_copy_cmd_next_range
+	},
+	{ .command = "previous-range",
+	  .args = { "", 0, 1, NULL },
+	  .flags = WINDOW_COPY_CMD_FLAG_READONLY,
+	  .clear = WINDOW_COPY_CMD_CLEAR_ALWAYS,
+	  .f = window_copy_cmd_previous_range
 	},
 	{ .command = "middle-line",
 	  .args = { "", 0, 0, NULL },
@@ -5968,6 +6030,29 @@ window_copy_set_selection(struct window_mode_entry *wme, int may_redraw,
 	}
 
 	return (1);
+}
+
+/* Get the copy of a pane's cells and the position in it of a visible cell. */
+struct grid *
+window_copy_get_cell_grid(struct window_pane *wp, struct window_pane **swp,
+    u_int *x, u_int *y)
+{
+	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
+	struct window_copy_mode_data	*data;
+	u_int				 sx;
+
+	if (wme == NULL || wme->mode != &window_copy_mode)
+		return (NULL);
+	data = wme->data;
+	if (data == NULL || data->viewmode)
+		return (NULL);
+	sx = screen_size_x(&data->screen);
+	if (*x < window_copy_line_number_width(wme))
+		return (NULL);
+	*x = window_copy_cursor_unoffset(wme, *x, sx);
+	*y = screen_hsize(data->backing) + *y - data->oy;
+	*swp = wme->swp;
+	return (data->backing->grid);
 }
 
 /* Get the selection as history lines in the snapshot and pane grids. */
