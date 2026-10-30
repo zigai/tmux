@@ -1091,18 +1091,3 @@ kitty_clipboard_reset_pane(struct window_pane *wp)
 	if (wp->kitty_clipboard != NULL)
 		kitty_clipboard_reset(wp->kitty_clipboard);
 }
-
-/* Is this client waiting for a reply or a paste event? */
-int
-kitty_clipboard_waiting(struct client *c)
-{
-	struct kitty_clipboard_request	*r;
-
-	if (c->tty.mode & MODE_PASTE_EVENTS)
-		return (1);
-	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
-		if (r->c == c)
-			return (1);
-	}
-	return (0);
-}

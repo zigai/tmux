@@ -950,9 +950,14 @@ partial_key:
 	if (tty->flags & (TTY_WAITFG|TTY_WAITBG|TTY_OSC52QUERY) ||
 	    tty->flags & (TTY_WINSZQUERY|TTY_WINSZPIXELS) ||
 	    (tty->flags & TTY_ALL_REQUEST_FLAGS) != TTY_ALL_REQUEST_FLAGS ||
-	    !TAILQ_EMPTY(&c->input_requests) ||
-	    kitty_clipboard_waiting(c)) {
+	    !TAILQ_EMPTY(&c->input_requests)) {
 		log_debug("%s: increasing delay (active query)", c->name);
+		if (delay < 500)
+			delay = 500;
+	}
+	if (len > 2 && tty_keys_kitty_clipboard(tty, buf, len, &size, 0) == 1) {
+		log_debug("%s: increasing delay (partial clipboard reply)",
+		    c->name);
 		if (delay < 500)
 			delay = 500;
 	}

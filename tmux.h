@@ -4363,7 +4363,6 @@ void	 kitty_clipboard_reply(struct client *, const char *, size_t);
 void	 kitty_clipboard_free(struct window_pane *);
 void	 kitty_clipboard_client_lost(struct client *);
 void	 kitty_clipboard_reset_pane(struct window_pane *);
-int	 kitty_clipboard_waiting(struct client *);
 
 /* json.c */
 struct json_node	*json_parse(const char *, char **);

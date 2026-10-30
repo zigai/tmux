@@ -34,11 +34,14 @@ $TMUX new -d -s kc -x40 -y10 "stty raw -echo; printf '\\033[?5522h'; \
     exec cat -v >$TMP/a" || exit 1
 $TMUX set -g status off || exit 1
 $TMUX set -s get-clipboard request || exit 1
+$TMUX set -s escape-time 10 || exit 1
 $TMUX set -as terminal-features 'tmux*:kittyclipboard' || exit 1
 $TMUX2 new -d -s outer -x40 -y10 \
     "while [ ! -e $TMP/go ]; do sleep 0.01; done; exec $TMUX attach -t kc" ||
     exit 1
 $TMUX2 set -g status off || exit 1
+# Colours are set so the client's colour queries are answered.
+$TMUX2 set -g window-style fg=white,bg=black || exit 1
 $TMUX2 pipe-pane -t outer: -O "cat >>$TMP/terminal" || exit 1
 touch $TMP/go
 wait_for_clients 1 $TMUX || fail "client did not attach"
@@ -77,6 +80,14 @@ wait_for_output '^[]5522;type=read:status=OK:pw=b3Rw^[\'\
 '^[]5522;type=read:status=DONE:pw=b3Rw^[\' cat $TMP/a ||
     fail "paste event not sent to active pane"
 [ "$(cat $TMP/b)" = x ] || fail "paste event sent to pane without mode"
+
+# With the mode set, Escape is not held as if it started a reply, so a key
+# after it is not taken as Meta.
+$TMUX bind -n M-x set -g @meta x || exit 1
+$TMUX2 send-keys -t outer: Escape || exit 1
+sleep 0.2
+$TMUX2 send-keys -t outer: -l x || exit 1
+wait_for_text '^[x' cat $TMP/a || fail "Escape held with the mode set"
 
 # The read after a paste event goes to the client which sent the event, not
 # the most recently used.
