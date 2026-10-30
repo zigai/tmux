@@ -13,6 +13,8 @@ start
 $INNER set -g @meta "" || exit 1
 $INNER bind -n M-x set -g @meta 1 || exit 1
 attach outer $DIR/out
+[ "$(tr '\033' '\n' <$DIR/out | grep -e '^]72;t=q$' -e '^\[c$' |
+    head -1)" = "]72;t=q" ] || fail "query not sent before primary DA"
 $OUTER send-keys -t outer -l "$(printf '\033]10;rgb:ffff/ffff/ffff\033\\')"
 $OUTER send-keys -t outer -l "$(printf '\033]11;rgb:0000/0000/0000\033\\')"
 wait_for_text tmux $INNER display -p '#{client_termtype}' ||
