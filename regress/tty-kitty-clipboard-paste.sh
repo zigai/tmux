@@ -59,14 +59,45 @@ event=$(printf '\033]5522;type=read:status=OK:pw=b3Rw\033\\'; \
     printf 'dGV4dC9wbGFpbgo=\033\\'; \
     printf '\033]5522;type=read:status=DONE:pw=b3Rw\033\\')
 $TMUX2 send-keys -t outer: -l "$event" || exit 1
-sleep 1
+$TMUX2 send-keys -t outer: -l x || exit 1
+wait_for_output x cat $TMP/b || fail "paste event sent to pane without mode"
 $TMUX select-pane -t kc:.0 || exit 1
 wait_for_output '?5522h' mode || fail "mode not set after select-pane"
+
+# A prompt in the pane takes pastes itself.
+client=$($TMUX list-clients -F '#{client_name}')
+$TMUX bind -n F12 command-prompt -P || exit 1
+$TMUX2 send-keys -t outer: F12 || exit 1
+wait_for_output '?5522l' mode || fail "mode set at the prompt"
+$TMUX2 send-keys -t outer: Escape || exit 1
+wait_for_output '?5522h' mode || fail "mode not set after the prompt"
 $TMUX2 send-keys -t outer: -l "$event" || exit 1
 wait_for_output '^[]5522;type=read:status=OK:pw=b3Rw^[\'\
 '^[]5522;type=read:status=DATA:mime=Lg==:pw=b3Rw;dGV4dC9wbGFpbgo=^[\'\
 '^[]5522;type=read:status=DONE:pw=b3Rw^[\' cat $TMP/a ||
     fail "paste event not sent to active pane"
-[ -s $TMP/b ] && fail "paste event sent to pane without mode"
+[ "$(cat $TMP/b)" = x ] || fail "paste event sent to pane without mode"
+
+# The read after a paste event goes to the client which sent the event, not
+# the most recently used.
+: >$TMP/terminal2
+$TMUX2 new-window -d -t outer:1 "$TMUX attach -t kc" || exit 1
+$TMUX2 pipe-pane -t outer:1 -O "cat >>$TMP/terminal2" || exit 1
+wait_for_clients 2 $TMUX || fail "second client did not attach"
+$TMUX respawn-pane -k -t kc:.0 "stty raw -echo; printf '\\033[?5522h'; \
+    head -c ${#event} >/dev/null; \
+    printf '\\033]5522;type=read:id=p1:pw=b3Rw:name=UGFzdGUgZXZlbnQ=;'; \
+    printf 'dGV4dC9wbGFpbg==\\033\\\\'; exec cat >/dev/null" || exit 1
+wait_for_text "$(printf '\033[?5522h')" cat $TMP/terminal2 ||
+    fail "mode not set on second client"
+$TMUX2 send-keys -t outer:0 -l "$event" || exit 1
+wait_for_text "$(printf '\033]5522;type=read:id=tmux-')" cat $TMP/terminal ||
+    fail "read after paste event not sent to its client"
+grep -aq '5522;type=read:' $TMP/terminal2 &&
+    fail "read after paste event sent to another client"
+
+$TMUX detach-client -t "$client" || exit 1
+wait_for_clients 1 $TMUX || exit 1
+wait_for_output '?5522l' mode || fail "mode left set after detach"
 
 exit 0

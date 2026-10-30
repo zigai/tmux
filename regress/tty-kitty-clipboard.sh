@@ -107,32 +107,19 @@ check "\\033]5522;type=read;$PLAIN\\033\\\\" \
 ^[]5522;type=read:status=DONE^[\\" "read with both"
 [ "$($TMUX show-buffer)" = "outer text" ] || fail "buffer from both"
 
-# With two clients both are sent the write and the pane gets one reply.
-attach 2 2
-check "\\033]5522;type=write:id=w3\\033\\\\\
-\\033]5522;type=wdata:mime=$PLAIN;dHdv\\033\\\\\
-\\033]5522;type=wdata\\033\\\\" \
-    '^[]5522;type=write:status=DONE:id=w3^[\' "write with two clients"
-sent 1 "\\033]5522;type=write:id=tmux-5\\033\\\\" "write to first client"
-sent 2 "\\033]5522;type=write:id=tmux-5\\033\\\\" "write to second client"
-sleep 1
-[ "$(cat $TMP/out)" = '^[]5522;type=write:status=DONE:id=w3^[\' ] ||
-    fail "one reply with two clients"
-
 # Without the feature the text is set with OSC 52 and the pane is answered by
 # tmux.
 $TMUX2 kill-window -t outer:1 || exit 1
-$TMUX2 kill-window -t outer:2 || exit 1
 wait_for_clients 0 $TMUX || exit 1
 $TMUX set -su terminal-features || exit 1
-attach 3 1
+attach 2 1
 wait_for_text clipboard $TMUX list-clients -F '#{client_termfeatures}' ||
     fail "no clipboard feature"
 check "\\033]5522;type=write:id=w4\\033\\\\\
 \\033]5522;type=wdata:mime=$PLAIN;b25l\\033\\\\\
 \\033]5522;type=wdata\\033\\\\" \
     '^[]5522;type=write:status=DONE:id=w4^[\' "write without feature"
-sent 3 "\\033]52;;b25l\\007" "OSC 52 without feature"
-grep -q '5522;' $TMP/terminal3 && fail "OSC 5522 without feature"
+sent 2 "\\033]52;;b25l\\007" "OSC 52 without feature"
+grep -q '5522;' $TMP/terminal2 && fail "OSC 5522 without feature"
 
 exit 0

@@ -34,6 +34,9 @@
 
 #define KITTY_CLIPBOARD_CHUNK 4096
 #define KITTY_CLIPBOARD_ID_MAX 512
+#define KITTY_CLIPBOARD_WRITE_MAX (64 * 1024 * 1024)
+#define KITTY_CLIPBOARD_TYPES_MAX 64
+#define KITTY_CLIPBOARD_ALIASES_MAX 64
 
 enum kitty_clipboard_type {
 	KITTY_CLIPBOARD_READ,
@@ -75,9 +78,13 @@ struct kitty_clipboard {
 	int				 current;
 	u_char				 carry[4];
 	u_int				 ncarry;
+	size_t				 total;
 
 	struct kitty_clipboard_alias	*aliases;
 	u_int				 naliases;
+
+	struct client			*paste_client;
+	char				*paste_pw;
 };
 
 struct kitty_clipboard_request {
@@ -436,8 +443,39 @@ kitty_clipboard_reset(struct kitty_clipboard *kc)
 	free(kc->pw);
 	free(kc->name);
 
-	memset(kc, 0, sizeof *kc);
+	kc->active = 0;
+	kc->primary = 0;
+	kc->id = kc->pw = kc->name = NULL;
+	kc->entries = NULL;
+	kc->nentries = 0;
 	kc->current = -1;
+	kc->ncarry = 0;
+	kc->total = 0;
+	kc->aliases = NULL;
+	kc->naliases = 0;
+}
+
+static struct kitty_clipboard *
+kitty_clipboard_get(struct window_pane *wp)
+{
+	if (wp->kitty_clipboard == NULL) {
+		wp->kitty_clipboard = xcalloc(1, sizeof *wp->kitty_clipboard);
+		wp->kitty_clipboard->current = -1;
+	}
+	return (wp->kitty_clipboard);
+}
+
+/* Is a request from this pane waiting for a reply? */
+static int
+kitty_clipboard_pending(struct window_pane *wp)
+{
+	struct kitty_clipboard_request	*r;
+
+	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
+		if (r->pane == wp->id)
+			return (1);
+	}
+	return (0);
 }
 
 /* Fail a write transaction. */
@@ -455,10 +493,8 @@ static void
 kitty_clipboard_write_begin(struct window_pane *wp,
     struct kitty_clipboard_meta *meta, const char *end)
 {
-	struct kitty_clipboard	*kc = wp->kitty_clipboard;
+	struct kitty_clipboard	*kc = kitty_clipboard_get(wp);
 
-	if (kc == NULL)
-		kc = wp->kitty_clipboard = xcalloc(1, sizeof *kc);
 	kitty_clipboard_reset(kc);
 
 	if (options_get_number(global_options, "set-clipboard") != 2) {
@@ -475,21 +511,26 @@ kitty_clipboard_write_begin(struct window_pane *wp,
 		kc->name = xstrdup(meta->name);
 }
 
-static int
+static const char *
 kitty_clipboard_write_data(struct kitty_clipboard *kc, const char *mime,
     const char *payload)
 {
 	struct kitty_clipboard_data	*kd;
 	u_int				 i;
+	size_t				 size;
 
 	if (kc->current == -1 || strcmp(kc->entries[kc->current].mime,
 	    mime) != 0) {
 		if (kc->current != -1 && kc->ncarry != 0)
-			return (-1);
+			return ("EINVAL");
+		kc->current = -1;
 		for (i = 0; i < kc->nentries; i++) {
 			if (strcmp(kc->entries[i].mime, mime) == 0)
 				break;
 		}
+		if (i == kc->nentries &&
+		    kc->nentries == KITTY_CLIPBOARD_TYPES_MAX)
+			return (NULL);
 		if (i == kc->nentries) {
 			kc->entries = xreallocarray(kc->entries,
 			    kc->nentries + 1, sizeof *kc->entries);
@@ -503,8 +544,14 @@ kitty_clipboard_write_data(struct kitty_clipboard *kc, const char *mime,
 	}
 
 	kd = &kc->entries[kc->current];
-	return (kitty_clipboard_decode(kc->carry, &kc->ncarry, payload,
-	    &kd->data, &kd->size));
+	size = kd->size;
+	if (kitty_clipboard_decode(kc->carry, &kc->ncarry, payload, &kd->data,
+	    &kd->size) != 0)
+		return ("EINVAL");
+	kc->total += kd->size - size;
+	if (kc->total > KITTY_CLIPBOARD_WRITE_MAX)
+		return ("EFBIG");
+	return (NULL);
 }
 
 static int
@@ -525,6 +572,9 @@ kitty_clipboard_write_alias(struct kitty_clipboard *kc, const char *target,
 			if (strcmp(kc->aliases[i].alias, name) == 0)
 				break;
 		}
+		if (i == kc->naliases &&
+		    kc->naliases == KITTY_CLIPBOARD_ALIASES_MAX)
+			break;
 		if (i == kc->naliases) {
 			kc->aliases = xreallocarray(kc->aliases,
 			    kc->naliases + 1, sizeof *kc->aliases);
@@ -603,6 +653,10 @@ kitty_clipboard_write_commit(struct window_pane *wp, const char *end)
 
 	if (kc->current != -1 && kc->ncarry != 0) {
 		kitty_clipboard_write_fail(wp, "EINVAL", end);
+		return;
+	}
+	if (kitty_clipboard_pending(wp)) {
+		kitty_clipboard_write_fail(wp, "EBUSY", end);
 		return;
 	}
 	text = kitty_clipboard_find_text(kc);
@@ -721,6 +775,7 @@ static void
 kitty_clipboard_read(struct window_pane *wp,
     struct kitty_clipboard_meta *meta, const char *payload, const char *end)
 {
+	struct kitty_clipboard		*kc;
 	struct kitty_clipboard_request	*r;
 	struct client			*c, *best = NULL;
 	char				*mimes, *out;
@@ -730,12 +785,23 @@ kitty_clipboard_read(struct window_pane *wp,
 		return;
 
 	state = options_get_number(global_options, "get-clipboard");
-	if (state == 0) {
-		kitty_clipboard_status(wp, "read", meta->id, "EPERM", end);
+	if (state == 0 || kitty_clipboard_pending(wp)) {
+		kitty_clipboard_status(wp, "read", meta->id,
+		    state == 0 ? "EPERM" : "EBUSY", end);
 		free(mimes);
 		return;
 	}
-	if (state != 1) {
+
+	/* A read after a paste event goes to the client which sent it. */
+	kc = wp->kitty_clipboard;
+	if (state != 1 && kc != NULL && kc->paste_client != NULL &&
+	    meta->pw != NULL && strcmp(meta->pw, kc->paste_pw) == 0) {
+		c = kc->paste_client;
+		if (kitty_clipboard_client_ready(c, wp->window) &&
+		    (c->tty.term->flags & TERM_KITTYCLIPBOARD))
+			best = c;
+	}
+	if (state != 1 && best == NULL) {
 		TAILQ_FOREACH(c, &clients, entry) {
 			if (!kitty_clipboard_client_ready(c, wp->window))
 				continue;
@@ -773,7 +839,7 @@ kitty_clipboard_input(struct window_pane *wp, const char *p, const char *end)
 {
 	struct kitty_clipboard		*kc = wp->kitty_clipboard;
 	struct kitty_clipboard_meta	 meta;
-	const char			*payload;
+	const char			*payload, *status;
 	char				*metadata;
 
 	if ((payload = strchr(p, ';')) == NULL) {
@@ -811,9 +877,9 @@ kitty_clipboard_input(struct window_pane *wp, const char *p, const char *end)
 			break;
 		if (meta.mime == NULL)
 			kitty_clipboard_write_commit(wp, end);
-		else if (kitty_clipboard_write_data(kc, meta.mime,
-		    payload) != 0)
-			kitty_clipboard_write_fail(wp, "EINVAL", end);
+		else if ((status = kitty_clipboard_write_data(kc, meta.mime,
+		    payload)) != NULL)
+			kitty_clipboard_write_fail(wp, status, end);
 		break;
 	case KITTY_CLIPBOARD_WALIAS:
 		if (kc == NULL || !kc->active)
@@ -867,13 +933,14 @@ kitty_clipboard_collect(struct kitty_clipboard_request *r, const char *mime,
 void
 kitty_clipboard_reply(struct client *c, const char *buf, size_t len)
 {
+	struct kitty_clipboard		*kc;
 	struct kitty_clipboard_request	*r;
 	struct window_pane		*wp;
 	struct evbuffer			*evb;
 	char				*copy, *metadata, *record, *value;
 	char				*payload, *next;
 	const char			*type = "", *status = "", *id = "";
-	const char			*mime = NULL;
+	const char			*mime = NULL, *pw = NULL;
 	int				 first = 1, done;
 
 	copy = xstrndup(buf, len);
@@ -894,6 +961,8 @@ kitty_clipboard_reply(struct client *c, const char *buf, size_t len)
 			id = value;
 		else if (strcmp(record, "mime") == 0)
 			mime = value;
+		else if (strcmp(record, "pw") == 0)
+			pw = value;
 	}
 	log_debug("%s: %s type=%s status=%s id=%s", __func__, c->name, type,
 	    status, id);
@@ -906,9 +975,15 @@ kitty_clipboard_reply(struct client *c, const char *buf, size_t len)
 			wp = c->session->curw->window->active;
 		if (wp == NULL || (~wp->screen->mode & MODE_PASTE_EVENTS))
 			goto out;
+		if (pw != NULL && strcmp(status, "OK") == 0) {
+			kc = kitty_clipboard_get(wp);
+			free(kc->paste_pw);
+			kc->paste_pw = xstrdup(pw);
+			kc->paste_client = c;
+		}
 	} else {
 		TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
-			if (strcmp(r->id, id) == 0)
+			if (r->c == c && strcmp(r->id, id) == 0)
 				break;
 		}
 		if (r == NULL)
@@ -980,6 +1055,7 @@ kitty_clipboard_free(struct window_pane *wp)
 	}
 	if (wp->kitty_clipboard != NULL) {
 		kitty_clipboard_reset(wp->kitty_clipboard);
+		free(wp->kitty_clipboard->paste_pw);
 		free(wp->kitty_clipboard);
 		wp->kitty_clipboard = NULL;
 	}
@@ -1001,4 +1077,32 @@ kitty_clipboard_client_lost(struct client *c)
 		}
 		kitty_clipboard_free_request(r);
 	}
+	RB_FOREACH(wp, window_pane_tree, &all_window_panes) {
+		if (wp->kitty_clipboard != NULL &&
+		    wp->kitty_clipboard->paste_client == c)
+			wp->kitty_clipboard->paste_client = NULL;
+	}
+}
+
+/* Forget a write transaction when the terminal is reset. */
+void
+kitty_clipboard_reset_pane(struct window_pane *wp)
+{
+	if (wp->kitty_clipboard != NULL)
+		kitty_clipboard_reset(wp->kitty_clipboard);
+}
+
+/* Is this client waiting for a reply or a paste event? */
+int
+kitty_clipboard_waiting(struct client *c)
+{
+	struct kitty_clipboard_request	*r;
+
+	if (c->tty.mode & MODE_PASTE_EVENTS)
+		return (1);
+	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
+		if (r->c == c)
+			return (1);
+	}
+	return (0);
 }

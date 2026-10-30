@@ -88,6 +88,34 @@ check "\\033]5522;type=wdata\\033\\\\\
 \\033]5522;type=write:bad\\033\\\\" '' "data without a write"
 [ "$($TMUX show-buffer)" = one ] || fail "buffer from failed write"
 
+# A write is forgotten when the pane is respawned or reset.
+$TMUX respawn-pane -k -t kc: "printf '\\033]5522;type=write:id=old\\033\\\\\
+\\033]5522;type=wdata:mime=$PLAIN;c2VjcmV0\\033\\\\\\033]2;begun\\007'; \
+    sleep 100" || exit 1
+wait_for_output begun $TMUX display -p '#{pane_title}' || exit 1
+check "\\033]5522;type=wdata\\033\\\\" '' "write ended after respawn"
+check "\\033]5522;type=write:id=w7\\033\\\\\
+\\033]5522;type=wdata:mime=$PLAIN;c2VjcmV0\\033\\\\\
+\\033c\\033]5522;type=wdata\\033\\\\" '' "write ended after reset"
+[ "$($TMUX show-buffer)" = one ] || fail "buffer from forgotten write"
+
+# A write over 64 MB is too big and the rest of it is ignored.
+cat >$TMP/big.awk <<'EOF2'
+BEGIN {
+	for (i = 0; i < 1024; i++)
+		s = s "QUFB"
+	printf "\033]5522;type=write:id=big\033\\"
+	for (i = 0; i < 22000; i++)
+		printf "\033]5522;type=wdata:mime=dGV4dC9wbGFpbg==;%s\033\\", s
+	printf "\033]5522;type=wdata\033\\\033[?5522$p"
+}
+EOF2
+: >$TMP/out
+$TMUX respawn-pane -k -t kc: "stty raw -echo; awk -f $TMP/big.awk; \
+    exec cat -v >$TMP/out" || exit 1
+wait_for_output '^[]5522;type=write:status=EFBIG:id=big^[\^[[?5522;2$y' \
+    cat $TMP/out || fail "write too big"
+
 # Reads are answered from the newest buffer by default.
 $TMUX set-buffer 'from buffer' || exit 1
 check "\\033]5522;type=read:id=r1:loc=primary;LiB0ZXh0L3BsYWlu\\007" \

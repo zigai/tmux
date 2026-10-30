@@ -1423,6 +1423,8 @@ input_esc_dispatch(struct input_ctx *ictx)
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
 		colour_palette_clear(ictx->palette);
+		if (ictx->wp != NULL)
+			kitty_clipboard_reset_pane(ictx->wp);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
 		screen_write_fullredraw(sctx);
