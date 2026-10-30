@@ -85,6 +85,8 @@ static int	tty_keys_kitty_colours(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_winsz(struct tty *, const char *, size_t, size_t *,
 		    int);
+static int	tty_keys_notification(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_next1(struct tty *, const char *, size_t,
 		    struct tty_key_parse *, int);
 
@@ -102,6 +104,7 @@ static const struct {
 	{ KEYC_REPORT_PALETTE, tty_keys_palette },
 	{ KEYC_REPORT_KITTY_COLOURS, tty_keys_kitty_colours },
 	{ KEYC_REPORT_WINSZ, tty_keys_winsz },
+	{ KEYC_REPORT_NOTIFICATION, tty_keys_notification },
 #ifdef ENABLE_IMAGES
 	{ KEYC_REPORT_KITTY_GRAPHICS, tty_keys_kitty_graphics }
 #endif
@@ -1406,6 +1409,44 @@ tty_keys_clipboard(struct tty *tty, const char *buf, size_t len, size_t *size,
 	}
 
 	free(out);
+	return (0);
+}
+
+/*
+ * Handle OSC 99 notification replies. Returns 0 for success, -1 for failure, 1
+ * for partial.
+ */
+static int
+tty_keys_notification(struct tty *tty, const char *buf, size_t len,
+    size_t *size, int apply)
+{
+	static const char	 prefix[] = "\033]99;";
+	size_t			 i, end, terminator = 0;
+
+	*size = 0;
+	for (i = 0; i < (sizeof prefix) - 1; i++) {
+		if (i == len)
+			return (1);
+		if (buf[i] != prefix[i])
+			return (-1);
+	}
+	for (end = i; end < len; end++) {
+		if (buf[end] == '\007') {
+			terminator = 1;
+			break;
+		}
+		if (end > i && buf[end - 1] == '\033' && buf[end] == '\\') {
+			terminator = 2;
+			break;
+		}
+	}
+	if (end == len)
+		return (1);
+	*size = end + 1;
+	if (apply) {
+		notification_terminal_reply(tty->client, buf + i,
+		    end + 1 - terminator - i);
+	}
 	return (0);
 }
 

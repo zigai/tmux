@@ -69,6 +69,7 @@ struct menu_data;
 struct mode_tree_data;
 struct mouse_event;
 struct mouse_motion_state;
+struct notifications;
 struct options;
 struct options_array_item;
 struct options_entry;
@@ -468,6 +469,7 @@ enum {
 	KEYC_REPORT_PALETTE,
 	KEYC_REPORT_KITTY_COLOURS,
 	KEYC_REPORT_WINSZ,
+	KEYC_REPORT_NOTIFICATION,
 
 	/* Mouse state. */
 	KEYC_MOUSE, /* unclassified mouse event */
@@ -718,6 +720,9 @@ enum tty_code_code {
 	TTYC_SMUL,
 	TTYC_SMULX,
 	TTYC_SMXX,
+	TTYC_SNOT9,
+	TTYC_SNOT99,
+	TTYC_SNOT777,
 	TTYC_SPB,
 	TTYC_SPTR,
 	TTYC_SXL,
@@ -1501,6 +1506,7 @@ struct window_pane {
 	struct event	 sync_timer;
 
 	struct input_ctx *ictx;
+	struct notifications *notifications;
 
 	struct grid_cell cached_gc;
 	struct grid_cell cached_active_gc;
@@ -1971,11 +1977,13 @@ struct tty {
 #define TTY_WINSZPIXELS 0x40000
 #define TTY_WINSZAPPLY 0x80000
 #define TTY_MOUSEPOSITION 0x100000
+#define TTY_NOTIFICATIONQUERY 0x200000
 #define TTY_ALL_REQUEST_FLAGS \
 	(TTY_HAVEDA|TTY_HAVEDA2|TTY_HAVEXDA|TTY_HAVESYNC|TTY_HAVEKITTYGRAPHICS)
 	int		 flags;
 
 	struct tty_term	*term;
+	char		*notification_caps;
 
 	u_int		 mouse_last_x;
 	u_int		 mouse_last_y;
@@ -4251,6 +4259,13 @@ void		 mouse_motion_free(struct client *);
 
 /* window-customize.c */
 extern const struct window_mode window_customize_mode;
+
+/* notification.c */
+void	 notification_osc9(struct window_pane *, const char *);
+void	 notification_osc777(struct window_pane *, const char *, const char *);
+char	*notification_osc99(struct window_pane *, const char *, const char *);
+void	 notification_terminal_reply(struct client *, const char *, size_t);
+void	 notification_free(struct window_pane *);
 
 /* names.c */
 void	 check_window_name(struct window *);

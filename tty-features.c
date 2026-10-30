@@ -71,6 +71,39 @@ static const struct tty_feature tty_feature_osc7 = {
 	0
 };
 
+/* Terminal has OSC 777 desktop notifications. */
+static const char *const tty_feature_osc777_capabilities[] = {
+	"Snot777=\\E]777;notify;%p1%s;%p2%s\\E\\\\",
+	NULL
+};
+static const struct tty_feature tty_feature_osc777 = {
+	"osc777",
+	tty_feature_osc777_capabilities,
+	0
+};
+
+/* Terminal has OSC 9 desktop notifications. */
+static const char *const tty_feature_osc9_capabilities[] = {
+	"Snot9=\\E]9;%p1%s\\E\\\\",
+	NULL
+};
+static const struct tty_feature tty_feature_osc9 = {
+	"osc9",
+	tty_feature_osc9_capabilities,
+	0
+};
+
+/* Terminal has kitty OSC 99 desktop notifications. */
+static const char *const tty_feature_osc99_capabilities[] = {
+	"Snot99=\\E]99;%p1%s;%p2%s\\E\\\\",
+	NULL
+};
+static const struct tty_feature tty_feature_osc99 = {
+	"osc99",
+	tty_feature_osc99_capabilities,
+	0
+};
+
 /* Terminal has mouse support. */
 static const char *const tty_feature_mouse_capabilities[] = {
 	"kmous=\\E[M",
@@ -445,6 +478,9 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_margins,
 	&tty_feature_mouse,
 	&tty_feature_osc7,
+	&tty_feature_osc777,
+	&tty_feature_osc9,
+	&tty_feature_osc99,
 	&tty_feature_overline,
 	&tty_feature_pointershape,
 	&tty_feature_progressbar,
@@ -699,6 +735,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "overline,"
 			      "hyperlinks,"
 			      "osc7,"
+			      "osc777,"
+			      "osc9,"
 			      "sync,"
 			      "usstyle,"
 			      "progressbar,"
@@ -715,6 +753,9 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "imagescroll,"
 			      "osc7,"
 			      "pointershape,"
+			      "osc777,"
+			      "osc9,"
+			      "osc99,"
 			      "sync,"
 			      "usstyle,"
 			      "kittycolours,"

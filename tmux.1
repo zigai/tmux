@@ -5399,6 +5399,12 @@ Supports
 mouse sequences.
 .It osc7
 Supports the OSC 7 working directory extension.
+.It osc777
+Supports OSC 777 desktop notifications.
+.It osc9
+Supports OSC 9 desktop notifications.
+.It osc99
+Supports the kitty OSC 99 desktop notification protocol.
 .It overline
 Supports the overline SGR attribute.
 .It pointershape
@@ -9360,6 +9366,14 @@ $ printf \[aq]\e033[4 q\[aq]
 If
 .Em Se
 is not set, \&Ss with argument 0 will be used to reset the cursor style instead.
+.It Em \&Snot9 , \&Snot777 , \&Snot99
+Send a desktop notification with OSC 9, OSC 777 or OSC 99.
+.Em Snot9
+takes the message,
+.Em Snot777
+the title and body and
+.Em Snot99
+the metadata and payload.
 .It Em \&Spb
 Set the state and progress for the OSC9;4 progress bar.
 .It Em \&Sptr
