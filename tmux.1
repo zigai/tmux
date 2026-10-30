@@ -5127,7 +5127,7 @@ and
 .Ic client_key_mode
 variables.
 .It Xo Ic extended\-keys\-format
-.Op Cm csi\-u | xterm | kitty
+.Op Cm csi\-u | xterm
 .Xc
 Selects the format for reporting modified keys to programs which request
 .Ic modifyOtherKeys .
@@ -5143,11 +5143,6 @@ and as
 .Ql \[ha][[65;6u
 when set to
 .Cm csi\-u .
-.Cm kitty
-is accepted for compatibility and is the same as
-.Cm csi\-u ;
-programs which request the Kitty keyboard protocol receive it whatever this
-option is set to.
 .It Xo Ic focus\-events
 .Op Cm on | off
 .Xc

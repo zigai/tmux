@@ -837,9 +837,7 @@ enum tty_code_code {
 #define EXTENDED_KEY_MODES (MODE_KEYS_EXTENDED|MODE_KEYS_EXTENDED_2)
 
 /* Extended key output formats. */
-#define EXTENDED_KEYS_CSI_U 0
 #define EXTENDED_KEYS_XTERM 1
-#define EXTENDED_KEYS_KITTY 2
 
 /* Kitty keyboard protocol flags. */
 #define KITTY_KEY_DISAMBIGUATE 0x1
@@ -851,7 +849,6 @@ enum tty_code_code {
 
 /* Kitty keyboard protocol event types. */
 #define KITTY_EVENT_PRESS 1
-#define KITTY_EVENT_REPEAT 2
 #define KITTY_EVENT_RELEASE 3
 
 /* Kitty keyboard protocol modifier bits. */
