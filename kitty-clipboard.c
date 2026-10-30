@@ -465,17 +465,22 @@ kitty_clipboard_get(struct window_pane *wp)
 	return (wp->kitty_clipboard);
 }
 
-/* Is a request from this pane waiting for a reply? */
-static int
-kitty_clipboard_pending(struct window_pane *wp)
+/*
+ * A pane has one request at a time, so a new request fails the one still
+ * waiting for the terminal.
+ */
+static void
+kitty_clipboard_cancel(struct window_pane *wp)
 {
-	struct kitty_clipboard_request	*r;
+	struct kitty_clipboard_request	*r, *r1;
 
-	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
-		if (r->pane == wp->id)
-			return (1);
+	TAILQ_FOREACH_SAFE(r, &kitty_clipboard_requests, entry, r1) {
+		if (r->pane != wp->id)
+			continue;
+		kitty_clipboard_status(wp, r->write ? "write" : "read",
+		    r->pane_id, "EBUSY", r->end);
+		kitty_clipboard_free_request(r);
 	}
-	return (0);
 }
 
 /* Fail a write transaction. */
@@ -655,10 +660,7 @@ kitty_clipboard_write_commit(struct window_pane *wp, const char *end)
 		kitty_clipboard_write_fail(wp, "EINVAL", end);
 		return;
 	}
-	if (kitty_clipboard_pending(wp)) {
-		kitty_clipboard_write_fail(wp, "EBUSY", end);
-		return;
-	}
+	kitty_clipboard_cancel(wp);
 	text = kitty_clipboard_find_text(kc);
 
 	TAILQ_FOREACH(c, &clients, entry) {
@@ -784,10 +786,10 @@ kitty_clipboard_read(struct window_pane *wp,
 	if ((mimes = kitty_clipboard_decode_string(payload)) == NULL)
 		return;
 
+	kitty_clipboard_cancel(wp);
 	state = options_get_number(global_options, "get-clipboard");
-	if (state == 0 || kitty_clipboard_pending(wp)) {
-		kitty_clipboard_status(wp, "read", meta->id,
-		    state == 0 ? "EPERM" : "EBUSY", end);
+	if (state == 0) {
+		kitty_clipboard_status(wp, "read", meta->id, "EPERM", end);
 		free(mimes);
 		return;
 	}

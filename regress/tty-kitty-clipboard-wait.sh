@@ -1,11 +1,11 @@
 #!/bin/sh
 
 # Kitty clipboard protocol (OSC 5522) requests waiting for the terminal: only
-# the client a request was sent to may answer it, a pane has one request at a
-# time, a reply split over two reads is not taken as keys, and a request is
-# failed when its client goes. The client which answers runs in a pane of a
-# second server, which itself asks a third server; stopping the third keeps
-# requests waiting.
+# the client a request was sent to may answer it, a new request from a pane
+# fails its older one, a reply split over two reads is not taken as keys, and
+# a request is failed when its client goes. The client which answers runs in
+# a pane of a second server, which itself asks a third server; stopping the
+# third keeps requests waiting.
 
 . ./regress-common.inc
 
@@ -97,27 +97,42 @@ kill -CONT $stopped || exit 1
 wait_for_output '^[]5522;type=write:status=DONE:id=w1^[\' cat $TMP/out ||
     fail "reply not from first client"
 
-# While a read waits, another request from the pane is busy. A reply split
-# over two reads is still a reply, and the request fails when its client
-# goes.
+# A new request from the pane fails the one still waiting, so the pane is
+# never left busy.
 kill -STOP $stopped || exit 1
 check "\\033]5522;type=read:id=r1;$PLAIN\\033\\\\\
-\\033]5522;type=read:id=r2;$PLAIN\\033\\\\" \
-    '^[]5522;type=read:status=EBUSY:id=r2^[\' "second read"
-wait_for_text "$(printf '\033]5522;type=read:id=tmux-')" cat $TMP/first ||
-    fail "read not sent"
+\\033]5522;type=write:id=w2\\033\\\\\
+\\033]5522;type=wdata:mime=$PLAIN;dHdv\\033\\\\\
+\\033]5522;type=wdata\\033\\\\" \
+    '^[]5522;type=read:status=EBUSY:id=r1^[\' "read failed by write"
+wait_for_text "$(printf '\033]5522;type=wdata\033\\')" cat $TMP/first ||
+    fail "write not sent"
+kill -CONT $stopped || exit 1
+wait_for_output '^[]5522;type=read:status=EBUSY:id=r1^[\'\
+'^[]5522;type=write:status=DONE:id=w2^[\' cat $TMP/out ||
+    fail "write after failed read"
+
+# A reply split over two reads is still a reply, and the request fails when
+# its client goes.
+kill -STOP $stopped || exit 1
+: >$TMP/first
+check "\\033]5522;type=read:id=r3;$PLAIN\\033\\\\\
+\\033]5522;type=read:id=r4;$PLAIN\\033\\\\" \
+    '^[]5522;type=read:status=EBUSY:id=r3^[\' "read failed by read"
+wait_for_output 2 eval "grep -ao 'type=read:id=tmux-' $TMP/first | wc -l |
+    tr -d ' '" || fail "reads not sent"
 id=$(sent_id read first)
 $TMUX2 send-keys -t t: -l "$(printf '\033]5522;type=read:status=OK:id=%s' $id)" ||
     exit 1
 sleep 0.2
 $TMUX2 send-keys -t t: -l "$(printf '\033\\')" || exit 1
-wait_for_output '^[]5522;type=read:status=EBUSY:id=r2^[\'\
-'^[]5522;type=read:status=OK:id=r1^[\' cat $TMP/out ||
+wait_for_output '^[]5522;type=read:status=EBUSY:id=r3^[\'\
+'^[]5522;type=read:status=OK:id=r4^[\' cat $TMP/out ||
     fail "split reply"
 $TMUX2 respawn-pane -k -t t: "sleep 100" || exit 1
-wait_for_output '^[]5522;type=read:status=EBUSY:id=r2^[\'\
-'^[]5522;type=read:status=OK:id=r1^[\'\
-'^[]5522;type=read:status=EBUSY:id=r1^[\' cat $TMP/out ||
+wait_for_output '^[]5522;type=read:status=EBUSY:id=r3^[\'\
+'^[]5522;type=read:status=OK:id=r4^[\'\
+'^[]5522;type=read:status=EBUSY:id=r4^[\' cat $TMP/out ||
     fail "request not failed when client went"
 
 exit 0
