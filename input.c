@@ -75,6 +75,29 @@ struct input_request {
 };
 #define INPUT_REQUEST_TIMEOUT 500
 
+/* OSC 21 reply, which may be waiting for palette colours from a client. */
+struct input_colours_item {
+	int	 idx;
+	char	*text;
+};
+struct input_colours_reply {
+	struct input_colours_item	*items;
+	u_int				 n;
+};
+
+/* Colours saved by OSC 30001. */
+struct input_saved_colours {
+	int	 fg;
+	int	 bg;
+	int	 ccolour;
+	int	*palette;
+	char	*colours[SCREEN_COLOURS];
+};
+#define INPUT_COLOUR_STACK_SIZE 10
+
+/* Most keys in one OSC 21, each colour set and queried once. */
+#define INPUT_COLOURS_MAX_KEYS (2 * (256 + 3 + SCREEN_COLOURS))
+
 /* Input parser cell. */
 struct input_cell {
 	struct grid_cell	cell;
@@ -138,6 +161,9 @@ struct input_ctx {
 	u_int				 request_count;
 	struct event			 request_timer;
 
+	struct input_saved_colours	*colour_stack;
+	u_int				 colour_stack_len;
+
 	/*
 	 * All input received since we were last in the ground state. Sent to
 	 * control clients on connection.
@@ -157,7 +183,7 @@ static struct input_request *input_make_request(struct input_ctx *,
 		    enum input_request_type);
 static void	input_free_request(struct input_request *);
 static int	input_add_request(struct input_ctx *, enum input_request_type,
-		    int);
+		    int, void *);
 static int	input_split(struct input_ctx *);
 static int	input_get(struct input_ctx *, u_int, int, int);
 static void	input_set_state(struct input_ctx *,
@@ -172,6 +198,7 @@ static void	input_osc_9_9(struct input_ctx *, const char *);
 static void	input_osc_10(struct input_ctx *, const char *);
 static void	input_osc_11(struct input_ctx *, const char *);
 static void	input_osc_12(struct input_ctx *, const char *);
+static void	input_osc_21(struct input_ctx *, const char *);
 static void	input_osc_22(struct input_ctx *, const char *);
 static void	input_osc_52(struct input_ctx *, const char *);
 static void	input_osc_104(struct input_ctx *, const char *);
@@ -179,6 +206,12 @@ static void	input_osc_110(struct input_ctx *, const char *);
 static void	input_osc_111(struct input_ctx *, const char *);
 static void	input_osc_112(struct input_ctx *, const char *);
 static void	input_osc_133(struct input_ctx *, const char *);
+static void	input_osc_30001(struct input_ctx *);
+static void	input_osc_30101(struct input_ctx *);
+static void	input_free_colour_stack(struct input_ctx *);
+static void	input_free_colours_reply(struct input_colours_reply *);
+static void	input_send_colours_reply(struct input_ctx *,
+		    struct input_colours_reply *, int, enum input_end_type);
 
 /* Transition entry/exit handlers. */
 static void	input_clear(struct input_ctx *);
@@ -915,6 +948,7 @@ input_free(struct input_ctx *ictx)
 	TAILQ_FOREACH_SAFE(ir, &ictx->requests, entry, ir1)
 		input_free_request(ir);
 	event_del(&ictx->request_timer);
+	input_free_colour_stack(ictx);
 
 	free(ictx->input_buf);
 #ifdef ENABLE_IMAGES
@@ -945,6 +979,8 @@ input_reset(struct input_ctx *ictx, int clear)
 		sctx->flags |= SCREEN_WRITE_INPUT;
 		screen_write_reset(sctx);
 		screen_write_stop(sctx);
+		screen_clear_colours(&wp->base);
+		input_free_colour_stack(ictx);
 	}
 
 	input_clear(ictx);
@@ -1427,6 +1463,8 @@ input_esc_dispatch(struct input_ctx *ictx)
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
 		colour_palette_clear(ictx->palette);
+		screen_clear_colours(sctx->s);
+		input_free_colour_stack(ictx);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
 #ifdef ENABLE_IMAGES
@@ -2801,6 +2839,9 @@ input_exit_osc(struct input_ctx *ictx)
 	case 12:
 		input_osc_12(ictx, p);
 		break;
+	case 21:
+		input_osc_21(ictx, p);
+		break;
 	case 22:
 		input_osc_22(ictx, p);
 		break;
@@ -2821,6 +2862,12 @@ input_exit_osc(struct input_ctx *ictx)
 		break;
 	case 133:
 		input_osc_133(ictx, p);
+		break;
+	case 30001:
+		input_osc_30001(ictx);
+		break;
+	case 30101:
+		input_osc_30101(ictx);
 		break;
 	default:
 		log_debug("%s: unknown '%u'", __func__, option);
@@ -3013,7 +3060,8 @@ input_osc_4(struct input_ctx *ictx, const char *p)
 				s = next;
 				continue;
 			}
-			input_add_request(ictx, INPUT_REQUEST_PALETTE, idx);
+			input_add_request(ictx, INPUT_REQUEST_PALETTE, idx,
+			    NULL);
 			s = next;
 			continue;
 		}
@@ -3181,25 +3229,35 @@ bad:
 	log_debug("bad OSC 9;4 %s", p);
 }
 
+/* Get the foreground colour of a pane. */
+static int
+input_get_fg(struct window_pane *wp)
+{
+	struct grid_cell	 defaults;
+	int			 c;
+
+	c = window_pane_get_fg_control_client(wp);
+	if (c == -1) {
+		tty_default_colours(&defaults, wp, NULL);
+		if (COLOUR_DEFAULT(defaults.fg))
+			c = window_pane_get_fg(wp);
+		else
+			c = defaults.fg;
+	}
+	return (c);
+}
+
 /* Handle the OSC 10 sequence for setting and querying foreground colour. */
 static void
 input_osc_10(struct input_ctx *ictx, const char *p)
 {
 	struct window_pane	*wp = ictx->wp;
-	struct grid_cell	 defaults;
 	int			 c;
 
 	if (strcmp(p, "?") == 0) {
 		if (wp == NULL)
 			return;
-		c = window_pane_get_fg_control_client(wp);
-		if (c == -1) {
-			tty_default_colours(&defaults, wp, NULL);
-			if (COLOUR_DEFAULT(defaults.fg))
-				c = window_pane_get_fg(wp);
-			else
-				c = defaults.fg;
-		}
+		c = input_get_fg(wp);
 		input_osc_colour_reply(ictx, 1, 10, 0, c, ictx->input_end);
 		return;
 	}
@@ -3385,6 +3443,416 @@ input_osc_22(struct input_ctx *ictx, const char *p)
 			screen_push_pointer_shape(s, shape);
 	}
 	free(copy);
+}
+
+/* Format a colour for OSC 21, empty if it is not known. */
+static void
+input_format_colour(int c, char *buf, size_t len)
+{
+	u_char	r, g, b;
+
+	if (c != -1)
+		c = colour_force_rgb(c);
+	if (c == -1) {
+		*buf = '\0';
+		return;
+	}
+	colour_split_rgb(c, &r, &g, &b);
+	xsnprintf(buf, len, "rgb:%02hhx/%02hhx/%02hhx", r, g, b);
+}
+
+/* Add an item to an OSC 21 reply. */
+static void printflike(3, 4)
+input_add_colours_item(struct input_colours_reply *icr, int idx,
+    const char *fmt, ...)
+{
+	struct input_colours_item	*item;
+	va_list				 ap;
+
+	icr->items = xreallocarray(icr->items, icr->n + 1, sizeof *icr->items);
+	item = &icr->items[icr->n++];
+	item->idx = idx;
+
+	va_start(ap, fmt);
+	xvasprintf(&item->text, fmt, ap);
+	va_end(ap);
+}
+
+/* Add a colour to an OSC 21 reply. */
+static void
+input_add_colours_colour(struct input_colours_reply *icr, const char *key,
+    int c)
+{
+	char	tmp[32];
+
+	input_format_colour(c, tmp, sizeof tmp);
+	input_add_colours_item(icr, -1, "%s=%s", key, tmp);
+}
+
+/* Add an unknown key to an OSC 21 reply, base64 encoded without padding. */
+static void
+input_add_colours_unknown(struct input_colours_reply *icr, const char *key)
+{
+	size_t	 len = strlen(key), size;
+	char	*out;
+
+	size = 4 * ((len + 2) / 3) + 1;
+	out = xmalloc(size);
+	if (b64_ntop(key, len, out, size) == -1) {
+		free(out);
+		return;
+	}
+	out[strcspn(out, "=")] = '\0';
+	input_add_colours_item(icr, -1, "unknown=%s", out);
+	free(out);
+}
+
+/* Free an OSC 21 reply. */
+static void
+input_free_colours_reply(struct input_colours_reply *icr)
+{
+	u_int	i;
+
+	for (i = 0; i < icr->n; i++)
+		free(icr->items[i].text);
+	free(icr->items);
+	free(icr);
+}
+
+/* Send an OSC 21 reply. Palette colours not received are left empty. */
+static void
+input_send_colours_reply(struct input_ctx *ictx,
+    struct input_colours_reply *icr, int add, enum input_end_type end_type)
+{
+	char	*reply, *cp;
+	size_t	 size, len;
+	u_int	 i;
+
+	size = sizeof "\033]21";
+	for (i = 0; i < icr->n; i++)
+		size += 1 + strlen(icr->items[i].text);
+	cp = reply = xmalloc(size);
+	memcpy(cp, "\033]21", 4);
+	cp += 4;
+	for (i = 0; i < icr->n; i++) {
+		len = strlen(icr->items[i].text);
+		*cp++ = ';';
+		memcpy(cp, icr->items[i].text, len);
+		cp += len;
+	}
+	*cp = '\0';
+
+	if (end_type == INPUT_END_BEL)
+		input_reply(ictx, add, "%s\007", reply);
+	else
+		input_reply(ictx, add, "%s\033\\", reply);
+	free(reply);
+}
+
+/*
+ * Fill in a palette colour an OSC 21 reply is waiting for. Returns -1 if the
+ * reply is not waiting for this colour, 0 if it is waiting for more and 1 if
+ * it is complete.
+ */
+static int
+input_fill_colours_reply(struct input_colours_reply *icr,
+    struct input_request_palette_data *pd)
+{
+	struct input_colours_item	*item;
+	char				 tmp[32];
+	u_int				 i;
+	int				 found = 0, pending = 0;
+
+	input_format_colour(pd->c, tmp, sizeof tmp);
+	for (i = 0; i < icr->n; i++) {
+		item = &icr->items[i];
+		if (item->idx == -1)
+			continue;
+		if (item->idx != pd->idx) {
+			pending = 1;
+			continue;
+		}
+		free(item->text);
+		xasprintf(&item->text, "%d=%s", item->idx, tmp);
+		item->idx = -1;
+		found = 1;
+	}
+	if (!found)
+		return (-1);
+	return (pending ? 0 : 1);
+}
+
+/* Parse a colour for OSC 21. An empty value is the default colour, -1. */
+static int
+input_osc_21_colour(const char *value, int *c)
+{
+	if (value == NULL || *value == '\0') {
+		*c = -1;
+		return (0);
+	}
+	*c = colour_parseX11(value);
+	return (*c == -1 ? -1 : 0);
+}
+
+/* Set a colour passed to the outer terminal with OSC 21. */
+static void
+input_osc_21_set(struct screen *s, u_int idx, const char *key,
+    const char *value, const char *alpha)
+{
+	char		 tmp[32], *end, *set;
+	double		 opacity;
+	int		 c;
+
+	if (value == NULL || *value == '\0') {
+		screen_set_colour(s, idx, value);
+		return;
+	}
+	if ((c = colour_parseX11(value)) == -1)
+		return;
+	input_format_colour(c, tmp, sizeof tmp);
+
+	if (alpha == NULL ||
+	    strncmp(key, "transparent_background_color", 28) != 0) {
+		screen_set_colour(s, idx, tmp);
+		return;
+	}
+	opacity = strtod(alpha, &end);
+	if (*alpha == '\0' || *end != '\0' || !(opacity >= 0)) {
+		screen_set_colour(s, idx, tmp);
+		return;
+	}
+	if (opacity > 1)
+		opacity = 1;
+	xasprintf(&set, "%s@%.4f", tmp, opacity);
+	screen_set_colour(s, idx, set);
+	free(set);
+}
+
+/* Handle the OSC 21 sequence for Kitty colour control. */
+static void
+input_osc_21(struct input_ctx *ictx, const char *p)
+{
+	struct window_pane		*wp = ictx->wp;
+	struct screen			*s = ictx->ctx.s;
+	struct colour_palette		*palette = ictx->palette;
+	struct input_colours_reply	*icr;
+	char				*copy, *next, *key, *value, *alpha;
+	const char			*errstr;
+	size_t				 len;
+	int				 c, idx, query, redraw = 0, pending = 0;
+	u_int				 keys = 1;
+
+	for (len = 0; p[len] != '\0'; len++) {
+		if (p[len] == ';')
+			keys++;
+	}
+	if (keys > INPUT_COLOURS_MAX_KEYS) {
+		log_debug("%s: too many keys (%u)", __func__, keys);
+		return;
+	}
+
+	icr = xcalloc(1, sizeof *icr);
+	copy = next = xstrdup(p);
+	while ((key = strsep(&next, ";")) != NULL) {
+		if (*key == '\0')
+			continue;
+		alpha = NULL;
+		if ((value = strchr(key, '=')) != NULL) {
+			*value++ = '\0';
+			while (*value == ' ')
+				value++;
+			len = strlen(value);
+			while (len != 0 && value[len - 1] == ' ')
+				value[--len] = '\0';
+			if ((alpha = strchr(value, '@')) != NULL)
+				*alpha++ = '\0';
+		}
+		query = (value != NULL && strcmp(value, "?") == 0);
+
+		if (strcmp(key, "foreground") == 0) {
+			if (query) {
+				c = (wp == NULL ? -1 : input_get_fg(wp));
+				input_add_colours_colour(icr, key, c);
+			} else if (palette != NULL &&
+			    input_osc_21_colour(value, &c) == 0) {
+				palette->fg = (c == -1 ? 8 : c);
+				if (wp != NULL)
+					wp->flags |= PANE_STYLECHANGED;
+				redraw = 1;
+			}
+			continue;
+		}
+		if (strcmp(key, "background") == 0) {
+			if (query) {
+				c = (wp == NULL ? -1 : window_pane_get_bg(wp));
+				input_add_colours_colour(icr, key, c);
+			} else if (palette != NULL &&
+			    input_osc_21_colour(value, &c) == 0) {
+				palette->bg = (c == -1 ? 8 : c);
+				if (wp != NULL) {
+					wp->flags |= (PANE_STYLECHANGED|
+					    PANE_THEMECHANGED);
+				}
+				redraw = 1;
+			}
+			continue;
+		}
+		if (strcmp(key, "cursor") == 0) {
+			if (query) {
+				c = s->ccolour;
+				if (c == -1)
+					c = s->default_ccolour;
+				input_add_colours_colour(icr, key, c);
+			} else if (input_osc_21_colour(value, &c) == 0)
+				screen_set_cursor_colour(s, c);
+			continue;
+		}
+
+		if (key[strspn(key, "0123456789")] == '\0') {
+			idx = strtonum(key, 0, 255, &errstr);
+			if (errstr != NULL) {
+				input_add_colours_unknown(icr, key);
+				continue;
+			}
+			if (query) {
+				c = colour_palette_get(palette,
+				    idx|COLOUR_FLAG_256);
+				if (c != -1)
+					input_add_colours_colour(icr, key, c);
+				else {
+					input_add_colours_item(icr, idx, "%d=",
+					    idx);
+					pending = 1;
+				}
+			} else if (input_osc_21_colour(value, &c) == 0 &&
+			    colour_palette_set(palette, idx, c))
+				redraw = 1;
+			continue;
+		}
+
+		if ((idx = screen_find_colour(key)) != -1) {
+			if (!query)
+				input_osc_21_set(s, idx, key, value, alpha);
+			else if (s->colours == NULL || s->colours[idx] == NULL)
+				input_add_colours_item(icr, -1, "%s=", key);
+			else {
+				input_add_colours_item(icr, -1, "%s=%s", key,
+				    s->colours[idx]);
+			}
+			continue;
+		}
+
+		input_add_colours_unknown(icr, key);
+	}
+	free(copy);
+
+	if (redraw)
+		screen_write_fullredraw(&ictx->ctx);
+
+	if (icr->n == 0) {
+		input_free_colours_reply(icr);
+		return;
+	}
+	if (pending && input_add_request(ictx, INPUT_REQUEST_COLOURS, -1,
+	    icr) == 0)
+		return;
+	input_send_colours_reply(ictx, icr, 1, ictx->input_end);
+	input_free_colours_reply(icr);
+}
+
+/* Free saved colours. */
+static void
+input_free_saved_colours(struct input_saved_colours *sc)
+{
+	u_int	i;
+
+	free(sc->palette);
+	for (i = 0; i < SCREEN_COLOURS; i++)
+		free(sc->colours[i]);
+	memset(sc, 0, sizeof *sc);
+}
+
+/* Free the colour stack. */
+static void
+input_free_colour_stack(struct input_ctx *ictx)
+{
+	u_int	i;
+
+	for (i = 0; i < ictx->colour_stack_len; i++)
+		input_free_saved_colours(&ictx->colour_stack[i]);
+	free(ictx->colour_stack);
+	ictx->colour_stack = NULL;
+	ictx->colour_stack_len = 0;
+}
+
+/* Handle the OSC 30001 sequence for pushing colours onto the stack. */
+static void
+input_osc_30001(struct input_ctx *ictx)
+{
+	struct colour_palette		*palette = ictx->palette;
+	struct screen			*s = ictx->ctx.s;
+	struct input_saved_colours	*sc;
+	u_int				 i;
+
+	if (palette == NULL)
+		return;
+
+	if (ictx->colour_stack == NULL) {
+		ictx->colour_stack = xcalloc(INPUT_COLOUR_STACK_SIZE,
+		    sizeof *ictx->colour_stack);
+	}
+	if (ictx->colour_stack_len == INPUT_COLOUR_STACK_SIZE) {
+		input_free_saved_colours(&ictx->colour_stack[0]);
+		memmove(&ictx->colour_stack[0], &ictx->colour_stack[1],
+		    (INPUT_COLOUR_STACK_SIZE - 1) * sizeof *ictx->colour_stack);
+		ictx->colour_stack_len--;
+	}
+	sc = &ictx->colour_stack[ictx->colour_stack_len++];
+
+	sc->fg = palette->fg;
+	sc->bg = palette->bg;
+	sc->ccolour = s->ccolour;
+	if (palette->palette != NULL) {
+		sc->palette = xreallocarray(NULL, 256, sizeof *sc->palette);
+		memcpy(sc->palette, palette->palette,
+		    256 * sizeof *sc->palette);
+	} else
+		sc->palette = NULL;
+	for (i = 0; i < SCREEN_COLOURS; i++) {
+		if (s->colours != NULL && s->colours[i] != NULL)
+			sc->colours[i] = xstrdup(s->colours[i]);
+		else
+			sc->colours[i] = NULL;
+	}
+}
+
+/* Handle the OSC 30101 sequence for popping colours from the stack. */
+static void
+input_osc_30101(struct input_ctx *ictx)
+{
+	struct window_pane		*wp = ictx->wp;
+	struct colour_palette		*palette = ictx->palette;
+	struct screen			*s = ictx->ctx.s;
+	struct input_saved_colours	*sc;
+	u_int				 i;
+
+	if (palette == NULL || ictx->colour_stack_len == 0)
+		return;
+	sc = &ictx->colour_stack[--ictx->colour_stack_len];
+
+	palette->fg = sc->fg;
+	palette->bg = sc->bg;
+	free(palette->palette);
+	palette->palette = sc->palette;
+	sc->palette = NULL;
+	screen_set_cursor_colour(s, sc->ccolour);
+	for (i = 0; i < SCREEN_COLOURS; i++)
+		screen_set_colour(s, i, sc->colours[i]);
+	input_free_saved_colours(sc);
+
+	if (wp != NULL)
+		wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
+	screen_write_fullredraw(&ictx->ctx);
 }
 
 /* Parse the OSC 133 D exit status. */
@@ -3606,7 +4074,8 @@ input_osc_52_reply(struct input_ctx *ictx, char clip)
 			input_reply_clipboard(ev, buf, len, "\033\\", clip);
 		return;
 	}
-	input_add_request(ictx, INPUT_REQUEST_CLIPBOARD, ictx->input_end);
+	input_add_request(ictx, INPUT_REQUEST_CLIPBOARD, ictx->input_end,
+	    NULL);
 }
 
 /*
@@ -3773,6 +4242,8 @@ input_request_timer_callback(__unused int fd, __unused short events, void *arg)
 			continue;
 		if (ir->type == INPUT_REQUEST_QUEUE)
 			input_send_reply(ir->ictx, ir->data);
+		else if (ir->type == INPUT_REQUEST_COLOURS)
+			input_send_colours_reply(ictx, ir->data, 0, ir->end);
 		input_free_request(ir);
 	}
 	if (ictx->request_count != 0)
@@ -3818,19 +4289,25 @@ input_free_request(struct input_request *ir)
 	ictx->request_count--;
 	TAILQ_REMOVE(&ictx->requests, ir, entry);
 
-	free(ir->data);
+	if (ir->type == INPUT_REQUEST_COLOURS)
+		input_free_colours_reply(ir->data);
+	else
+		free(ir->data);
 	free(ir);
 }
 
 /* Add a request. */
 static int
-input_add_request(struct input_ctx *ictx, enum input_request_type type, int idx)
+input_add_request(struct input_ctx *ictx, enum input_request_type type, int idx,
+    void *data)
 {
-	struct window_pane	*wp = ictx->wp;
-	struct window		*w;
-	struct client		*c = NULL, *loop;
-	struct input_request	*ir;
-	char			 s[64];
+	struct window_pane		*wp = ictx->wp;
+	struct window			*w;
+	struct client			*c = NULL, *loop;
+	struct input_request		*ir;
+	struct input_colours_reply	*icr = data;
+	char				 s[64];
+	u_int				 i, j;
 
 	if (wp == NULL)
 		return (-1);
@@ -3855,6 +4332,7 @@ input_add_request(struct input_ctx *ictx, enum input_request_type type, int idx)
 	ir->c = c;
 	ir->idx = idx;
 	ir->end = ictx->input_end;
+	ir->data = data;
 	TAILQ_INSERT_TAIL(&c->input_requests, ir, centry);
 
 	switch (type) {
@@ -3864,6 +4342,21 @@ input_add_request(struct input_ctx *ictx, enum input_request_type type, int idx)
 		break;
 	case INPUT_REQUEST_CLIPBOARD:
 		tty_putcode_ss(&c->tty, TTYC_MS, "", "?");
+		break;
+	case INPUT_REQUEST_COLOURS:
+		for (i = 0; i < icr->n; i++) {
+			if (icr->items[i].idx == -1)
+				continue;
+			for (j = 0; j < i; j++) {
+				if (icr->items[j].idx == icr->items[i].idx)
+					break;
+			}
+			if (j != i)
+				continue;
+			xsnprintf(s, sizeof s, "\033]4;%d;?\033\\",
+			    icr->items[i].idx);
+			tty_puts(&c->tty, s);
+		}
 		break;
 	case INPUT_REQUEST_QUEUE:
 		break;
@@ -3915,6 +4408,18 @@ input_request_reply(struct client *c, enum input_request_type type, void *data)
 	int					 complete = 0;
 
 	TAILQ_FOREACH_SAFE(ir, &c->input_requests, centry, ir1) {
+		if (ir->type == INPUT_REQUEST_COLOURS) {
+			if (type != INPUT_REQUEST_PALETTE)
+				continue;
+			switch (input_fill_colours_reply(ir->data, pd)) {
+			case -1:
+				continue;
+			case 0:
+				return;
+			}
+			found = ir;
+			break;
+		}
 		if (ir->type != type) {
 			input_free_request(ir);
 			continue;
@@ -3940,13 +4445,17 @@ input_request_reply(struct client *c, enum input_request_type type, void *data)
 			break;
 		if (ir->type == INPUT_REQUEST_QUEUE)
 			input_send_reply(ir->ictx, ir->data);
-		else if (ir == found) {
+		else if (ir->type == INPUT_REQUEST_COLOURS) {
+			input_send_colours_reply(ir->ictx, ir->data, 0,
+			    ir->end);
+		} else if (ir == found) {
 			if (ir->type == INPUT_REQUEST_PALETTE)
 				input_request_palette_reply(ir, data);
 			else if (ir->type == INPUT_REQUEST_CLIPBOARD)
 				input_request_clipboard_reply(ir, data);
-			complete = 1;
 		}
+		if (ir == found)
+			complete = 1;
 		input_free_request(ir);
 	}
 }

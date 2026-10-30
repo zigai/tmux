@@ -1171,6 +1171,97 @@ colour_byname(const char *name)
 	return (-1);
 }
 
+/*
+ * Parse one component of an X11 colour: one to four hex digits, or an
+ * intensity clipped to between 0 and 1. Hex digits after # are the most
+ * significant bits, other values are scaled to 16 bits as XParseColor does.
+ * The top eight bits are returned.
+ */
+static int
+colour_parseX11_component(const char *p, size_t len, int intensity, int msb,
+    u_int *v)
+{
+	char	 tmp[32], *end;
+	double	 d;
+	u_long	 x, max;
+	size_t	 i;
+
+	if (len == 0 || len >= sizeof tmp)
+		return (-1);
+	memcpy(tmp, p, len);
+	tmp[len] = '\0';
+
+	if (intensity) {
+		d = strtod(tmp, &end);
+		if (*end != '\0' || isnan(d))
+			return (-1);
+		if (d < 0)
+			d = 0;
+		else if (d > 1)
+			d = 1;
+		*v = (u_int)(d * 65535) >> 8;
+		return (0);
+	}
+
+	if (len > 4)
+		return (-1);
+	for (i = 0; i < len; i++) {
+		if (!isxdigit((u_char)tmp[i]))
+			return (-1);
+	}
+	x = strtoul(tmp, NULL, 16);
+	max = (1UL << (4 * len)) - 1;
+	if (!msb)
+		*v = (x * 65535 / max) >> 8;
+	else if (len <= 2)
+		*v = x << (8 - 4 * len);
+	else
+		*v = x >> (4 * len - 8);
+	return (0);
+}
+
+/* Parse an X11 rgb:, rgbi: or # colour. */
+static int
+colour_parseX11_rgb(const char *p, size_t len)
+{
+	const char	*s, *slash1, *slash2;
+	size_t		 n;
+	int		 intensity = 0;
+	u_int		 r, g, b;
+
+	if (*p == '#') {
+		len--;
+		if (len != 3 && len != 6 && len != 9 && len != 12)
+			return (-1);
+		n = len / 3;
+		if (colour_parseX11_component(p + 1, n, 0, 1, &r) != 0 ||
+		    colour_parseX11_component(p + 1 + n, n, 0, 1, &g) != 0 ||
+		    colour_parseX11_component(p + 1 + 2 * n, n, 0, 1,
+		    &b) != 0)
+			return (-1);
+		return (colour_join_rgb(r, g, b));
+	}
+
+	if (strncmp(p, "rgbi:", 5) == 0) {
+		intensity = 1;
+		s = p + 5;
+	} else if (strncmp(p, "rgb:", 4) == 0)
+		s = p + 4;
+	else
+		return (-1);
+	if ((slash1 = strchr(s, '/')) == NULL)
+		return (-1);
+	if ((slash2 = strchr(slash1 + 1, '/')) == NULL)
+		return (-1);
+	if (colour_parseX11_component(s, slash1 - s, intensity, 0, &r) != 0 ||
+	    colour_parseX11_component(slash1 + 1, slash2 - slash1 - 1,
+	    intensity, 0, &g) != 0 ||
+	    colour_parseX11_component(slash2 + 1, p + len - slash2 - 1,
+	    intensity, 0, &b) != 0)
+		return (-1);
+	return (colour_join_rgb(r, g, b));
+}
+
 /* Parse colour from an X11 string. */
 int
 colour_parseX11(const char *p)
@@ -1181,14 +1272,10 @@ colour_parseX11(const char *p)
 	int	 colour = -1;
 	char	*copy;
 
-	if ((len == 12 && sscanf(p, "rgb:%02x/%02x/%02x", &r, &g, &b) == 3) ||
-	    (len == 7 && sscanf(p, "#%02x%02x%02x", &r, &g, &b) == 3) ||
-	    sscanf(p, "%d,%d,%d", &r, &g, &b) == 3)
+	if (*p == '#' || strncmp(p, "rgb", 3) == 0)
+		colour = colour_parseX11_rgb(p, len);
+	else if (sscanf(p, "%d,%d,%d", &r, &g, &b) == 3)
 		colour = colour_join_rgb(r, g, b);
-	else if ((len == 18 &&
-	    sscanf(p, "rgb:%04x/%04x/%04x", &r, &g, &b) == 3) ||
-	    (len == 13 && sscanf(p, "#%04x%04x%04x", &r, &g, &b) == 3))
-		colour = colour_join_rgb(r >> 8, g >> 8, b >> 8);
 	else if ((sscanf(p, "cmyk:%lf/%lf/%lf/%lf", &c, &m, &y, &k) == 4 ||
 	    sscanf(p, "cmy:%lf/%lf/%lf", &c, &m, &y) == 3) &&
 	    c >= 0 && c <= 1 && m >= 0 && m <= 1 &&

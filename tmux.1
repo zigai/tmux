@@ -5387,6 +5387,8 @@ Ignore function keys from
 and use the
 .Nm
 internal set only.
+.It kittycolours
+Supports the Kitty OSC 21 colour control protocol.
 .It kittygraphics
 Supports the Kitty graphics protocol.
 .It margins
@@ -9319,6 +9321,9 @@ capability is present.
 Set or clear a hyperlink annotation.
 .It Em \&Iscrl
 Indicates that the terminal moves image content with scroll regions.
+.It Em \&Kcol
+Set or reset colours with the Kitty OSC 21 colour control protocol.
+The single parameter is a list of colours to change.
 .It Em \&Nobr
 Tell
 .Nm

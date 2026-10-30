@@ -42,6 +42,8 @@ static void	tty_send_size_query(struct tty *, int);
 static void	tty_set_italics(struct tty *);
 static int	tty_try_colour(struct tty *, int, const char *);
 static void	tty_force_cursor_colour(struct tty *, int);
+static char	*tty_diff_colours(struct tty *, struct screen *);
+static void	tty_clear_colours(struct tty *);
 static void	tty_cursor_pane(struct tty *, const struct tty_ctx *, u_int,
 		    u_int);
 static void	tty_cursor_pane_unless_wrap(struct tty *,
@@ -418,6 +420,7 @@ tty_start_tty(struct tty *tty)
 
 	if (tty->ccolour != -1)
 		tty_force_cursor_colour(tty, -1);
+	tty_clear_colours(tty);
 
 	tty->mouse_drag_flag = 0;
 	tty->mouse_button_pressed = 0;
@@ -496,6 +499,7 @@ tty_stop_tty(struct tty *tty)
 {
 	struct client	*c = tty->client;
 	struct winsize	 ws;
+	char		*changes;
 
 	if (!(tty->flags & TTY_STARTED))
 		return;
@@ -538,6 +542,10 @@ tty_stop_tty(struct tty *tty)
 		tty_raw(tty, tty_term_string(tty->term, TTYC_CR));
 	if (tty->pointer_shape != 0)
 		tty_raw(tty, tty_term_string_s(tty->term, TTYC_SPTR, ""));
+	if ((changes = tty_diff_colours(tty, NULL)) != NULL) {
+		tty_raw(tty, tty_term_string_s(tty->term, TTYC_KCOL, changes));
+		free(changes);
+	}
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_CNORM));
 	if (tty_term_has(tty->term, TTYC_KMOUS)) {
@@ -594,6 +602,7 @@ tty_close(struct tty *tty)
 void
 tty_free(struct tty *tty)
 {
+	tty_clear_colours(tty);
 	tty_close(tty);
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 0);
@@ -839,6 +848,77 @@ tty_force_cursor_colour(struct tty *tty, int c)
 		tty_putcode_s(tty, TTYC_CS, s);
 	}
 	tty->ccolour = c;
+}
+
+/*
+ * Work out the OSC 21 changes needed to make the terminal colours match the
+ * screen, or the terminal defaults if the screen is NULL.
+ */
+static char *
+tty_diff_colours(struct tty *tty, struct screen *s)
+{
+	const char	*want, *name;
+	char		*changes = NULL, *tmp;
+	u_int		 i;
+
+	for (i = 0; i < SCREEN_COLOURS; i++) {
+		if (s != NULL && s->colours != NULL)
+			want = s->colours[i];
+		else
+			want = NULL;
+		if (want == NULL && tty->colours[i] == NULL)
+			continue;
+		if (want != NULL && tty->colours[i] != NULL &&
+		    strcmp(want, tty->colours[i]) == 0)
+			continue;
+
+		name = screen_colour_name(i);
+		if (changes == NULL) {
+			if (want == NULL)
+				changes = xstrdup(name);
+			else
+				xasprintf(&changes, "%s=%s", name, want);
+		} else {
+			tmp = changes;
+			if (want == NULL)
+				xasprintf(&changes, "%s;%s", tmp, name);
+			else {
+				xasprintf(&changes, "%s;%s=%s", tmp, name,
+				    want);
+			}
+			free(tmp);
+		}
+
+		free(tty->colours[i]);
+		tty->colours[i] = (want == NULL ? NULL : xstrdup(want));
+	}
+	return (changes);
+}
+
+/* Forget the colours set in the terminal. */
+static void
+tty_clear_colours(struct tty *tty)
+{
+	u_int	i;
+
+	for (i = 0; i < SCREEN_COLOURS; i++) {
+		free(tty->colours[i]);
+		tty->colours[i] = NULL;
+	}
+}
+
+/* Set the terminal colours for a screen. */
+void
+tty_update_colours(struct tty *tty, struct screen *s)
+{
+	char	*changes;
+
+	if (!tty_term_has(tty->term, TTYC_KCOL))
+		return;
+	if ((changes = tty_diff_colours(tty, s)) != NULL) {
+		tty_putcode_s(tty, TTYC_KCOL, changes);
+		free(changes);
+	}
 }
 
 static int

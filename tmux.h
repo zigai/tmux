@@ -466,6 +466,7 @@ enum {
 	KEYC_REPORT_XDA,
 	KEYC_REPORT_COLOURS,
 	KEYC_REPORT_PALETTE,
+	KEYC_REPORT_KITTY_COLOURS,
 	KEYC_REPORT_WINSZ,
 
 	/* Mouse state. */
@@ -549,6 +550,7 @@ enum tty_code_code {
 	TTYC_INVIS,
 	TTYC_ISCRL,
 	TTYC_KCBT,
+	TTYC_KCOL,
 	TTYC_KCUB1,
 	TTYC_KCUD1,
 	TTYC_KCUF1,
@@ -1126,6 +1128,12 @@ struct pointer_shapes {
 	u_int	count;
 };
 
+/*
+ * Colours set with OSC 21 which tmux does not draw itself and passes to the
+ * outer terminal.
+ */
+#define SCREEN_COLOURS 12
+
 /* Virtual screen. */
 struct screen_sel;
 struct screen_titles;
@@ -1144,6 +1152,7 @@ struct screen {
 	enum screen_cursor_style	 default_cstyle;
 	int				 ccolour; /* cursor colour */
 	int				 default_ccolour;
+	char				**colours;
 
 	u_int				 rupper;  /* scroll region top */
 	u_int				 rlower;  /* scroll region bottom */
@@ -1344,6 +1353,7 @@ struct window_mode_entry {
 enum input_request_type {
 	INPUT_REQUEST_PALETTE,
 	INPUT_REQUEST_CLIPBOARD,
+	INPUT_REQUEST_COLOURS,
 	INPUT_REQUEST_QUEUE
 };
 
@@ -1906,6 +1916,7 @@ struct tty {
 	u_int		 cy;
 	enum screen_cursor_style cstyle;
 	int		 ccolour;
+	char		*colours[SCREEN_COLOURS];
 
         /* Properties of the area being drawn on. */
         /* When true, the drawing area is bigger than the terminal. */
@@ -3126,6 +3137,7 @@ void	tty_set_pointer_shape(struct tty *, u_int);
 void	tty_default_attributes(struct tty *, u_int,
 	    const struct tty_style_ctx *);
 void	tty_update_mode(struct tty *, int, struct screen *);
+void	tty_update_colours(struct tty *, struct screen *);
 const struct grid_cell *tty_check_codeset(struct tty *,
 	    const struct grid_cell *);
 void	tty_sync_start(struct tty *);
@@ -3869,6 +3881,10 @@ void	 screen_reset_hyperlinks(struct screen *);
 void	 screen_set_default_cursor(struct screen *, struct options *);
 void	 screen_set_cursor_style(u_int, enum screen_cursor_style *, int *);
 void	 screen_set_cursor_colour(struct screen *, int);
+int	 screen_find_colour(const char *);
+const char *screen_colour_name(u_int);
+void	 screen_set_colour(struct screen *, u_int, const char *);
+void	 screen_clear_colours(struct screen *);
 int	 screen_set_title(struct screen *, const char *, int);
 int	 screen_set_path(struct screen *, const char *, int);
 void	 screen_push_title(struct screen *);

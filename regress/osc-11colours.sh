@@ -38,6 +38,12 @@ do_test '\033]11;DodgerBlue4    \007' '#104e8b' || exit 1
 do_test '\033]11;    DodgerBlue4\007' '#104e8b' || exit 1
 do_test '\033]11;rgb:10/4E/8B\007' '#104e8b' || exit 1
 do_test '\033]11;rgb:1000/4E00/8B00\007' '#104e8b' || exit 1
+do_test '\033]11;rgb:1/4/8\007' '#114488' || exit 1
+do_test '\033]11;rgb:100/4E0/8B0\007' '#104e8b' || exit 1
+do_test '\033]11;rgbi:0.0627/0.3059/0.5451\007' '#104e8b' || exit 1
+do_test '\033]11;rgbi:1.5/0.0627/-1\007' '#ff1000' || exit 1
+do_test '\033]11;#148\007' '#104080' || exit 1
+do_test '\033]11;#1004E08B0\007' '#104e8b' || exit 1
 
 do_test '\033]11;grey\007' '#bebebe' || exit 1
 do_test '\033]11;grey0\007' '#000000' || exit 1
