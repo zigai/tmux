@@ -115,12 +115,9 @@ if [ "$CASE" = all ] || [ "$CASE" = focus ]; then
 fi
 if [ "$CASE" = all ] || [ "$CASE" = clicks ]; then
 	setup bottom
-	$TMUX bind -n MouseDown1Pane 'set -gF @click_types "#{@click_types}first"; send -M' || exit 1
-	$TMUX bind -n SecondClick1Pane 'set -gF @click_types "#{@click_types}second"; send -M' || exit 1
-	$TMUX bind -n TripleClick1Pane 'set -gF @click_types "#{@click_types}third"; send -M' || exit 1
-	$INNER bind -n MouseDown1Pane 'copy-mode; send -X begin-selection' || exit 1
-	$INNER bind -n SecondClick1Pane 'copy-mode; send -X begin-selection' || exit 1
-	$INNER bind -n TripleClick1Pane 'copy-mode; send -X begin-selection' || exit 1
+	$INNER bind -n MouseDown1Pane 'set -gF @click_types "#{@click_types}first"; copy-mode; send -X begin-selection' || exit 1
+	$INNER bind -n SecondClick1Pane 'set -gF @click_types "#{@click_types}second"; copy-mode; send -X begin-selection' || exit 1
+	$INNER bind -n TripleClick1Pane 'set -gF @click_types "#{@click_types}third"; copy-mode; send -X begin-selection' || exit 1
 	$INNER bind -T copy-mode MouseUp1Pane 'send -X cancel' || exit 1
 	$INNER bind -T copy-mode SecondClick1Pane 'send -X begin-selection' || exit 1
 	$INNER bind -T copy-mode TripleClick1Pane 'send -X begin-selection' || exit 1
@@ -133,7 +130,7 @@ if [ "$CASE" = all ] || [ "$CASE" = clicks ]; then
 		[ "$($INNER display -p '#{pane_in_mode}')" = 0 ] ||
 		    fail "$click click release on status was not captured"
 	done
-	[ "$($TMUX show -gv @click_types)" = firstsecondthird ] ||
+	[ "$($INNER show -gv @click_types)" = firstsecondthird ] ||
 	    fail "Click test did not exercise second and third presses"
 fi
 

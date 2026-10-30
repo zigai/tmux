@@ -1,4 +1,4 @@
-/* $OpenBSD: tty.c,v 1.484 2026/10/05 08:45:27 nicm Exp $ */
+/* $OpenBSD: tty.c,v 1.497 2026/10/26 10:14:59 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -36,7 +36,9 @@
 static int	tty_log_fd = -1;
 
 static void	tty_start_timer_callback(int, short, void *);
+static void	tty_start_start_timer(struct tty *);
 static void	tty_clipboard_query_callback(int, short, void *);
+static void	tty_send_size_query(struct tty *, int);
 static void	tty_set_italics(struct tty *);
 static int	tty_try_colour(struct tty *, int, const char *);
 static void	tty_force_cursor_colour(struct tty *, int);
@@ -51,6 +53,7 @@ static void	tty_check_bg(struct tty *, struct colour_palette *,
 		    struct grid_cell *);
 static void	tty_check_us(struct tty *, struct colour_palette *,
 		    struct grid_cell *);
+static void	tty_check_ncv(struct tty *, struct grid_cell *);
 static int	tty_map_theme_colour(struct tty *, int);
 static void	tty_colours_fg(struct tty *, const struct grid_cell *);
 static void	tty_colours_bg(struct tty *, const struct grid_cell *);
@@ -67,21 +70,6 @@ static void	tty_emulate_repeat(struct tty *, enum tty_code_code,
 		    enum tty_code_code, u_int);
 static void	tty_draw_pane(struct tty *, const struct tty_ctx *, u_int);
 
-#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
-static void	tty_write_one(void (*)(struct tty *, const struct tty_ctx *),
-		    struct client *, struct tty_ctx *);
-#endif
-#ifdef ENABLE_KITTY_IMAGES
-static void	tty_add_kitty_chunks(struct tty *, const char *, const u_char *,
-    size_t);
-static void	tty_kitty_images_free(struct tty *);
-static int	tty_kitty_image_uploaded(struct tty *, struct kitty_image *);
-static void	tty_kitty_image_mark_uploaded(struct tty *,
-    struct kitty_image *);
-static void	tty_kitty_image_remove_uploaded_from_tty(struct tty *,
-    uint32_t);
-#endif
-
 #define tty_use_margin(tty) \
 	(tty->term->flags & TERM_DECSLRM)
 #define tty_full_width(tty, ctx) \
@@ -95,11 +83,8 @@ static void	tty_kitty_image_remove_uploaded_from_tty(struct tty *,
 #define TTY_REQUEST_LIMIT 30
 
 static struct tty_style_ctx tty_default_style_ctx = {
-	&grid_default_cell, NULL, 0, NULL
+	&grid_default_cell, NULL, 0, NULL, NULL
 };
-#ifdef ENABLE_KITTY_IMAGES
-#define KITTY_MAX_ENCODED_CHUNK 4096
-#endif
 
 void
 tty_create_log(void)
@@ -121,9 +106,6 @@ tty_init(struct tty *tty, struct client *c)
 
 	memset(tty, 0, sizeof *tty);
 	tty->client = c;
-#ifdef ENABLE_KITTY_IMAGES
-	TAILQ_INIT(&tty->kitty_images);
-#endif
 
 	tty->cstyle = SCREEN_CURSOR_DEFAULT;
 	tty->ccolour = -1;
@@ -134,6 +116,16 @@ tty_init(struct tty *tty, struct client *c)
 	if (tcgetattr(c->fd, &tty->tio) != 0)
 		return (-1);
 	return (0);
+}
+
+static void
+tty_send_size_query(struct tty *tty, int apply)
+{
+	tty_puts(tty, "\033[18t\033[14t");
+	tty->flags |= (TTY_WINSZQUERY|TTY_WINSZPIXELS);
+	if (apply)
+		tty->flags |= TTY_WINSZAPPLY;
+	tty_start_start_timer(tty);
 }
 
 void
@@ -158,12 +150,10 @@ tty_resize(struct tty *tty)
 			ypixel = ws.ws_ypixel / sy;
 
 		if ((xpixel == 0 || ypixel == 0) &&
-		    tty->out != NULL &&
-		    !(tty->flags & TTY_WINSIZEQUERY) &&
-		    (tty->term->flags & TERM_VT100LIKE)) {
-			tty_puts(tty, "\033[18t\033[14t");
-			tty->flags |= TTY_WINSIZEQUERY;
-		}
+		    (tty->flags & TTY_STARTED) &&
+		    !(tty->flags & (TTY_WINSZQUERY|TTY_WINSZPIXELS)) &&
+		    (tty->term->flags & TERM_VT100LIKE))
+			tty_send_size_query(tty, 0);
 	} else {
 		sx = 80;
 		sy = 24;
@@ -176,13 +166,22 @@ tty_resize(struct tty *tty)
 	tty_invalidate(tty);
 }
 
-void
+int
 tty_set_size(struct tty *tty, u_int sx, u_int sy, u_int xpixel, u_int ypixel)
 {
+	if (tty->sx == sx &&
+	    tty->sy == sy &&
+	    tty->xpixel == xpixel &&
+	    tty->ypixel == ypixel)
+		return (0);
 	tty->sx = sx;
 	tty->sy = sy;
 	tty->xpixel = xpixel;
 	tty->ypixel = ypixel;
+#ifdef ENABLE_IMAGES
+	image_tty_size_changed(tty);
+#endif
+	return (1);
 }
 
 static void
@@ -300,6 +299,10 @@ tty_open(struct tty *tty, char **cause)
 	}
 	tty->flags |= TTY_OPENED;
 
+#ifdef ENABLE_IMAGES
+	image_tty_update(tty);
+#endif
+
 	tty->flags &= ~(TTY_NOCURSOR|TTY_FREEZE|TTY_BLOCK|TTY_TIMER);
 
 	event_set(&tty->event_in, c->fd, EV_PERSIST|EV_READ,
@@ -335,7 +338,11 @@ tty_start_timer_callback(__unused int fd, __unused short events, void *data)
 		tty_update_features(tty);
 	tty->flags |= TTY_ALL_REQUEST_FLAGS;
 
+	if (tty->flags & TTY_WINSZQUERY)
+		log_debug("%s: size query timed out", c->name);
+
 	tty->flags &= ~(TTY_WAITBG|TTY_WAITFG);
+	tty->flags &= ~(TTY_WINSZQUERY|TTY_WINSZPIXELS|TTY_WINSZAPPLY);
 }
 
 static void
@@ -345,7 +352,6 @@ tty_start_start_timer(struct tty *tty)
 	struct timeval	 tv = { .tv_sec = TTY_QUERY_TIMEOUT };
 
 	log_debug("%s: start timer started", c->name);
-	evtimer_del(&tty->start_timer);
 	evtimer_add(&tty->start_timer, &tv);
 }
 
@@ -370,9 +376,6 @@ tty_start_tty(struct tty *tty)
 	if (tcsetattr(c->fd, TCSANOW, &tio) == 0)
 		tcflush(c->fd, TCOFLUSH);
 
-#ifdef ENABLE_KITTY_IMAGES
-	tty_kitty_images_free(tty);
-#endif
 	if (options_get_number(global_options, "clear-on-attach")) {
 		tty_putcode(tty, TTYC_SMCUP);
 		tty_putcode(tty, TTYC_CLEAR);
@@ -402,11 +405,8 @@ tty_start_tty(struct tty *tty)
 	}
 	if (tty_term_has(tty->term, TTYC_ENBP))
 		tty_putcode(tty, TTYC_ENBP);
-
-	if (tty->term->flags & TERM_VT100LIKE) {
-		/* Subscribe to theme changes and request theme now. */
+	if (tty->term->flags & TERM_VT100LIKE)
 		tty_puts(tty, "\033[?2031h\033[?996n");
-	}
 
 	tty_start_start_timer(tty);
 
@@ -425,22 +425,38 @@ tty_start_tty(struct tty *tty)
 void
 tty_send_requests(struct tty *tty)
 {
-	if (~tty->flags & TTY_STARTED)
+	struct tty_term	*term = tty->term;
+	int		 flags = tty->flags;
+
+	if (~flags & TTY_STARTED)
 		return;
 
-	if (tty->term->flags & TERM_VT100LIKE) {
-		if (~tty->flags & TTY_HAVEDA)
-			tty_puts(tty, "\033[c");
-		if (~tty->flags & TTY_HAVEDA2)
-			tty_puts(tty, "\033[>c");
-		if (~tty->flags & TTY_HAVEXDA)
-			tty_puts(tty, "\033[>q");
-		if (~tty->flags & TTY_HAVESYNC)
-			tty_puts(tty, "\033[?2026$p");
-		tty_puts(tty, "\033]10;?\033\\\033]11;?\033\\");
-		tty->flags |= (TTY_WAITBG|TTY_WAITFG);
-	} else
+	if (~term->flags & TERM_VT100LIKE) {
 		tty->flags |= TTY_ALL_REQUEST_FLAGS;
+		tty->last_requests = time(NULL);
+		return;
+	}
+
+	if (~flags & TTY_HAVEDA)
+		tty_puts(tty, "\033[c");
+	if (~flags & TTY_HAVEDA2)
+		tty_puts(tty, "\033[>c");
+	if (~flags & TTY_HAVEXDA)
+		tty_puts(tty, "\033[>q");
+	if (~flags & TTY_HAVESYNC)
+		tty_puts(tty, "\033[?2026$p");
+#ifdef ENABLE_IMAGES
+	if (tty_term_flag(term, TTYC_XT) && (~flags & TTY_HAVEKITTYGRAPHICS))
+		tty_puts(tty, "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\");
+	else
+		tty->flags |= TTY_HAVEKITTYGRAPHICS;
+#else
+	tty->flags |= TTY_HAVEKITTYGRAPHICS;
+#endif
+
+	tty_puts(tty, "\033]10;?\033\\\033]11;?\033\\");
+	tty->flags |= (TTY_WAITBG|TTY_WAITFG);
+
 	tty->last_requests = time(NULL);
 }
 
@@ -482,6 +498,7 @@ tty_stop_tty(struct tty *tty)
 
 	evtimer_del(&tty->start_timer);
 	evtimer_del(&tty->clipboard_timer);
+	tty->flags &= ~(TTY_WINSZQUERY|TTY_WINSZPIXELS|TTY_WINSZAPPLY);
 
 	event_del(&tty->timer);
 	tty->flags &= ~TTY_BLOCK;
@@ -527,6 +544,10 @@ tty_stop_tty(struct tty *tty)
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSFCS));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSEKS));
 
+#ifdef ENABLE_IMAGES
+	image_tty_free(tty, 1);
+#endif
+
 	if (tty_use_margin(tty))
 		tty_raw(tty, tty_term_string(tty->term, TTYC_DSMG));
 	if (options_get_number(global_options, "clear-on-attach"))
@@ -548,6 +569,9 @@ tty_close(struct tty *tty)
 	tty_stop_tty(tty);
 
 	if (tty->flags & TTY_OPENED) {
+#ifdef ENABLE_IMAGES
+		image_tty_free(tty, 0);
+#endif
 		evbuffer_free(tty->in);
 		event_del(&tty->event_in);
 		evbuffer_free(tty->out);
@@ -564,9 +588,8 @@ void
 tty_free(struct tty *tty)
 {
 	tty_close(tty);
-
-#ifdef ENABLE_KITTY_IMAGES
-	tty_kitty_images_free(tty);
+#ifdef ENABLE_IMAGES
+	image_tty_free(tty, 0);
 #endif
 }
 
@@ -574,9 +597,16 @@ void
 tty_update_features(struct tty *tty)
 {
 	struct client	*c = tty->client;
+	int		 changed = 0;
 
-	if (tty_apply_features(tty->term))
+	if (tty_apply_features(tty->term)) {
 		tty_term_apply_overrides(tty->term);
+		changed = 1;
+	}
+#ifdef ENABLE_IMAGES
+	if (image_tty_update(tty))
+		changed = 1;
+#endif
 
 	if (tty_use_margin(tty))
 		tty_putcode(tty, TTYC_ENMG);
@@ -586,13 +616,10 @@ tty_update_features(struct tty *tty)
 		tty_puts(tty, tty_term_string(tty->term, TTYC_ENFCS));
 	tty_puts(tty, tty_term_string(tty->term, TTYC_ENESC));
 
-	/*
-	 * Features might have changed since the first draw during attach. For
-	 * example, this happens when DA responses are received.
-	 */
-	server_redraw_client(c);
-
-	tty_invalidate(tty);
+	if (changed) {
+		server_redraw_client(c);
+		tty_invalidate(tty);
+	}
 }
 
 void
@@ -681,119 +708,6 @@ tty_add(struct tty *tty, const char *buf, size_t len)
 	    !event_pending(&tty->event_out, EV_WRITE, NULL))
 		event_add(&tty->event_out, NULL);
 }
-
-#ifdef ENABLE_KITTY_IMAGES
-static void
-tty_add_kitty_chunks(struct tty *tty, const char *control,
-    const u_char *payload, size_t payload_len)
-{
-	char	*encoded, *sequence;
-	size_t	 size, used = 0;
-	int	 encoded_len, more, sequence_len;
-
-	if (payload_len == 0) {
-		sequence_len = xasprintf(&sequence,
-		    "\033_G%s,m=0,q=1;\033\\", control);
-		tty_add(tty, sequence, sequence_len);
-		free(sequence);
-		return;
-	}
-
-	size = 4 * ((payload_len + 2) / 3) + 1;
-	encoded = xmalloc(size);
-	encoded_len = b64_ntop(payload, payload_len, encoded, size);
-	if (encoded_len == -1) {
-		free(encoded);
-		return;
-	}
-
-	while (used < (size_t)encoded_len) {
-		size = (size_t)encoded_len - used;
-		if (size > KITTY_MAX_ENCODED_CHUNK)
-			size = KITTY_MAX_ENCODED_CHUNK;
-		more = (used + size < (size_t)encoded_len);
-		if (used == 0)
-			sequence_len = xasprintf(&sequence,
-			    "\033_G%s,m=%d,q=1;%.*s\033\\", control, more,
-			    (int)size, encoded + used);
-		else
-			sequence_len = xasprintf(&sequence,
-			    "\033_Gm=%d,q=1;%.*s\033\\", more, (int)size,
-			    encoded + used);
-		tty_add(tty, sequence, sequence_len);
-		free(sequence);
-		used += size;
-	}
-	free(encoded);
-}
-
-static void
-tty_kitty_images_free(struct tty *tty)
-{
-	struct tty_kitty_image	*image, *image1;
-
-	TAILQ_FOREACH_SAFE(image, &tty->kitty_images, entry, image1) {
-		TAILQ_REMOVE(&tty->kitty_images, image, entry);
-		free(image);
-	}
-}
-
-static void
-tty_kitty_image_remove_uploaded_from_tty(struct tty *tty, uint32_t id)
-{
-	struct tty_kitty_image	*image, *image1;
-
-	TAILQ_FOREACH_SAFE(image, &tty->kitty_images, entry, image1) {
-		if (image->id == id) {
-			TAILQ_REMOVE(&tty->kitty_images, image, entry);
-			free(image);
-		}
-	}
-}
-
-void
-tty_kitty_image_remove_uploaded(struct kitty_image *img)
-{
-	struct client	*c;
-
-	if (img == NULL || img->tty_id == 0)
-		return;
-
-	TAILQ_FOREACH(c, &clients, entry)
-		tty_kitty_image_remove_uploaded_from_tty(&c->tty, img->tty_id);
-}
-
-static int
-tty_kitty_image_uploaded(struct tty *tty, struct kitty_image *img)
-{
-	struct tty_kitty_image	*image;
-
-	TAILQ_FOREACH(image, &tty->kitty_images, entry) {
-		if (image->id == img->tty_id &&
-		    image->generation == img->generation)
-			return (1);
-	}
-	return (0);
-}
-
-static void
-tty_kitty_image_mark_uploaded(struct tty *tty, struct kitty_image *img)
-{
-	struct tty_kitty_image	*image;
-
-	TAILQ_FOREACH(image, &tty->kitty_images, entry) {
-		if (image->id == img->tty_id) {
-			image->generation = img->generation;
-			return;
-		}
-	}
-
-	image = xcalloc(1, sizeof *image);
-	image->id = img->tty_id;
-	image->generation = img->generation;
-	TAILQ_INSERT_TAIL(&tty->kitty_images, image, entry);
-}
-#endif
 
 void
 tty_puts(struct tty *tty, const char *s)
@@ -1090,7 +1004,11 @@ tty_window_bigger(struct tty *tty)
 	struct client	*c = tty->client;
 	struct window	*w = c->session->curw->window;
 
-	return (tty->sx < w->sx || tty->sy - status_line_size(c) < w->sy);
+	if (tty->sx - status_side_size(c) < w->sx)
+		return (1);
+	if (tty->sy - status_line_size(c) < w->sy)
+		return (1);
+	return (0);
 }
 
 /* What offset should this window be drawn at? */
@@ -1112,11 +1030,12 @@ tty_window_offset1(struct tty *tty, u_int *ox, u_int *oy, u_int *sx, u_int *sy)
 	struct client		*c = tty->client;
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp = w->active;
-	u_int			 cx, cy, lines;
+	u_int			 cx, cy, lines, side;
 
 	lines = status_line_size(c);
+	side = status_side_size(c);
 
-	if (tty->sx >= w->sx && tty->sy - lines >= w->sy) {
+	if (tty->sx - side >= w->sx && tty->sy - lines >= w->sy) {
 		*ox = 0;
 		*oy = 0;
 		*sx = w->sx;
@@ -1126,7 +1045,7 @@ tty_window_offset1(struct tty *tty, u_int *ox, u_int *oy, u_int *sx, u_int *sy)
 		return (0);
 	}
 
-	*sx = tty->sx;
+	*sx = tty->sx - side;
 	*sy = tty->sy - lines;
 
 	if (c->pan_window == w) {
@@ -1308,19 +1227,19 @@ tty_clamp_line(struct tty *tty, const struct tty_ctx *ctx, u_int px, u_int py,
 		*rx = nx;
 	} else if (xoff < (int)ctx->wox && xoff + nx > ctx->wox + ctx->wsx) {
 		/* Both left and right not visible. */
-		*i = ctx->wox;
-		*x = 0;
+		*i = ctx->wox - xoff;
+		*x = ctx->xoff - ctx->rxoff;
 		*rx = ctx->wsx;
 	} else if (xoff < (int)ctx->wox) {
 		/* Left not visible. */
-		*i = ctx->wox - (ctx->xoff + px);
-		*x = 0;
+		*i = ctx->wox - xoff;
+		*x = ctx->xoff - ctx->rxoff;
 		*rx = nx - *i;
 	} else {
 		/* Right not visible. */
 		*i = 0;
 		*x = (ctx->xoff + px) - ctx->wox;
-		*rx = ctx->wsx - *x;
+		*rx = ctx->wox + ctx->wsx - xoff;
 	}
 	if (*rx > nx)
 		fatalx("%s: x too big, %u > %u", __func__, *rx, nx);
@@ -1402,23 +1321,27 @@ tty_clamp_area(struct tty *tty, const struct tty_ctx *ctx, u_int px, u_int py,
 		*rx = nx;
 	} else if (xoff < ctx->wox && xoff + nx > ctx->wox + ctx->wsx) {
 		/* Both left and right not visible. */
-		*i = ctx->wox;
-		*x = 0;
+		*i = ctx->wox - xoff;
+		*x = ctx->xoff - ctx->rxoff;
 		*rx = ctx->wsx;
 	} else if (xoff < ctx->wox) {
 		/* Left not visible. */
-		*i = ctx->wox - (ctx->xoff + px);
-		*x = 0;
+		*i = ctx->wox - xoff;
+		*x = ctx->xoff - ctx->rxoff;
 		*rx = nx - *i;
 	} else {
 		/* Right not visible. */
 		*i = 0;
 		*x = (ctx->xoff + px) - ctx->wox;
-		*rx = ctx->wsx - *x;
+		*rx = ctx->wox + ctx->wsx - xoff;
 	}
 	if (*rx > nx)
 		fatalx("%s: x too big, %u > %u", __func__, *rx, nx);
 
+	/*
+	 * yoff is in window coordinates; ctx->yoff - ctx->ryoff is the number
+	 * of status lines above the window on the terminal.
+	 */
 	if (yoff >= ctx->woy && yoff + ny <= ctx->woy + ctx->wsy) {
 		/* All visible. */
 		*j = 0;
@@ -1426,19 +1349,19 @@ tty_clamp_area(struct tty *tty, const struct tty_ctx *ctx, u_int px, u_int py,
 		*ry = ny;
 	} else if (yoff < ctx->woy && yoff + ny > ctx->woy + ctx->wsy) {
 		/* Both top and bottom not visible. */
-		*j = ctx->woy;
-		*y = 0;
+		*j = ctx->woy - yoff;
+		*y = ctx->yoff - ctx->ryoff;
 		*ry = ctx->wsy;
 	} else if (yoff < ctx->woy) {
 		/* Top not visible. */
-		*j = ctx->woy - (ctx->yoff + py);
-		*y = 0;
+		*j = ctx->woy - yoff;
+		*y = ctx->yoff - ctx->ryoff;
 		*ry = ny - *j;
 	} else {
 		/* Bottom not visible. */
 		*j = 0;
 		*y = (ctx->yoff + py) - ctx->woy;
-		*ry = ctx->wsy - *y;
+		*ry = ctx->woy + ctx->wsy - yoff;
 	}
 	if (*ry > ny)
 		fatalx("%s: y too big, %u > %u", __func__, *ry, ny);
@@ -1593,105 +1516,6 @@ tty_check_codeset(struct tty *tty, const struct grid_cell *gc)
 	return (&new);
 }
 
-#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
-/* Update context for client. */
-static int
-tty_set_client_cb(struct tty_ctx *ttyctx, struct client *c)
-{
-	struct window_pane	*wp = ttyctx->arg;
-
-	if (c->session->curw->window != wp->window)
-		return (0);
-	if (wp->layout_cell == NULL)
-		return (0);
-
-	if (tty_window_offset(&c->tty, &ttyctx->wox, &ttyctx->woy, &ttyctx->wsx,
-	    &ttyctx->wsy))
-		ttyctx->flags |= TTY_CTX_WINDOW_BIGGER;
-	else
-		ttyctx->flags &= ~TTY_CTX_WINDOW_BIGGER;
-
-	ttyctx->yoff = ttyctx->ryoff = wp->yoff;
-	if (status_at_line(c) == 0)
-		ttyctx->yoff += status_line_size(c);
-
-	return (1);
-}
-#endif
-#ifdef ENABLE_SIXEL
-void
-tty_draw_images(struct client *c, struct window_pane *wp)
-{
-	struct image	*im;
-	struct tty_ctx	 ttyctx;
-
-	TAILQ_FOREACH(im, &wp->screen->images, entry) {
-		memset(&ttyctx, 0, sizeof ttyctx);
-
-		/* Set the client independent properties. */
-		ttyctx.ocx = im->px;
-		ttyctx.ocy = im->py;
-
-		ttyctx.orlower = wp->screen->rlower;
-		ttyctx.orupper = wp->screen->rupper;
-
-		ttyctx.xoff = ttyctx.rxoff = wp->xoff;
-		ttyctx.sx = wp->sx;
-		ttyctx.sy = wp->sy;
-
-		ttyctx.image = im;
-		ttyctx.arg = wp;
-		ttyctx.set_client_cb = tty_set_client_cb;
-		ttyctx.flags |= TTY_CTX_INVISIBLE_PANES;
-		tty_write_one(tty_cmd_sixelimage, c, &ttyctx);
-	}
-}
-#endif
-
-#ifdef ENABLE_KITTY_IMAGES
-void
-tty_draw_kitty_images(struct client *c, struct window_pane *wp)
-{
-	struct screen		*s = wp->screen;
-	struct kitty_placement	*pl, *before;
-	struct tty_ctx		 ttyctx;
-	int			 upload;
-
-	TAILQ_FOREACH(pl, &s->kitty_placements, entry) {
-		memset(&ttyctx, 0, sizeof ttyctx);
-
-		upload = 1;
-		TAILQ_FOREACH(before, &s->kitty_placements, entry) {
-			if (before == pl)
-				break;
-			if (before->image == pl->image) {
-				upload = 0;
-				break;
-			}
-		}
-
-		/* Set the client independent properties. */
-		ttyctx.ocx = pl->pane_x;
-		ttyctx.ocy = pl->pane_y;
-
-		ttyctx.orlower = s->rlower;
-		ttyctx.orupper = s->rupper;
-
-		ttyctx.xoff = ttyctx.rxoff = wp->xoff;
-		ttyctx.sx = wp->sx;
-		ttyctx.sy = wp->sy;
-
-		ttyctx.kitty_placement = pl;
-		ttyctx.arg = wp;
-		ttyctx.set_client_cb = tty_set_client_cb;
-		ttyctx.flags |= TTY_CTX_INVISIBLE_PANES;
-		if (upload)
-			ttyctx.flags |= TTY_CTX_KITTY_UPLOAD;
-		tty_write_one(tty_cmd_kittyimage, c, &ttyctx);
-	}
-}
-#endif
-
 void
 tty_sync_start(struct tty *tty)
 {
@@ -1765,19 +1589,6 @@ tty_write(void (*cmdfn)(struct tty *, const struct tty_ctx *),
 		}
 	}
 }
-
-#if defined(ENABLE_SIXEL) || defined(ENABLE_KITTY_IMAGES)
-/* Only write to the incoming tty instead of every client. */
-static void
-tty_write_one(void (*cmdfn)(struct tty *, const struct tty_ctx *),
-    struct client *c, struct tty_ctx *ctx)
-{
-	if (ctx->set_client_cb == NULL)
-		return;
-	if ((ctx->set_client_cb(ctx, c)) == 1)
-		cmdfn(&c->tty, ctx);
-}
-#endif
 
 void
 tty_cmd_insertcharacter(struct tty *tty, const struct tty_ctx *ctx)
@@ -1913,10 +1724,12 @@ tty_cmd_reverseindex(struct tty *tty, const struct tty_ctx *ctx)
 	    !tty_term_has(tty->term, TTYC_RIN)) ||
 	    ctx->sx == 1 ||
 	    ctx->sy == 1) {
+		redraw_scroll_result(tty, ctx, 1);
 		tty_redraw_region(tty, ctx);
 		return;
 	}
 
+	redraw_scroll_result(tty, ctx, 0);
 	tty_default_attributes(tty, ctx->bg, &ctx->style_ctx);
 
 	tty_region_pane(tty, ctx, ctx->orupper, ctx->orlower);
@@ -1927,6 +1740,10 @@ tty_cmd_reverseindex(struct tty *tty, const struct tty_ctx *ctx)
 		tty_putcode(tty, TTYC_RI);
 	else
 		tty_putcode_i(tty, TTYC_RIN, 1);
+#ifdef ENABLE_IMAGES
+	image_scroll(tty, ctx->xoff, ctx->yoff + ctx->orupper, ctx->sx,
+	    ctx->orlower - ctx->orupper + 1, -1);
+#endif
 }
 
 void
@@ -1941,10 +1758,12 @@ tty_cmd_linefeed(struct tty *tty, const struct tty_ctx *ctx)
 	    !tty_term_has(tty->term, TTYC_CSR) ||
 	    ctx->sx == 1 ||
 	    ctx->sy == 1) {
+		redraw_scroll_result(tty, ctx, 1);
 		tty_redraw_region(tty, ctx);
 		return;
 	}
 
+	redraw_scroll_result(tty, ctx, 0);
 	tty_default_attributes(tty, ctx->bg, &ctx->style_ctx);
 
 	tty_region_pane(tty, ctx, ctx->orupper, ctx->orlower);
@@ -1966,6 +1785,10 @@ tty_cmd_linefeed(struct tty *tty, const struct tty_ctx *ctx)
 		tty_cursor_pane(tty, ctx, ctx->ocx, ctx->ocy);
 
 	tty_putc(tty, '\n');
+#ifdef ENABLE_IMAGES
+	image_scroll(tty, ctx->xoff, ctx->yoff + ctx->orupper, ctx->sx,
+	    ctx->orlower - ctx->orupper + 1, 1);
+#endif
 }
 
 void
@@ -1979,10 +1802,12 @@ tty_cmd_scrollup(struct tty *tty, const struct tty_ctx *ctx)
 	    !tty_term_has(tty->term, TTYC_CSR) ||
 	    ctx->sx == 1 ||
 	    ctx->sy == 1) {
+		redraw_scroll_result(tty, ctx, 1);
 		tty_redraw_region(tty, ctx);
 		return;
 	}
 
+	redraw_scroll_result(tty, ctx, 0);
 	tty_default_attributes(tty, ctx->bg, &ctx->style_ctx);
 
 	tty_region_pane(tty, ctx, ctx->orupper, ctx->orlower);
@@ -2002,6 +1827,10 @@ tty_cmd_scrollup(struct tty *tty, const struct tty_ctx *ctx)
 			tty_cursor(tty, 0, tty->cy);
 		tty_putcode_i(tty, TTYC_INDN, ctx->n);
 	}
+#ifdef ENABLE_IMAGES
+	image_scroll(tty, ctx->xoff, ctx->yoff + ctx->orupper, ctx->sx,
+	    ctx->orlower - ctx->orupper + 1, ctx->n);
+#endif
 }
 
 void
@@ -2017,10 +1846,12 @@ tty_cmd_scrolldown(struct tty *tty, const struct tty_ctx *ctx)
 	    !tty_term_has(tty->term, TTYC_RIN)) ||
 	    ctx->sx == 1 ||
 	    ctx->sy == 1) {
+		redraw_scroll_result(tty, ctx, 1);
 		tty_redraw_region(tty, ctx);
 		return;
 	}
 
+	redraw_scroll_result(tty, ctx, 0);
 	tty_default_attributes(tty, ctx->bg, &ctx->style_ctx);
 
 	tty_region_pane(tty, ctx, ctx->orupper, ctx->orlower);
@@ -2033,6 +1864,10 @@ tty_cmd_scrolldown(struct tty *tty, const struct tty_ctx *ctx)
 		for (i = 0; i < ctx->n; i++)
 			tty_putcode(tty, TTYC_RI);
 	}
+#ifdef ENABLE_IMAGES
+	image_scroll(tty, ctx->xoff, ctx->yoff + ctx->orupper, ctx->sx,
+	    ctx->orlower - ctx->orupper + 1, -(int)ctx->n);
+#endif
 }
 
 void
@@ -2126,6 +1961,11 @@ tty_cmd_alignmenttest(struct tty *tty, const struct tty_ctx *ctx)
 void
 tty_cmd_cell(struct tty *tty, const struct tty_ctx *ctx)
 {
+	const struct grid_cell	*gcp = ctx->cell;
+#ifdef ENABLE_IMAGES
+	struct grid_cell	 gc;
+#endif
+
 	if (!tty_is_visible(tty, ctx, ctx->ocx, ctx->ocy, 1, 1))
 		return;
 
@@ -2139,7 +1979,11 @@ tty_cmd_cell(struct tty *tty, const struct tty_ctx *ctx)
 		tty_invalidate(tty);
 	tty_cursor_pane_unless_wrap(tty, ctx, ctx->ocx, ctx->ocy);
 
-	tty_cell(tty, ctx->cell, &ctx->style_ctx);
+#ifdef ENABLE_IMAGES
+	/* Placeholder cells are drawn when the line is redrawn. */
+	gcp = image_hide_placeholder(gcp, &gc);
+#endif
+	tty_cell(tty, gcp, &ctx->style_ctx);
 
 	if (ctx->flags & TTY_CTX_CELL_INVALIDATE)
 		tty_invalidate(tty);
@@ -2155,8 +1999,8 @@ tty_cmd_cells(struct tty *tty, const struct tty_ctx *ctx)
 		return;
 
 	if ((ctx->flags & TTY_CTX_WINDOW_BIGGER) &&
-	    (ctx->xoff + ctx->ocx < ctx->wox ||
-	    ctx->xoff + ctx->ocx + n > ctx->wox + ctx->wsx)) {
+	    (ctx->rxoff + ctx->ocx < ctx->wox ||
+	    ctx->rxoff + ctx->ocx + n > ctx->wox + ctx->wsx)) {
 		if ((~ctx->flags & TTY_CTX_WRAPPED) ||
 		    !tty_full_width(tty, ctx) ||
 		    (tty->term->flags & TERM_NOAM) ||
@@ -2211,172 +2055,6 @@ tty_cmd_rawstring(struct tty *tty, const struct tty_ctx *ctx)
 	tty_add(tty, ctx->data.data, ctx->data.size);
 	tty_invalidate(tty);
 }
-
-#ifdef ENABLE_SIXEL
-void
-tty_cmd_sixelimage(struct tty *tty, const struct tty_ctx *ctx)
-{
-	struct image		*im = ctx->image;
-	struct sixel_image	*si = im->data;
-	struct sixel_image	*new;
-	char			*data;
-	size_t			 size;
-	u_int			 cx = ctx->ocx, cy = ctx->ocy, sx, sy;
-	u_int			 i, j, x, y, rx, ry;
-	int			 fallback = 0;
-
-	if ((~tty->term->flags & TERM_SIXEL) &&
-            !tty_term_has(tty->term, TTYC_SXL))
-		fallback = 1;
-	if (tty->xpixel == 0 || tty->ypixel == 0)
-		fallback = 1;
-
-	sixel_size_in_cells(si, &sx, &sy);
-	log_debug("%s: image is %ux%u", __func__, sx, sy);
-	if (!tty_clamp_area(tty, ctx, cx, cy, sx, sy, &i, &j, &x, &y, &rx, &ry))
-		return;
-	log_debug("%s: clamping to %u,%u-%u,%u", __func__, i, j, rx, ry);
-
-	if (fallback == 1) {
-		data = xstrdup(im->fallback);
-		size = strlen(data);
-	} else {
-		new = sixel_scale(si, tty->xpixel, tty->ypixel, i, j, rx, ry, 0);
-		if (new == NULL)
-			return;
-
-		data = sixel_print(new, si, &size);
-	}
-	if (data != NULL) {
-		log_debug("%s: %zu bytes: %s", __func__, size, data);
-		tty_region_off(tty);
-		tty_margin_off(tty);
-		tty_cursor(tty, x, y);
-
-		tty->flags |= TTY_NOBLOCK;
-		tty_add(tty, data, size);
-		tty_invalidate(tty);
-		free(data);
-	}
-
-	if (fallback == 0)
-		sixel_free(new);
-}
-#endif
-
-#ifdef ENABLE_KITTY_IMAGES
-/*
- * Emit a Kitty image to the terminal.
- */
-void
-tty_cmd_kittyimage(struct tty *tty, const struct tty_ctx *ctx)
-{
-	struct kitty_placement	*pl = ctx->kitty_placement;
-	struct kitty_image	*img = pl->image;
-	char			*control = NULL, *place = NULL;
-	char			 placeholder[128];
-	const char		*compression;
-	uint32_t		 image_id;
-	int			 place_len = 0;
-	u_int			 cx = ctx->ocx, cy = ctx->ocy;
-	u_int			 i, j, x, y, rx, ry;
-	int			 fallback = 0, upload_image, uploaded;
-
-	if (~tty->term->flags & TERM_KITTY)
-		fallback = 1;
-	if (tty->xpixel == 0 || tty->ypixel == 0)
-		fallback = 1;
-
-	if (fallback == 1) {
-		/* Render a text placeholder instead. */
-		log_debug("%s: Kitty not supported, rendering fallback",
-		    __func__);
-		snprintf(placeholder, sizeof placeholder,
-		    "[KITTY IMAGE %ux%u]", img->pixel_width, img->pixel_height);
-		tty_region_off(tty);
-		tty_margin_off(tty);
-		tty_cursor(tty, cx, cy);
-		tty->flags |= TTY_NOBLOCK;
-		tty_add(tty, placeholder, strlen(placeholder));
-		tty_invalidate(tty);
-		return;
-	}
-
-	upload_image = (ctx->flags & TTY_CTX_KITTY_UPLOAD);
-	image_id = (img->tty_id != 0 ? img->tty_id : img->id);
-	compression = (img->compression == 1 ? ",o=z" : "");
-
-	uploaded = (img->id != 0 && tty_kitty_image_uploaded(tty, img));
-
-	/*
-	 * Clear stale placements once per image redraw. If the image data is
-	 * already uploaded, keep the data and delete placements only.
-	 */
-	if (img->id != 0 && upload_image) {
-		tty_region_off(tty);
-		tty_margin_off(tty);
-		tty->flags |= TTY_NOBLOCK;
-		if (uploaded) {
-			place_len = xasprintf(&place,
-			    "\033_Ga=d,d=i,i=%u,q=1\033\\", image_id);
-			tty_add(tty, place, place_len);
-			free(place);
-			place = NULL;
-			place_len = 0;
-		} else {
-			xasprintf(&control, "a=t,i=%u,f=%d,s=%u,v=%u%s",
-			    image_id, img->format, img->pixel_width,
-			    img->pixel_height, compression);
-			tty_add_kitty_chunks(tty, control, img->payload,
-			    img->payload_len);
-			if (~tty->flags & TTY_BLOCK)
-				tty_kitty_image_mark_uploaded(tty, img);
-			free(control);
-			control = NULL;
-		}
-		tty_invalidate(tty);
-	}
-
-	if (!tty_clamp_area(tty, ctx, cx, cy, pl->cols, pl->rows,
-	    &i, &j, &x, &y, &rx, &ry))
-		return;
-	log_debug("%s: clamping to %u,%u-%u,%u", __func__, i, j, rx, ry);
-
-	if (img->id == 0)
-		xasprintf(&control,
-		    "a=T,f=%d,s=%u,v=%u%s,x=%u,y=%u,w=%u,h=%u,X=%u,Y=%u,"
-		    "c=%u,r=%u,z=%d,C=1", img->format, img->pixel_width,
-		    img->pixel_height, compression, pl->src_x, pl->src_y,
-		    pl->src_w, pl->src_h, pl->cell_xoff, pl->cell_yoff,
-		    pl->cols, pl->rows, pl->zindex);
-
-	/* Build placement command. */
-	if (img->id != 0)
-		place_len = xasprintf(&place,
-		    "\033_Ga=p,i=%u,p=%u,x=%u,y=%u,w=%u,h=%u,X=%u,Y=%u,"
-		    "c=%u,r=%u,z=%d,C=1,q=1\033\\",
-		    image_id, pl->placement_id, pl->src_x, pl->src_y,
-		    pl->src_w, pl->src_h, pl->cell_xoff, pl->cell_yoff,
-		    pl->cols, pl->rows, pl->zindex);
-
-	/* Move to the correct position and emit. */
-	tty_region_off(tty);
-	tty_margin_off(tty);
-	tty_cursor(tty, x, y);
-
-	tty->flags |= TTY_NOBLOCK;
-	if (control != NULL) {
-		tty_add_kitty_chunks(tty, control, img->payload,
-		    img->payload_len);
-		free(control);
-	}
-	if (place != NULL) {
-		tty_add(tty, place, place_len);
-		free(place);
-	}
-	tty_invalidate(tty);
-}
-#endif
 
 void
 tty_cmd_syncstart(struct tty *tty, const struct tty_ctx *ctx)
@@ -2514,10 +2192,11 @@ tty_margin_off(struct tty *tty)
 static void
 tty_margin_pane(struct tty *tty, const struct tty_ctx *ctx)
 {
+	u_int	xoff = ctx->xoff - ctx->rxoff;
 	int	l, r;
 
-	l = ctx->xoff - ctx->wox;
-	r = ctx->xoff + ctx->sx - 1 - ctx->wox;
+	l = ctx->rxoff - ctx->wox;
+	r = ctx->rxoff + ctx->sx - 1 - ctx->wox;
 
 	if (l < 0)
 		l = 0;
@@ -2528,7 +2207,7 @@ tty_margin_pane(struct tty *tty, const struct tty_ctx *ctx)
 	if (r > (int)ctx->wsx)
 		r = ctx->wsx;
 
-	tty_margin(tty, l, r);
+	tty_margin(tty, xoff + l, xoff + r);
 }
 
 /* Set margin at absolute position. */
@@ -2767,6 +2446,33 @@ tty_dim_default_colour(struct tty *tty, int c, int foreground)
 	return (c);
 }
 
+static void
+tty_check_ncv(struct tty *tty, struct grid_cell *gc)
+{
+	int	n;
+
+	if (COLOUR_DEFAULT(gc->fg) && COLOUR_DEFAULT(gc->bg))
+		return;
+
+	n = tty_term_number(tty->term, TTYC_NCV);
+	if (n & 2)
+		gc->attr &= ~GRID_ATTR_ALL_UNDERSCORE;
+	if (n & 4)
+		gc->attr &= ~GRID_ATTR_REVERSE;
+	if (n & 8)
+		gc->attr &= ~GRID_ATTR_BLINK;
+	if (n & 16)
+		gc->attr &= ~GRID_ATTR_DIM;
+	if (n & 32)
+		gc->attr &= ~GRID_ATTR_BRIGHT;
+	if (n & 64)
+		gc->attr &= ~GRID_ATTR_HIDDEN;
+	if (n & 256)
+		gc->attr &= ~GRID_ATTR_CHARSET;
+	if (n & 32768)
+		gc->attr &= ~GRID_ATTR_ITALICS;
+}
+
 void
 tty_attributes(struct tty *tty, const struct grid_cell *gc,
     const struct tty_style_ctx *style_ctx)
@@ -2794,6 +2500,9 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc,
 			changed = colour_palette_get(palette, gc2.bg);
 			if (changed != -1)
 				gc2.bg = changed;
+			changed = colour_palette_get(palette, gc2.us);
+			if (changed != -1)
+				gc2.us = changed;
 		}
 	}
 	gc2.fg = tty_map_theme_colour(tty, gc2.fg);
@@ -2803,6 +2512,11 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc,
 		gc2.fg = tty_dim_default_colour(tty, gc2.fg, 1);
 		gc2.bg = tty_dim_default_colour(tty, gc2.bg, 0);
 		changed = colour_dim(gc2.fg, style_ctx->dim);
+#ifdef ENABLE_IMAGES
+		/* The colour of a placeholder cell is an image ID. */
+		if (kitty_is_placeholder(&gc->data))
+			changed = -1;
+#endif
 		if (changed != -1)
 			gc2.fg = changed;
 		changed = colour_dim(gc2.bg, style_ctx->dim);
@@ -2837,6 +2551,7 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc,
 	tty_check_fg(tty, palette, &gc2);
 	tty_check_bg(tty, palette, &gc2);
 	tty_check_us(tty, palette, &gc2);
+	tty_check_ncv(tty, &gc2);
 
 	/*
 	 * If any bits are being cleared or the underline colour is now default,
@@ -3345,6 +3060,19 @@ tty_clipboard_query(struct tty *tty)
 		tty->flags |= TTY_OSC52QUERY;
 		evtimer_add(&tty->clipboard_timer, &tv);
 	}
+}
+
+void
+tty_size_query(struct tty *tty)
+{
+	if (!(tty->flags & TTY_STARTED) ||
+	    tty->out == NULL ||
+	    tty->client->flags & CLIENT_CONTROL ||
+	    !(tty->term->flags & TERM_VT100LIKE) ||
+	    tty->flags & (TTY_WINSZQUERY|TTY_WINSZPIXELS))
+		return;
+	log_debug("%s: querying terminal size", tty->client->name);
+	tty_send_size_query(tty, 1);
 }
 
 void

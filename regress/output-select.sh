@@ -62,7 +62,7 @@ $TMUX send-keys -t output: -X select-output || fail 'select-output failed'
 $TMUX send-keys -t output: -X copy-selection-no-clear ||
 	fail 'copy output failed'
 $TMUX save-buffer - >"$DIR/captured" || fail 'save output failed'
-printf 'running\n' >"$DIR/expected"
+printf 'running' >"$DIR/expected"
 cmp "$DIR/captured" "$DIR/expected" || fail 'selected output mismatch'
 $TMUX send-keys -t output: -X select-command || fail 'select-command failed'
 $TMUX send-keys -t output: -X copy-selection-no-clear ||

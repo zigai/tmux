@@ -1,4 +1,4 @@
-/* $OpenBSD: key-string.c,v 1.77 2026/03/31 11:46:43 nicm Exp $ */
+/* $OpenBSD: key-string.c,v 1.78 2026/10/27 09:00:29 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>

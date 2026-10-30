@@ -1,4 +1,4 @@
-/* $OpenBSD: spawn.c,v 1.54 2026/10/02 13:20:42 nicm Exp $ */
+/* $OpenBSD: spawn.c,v 1.59 2026/10/23 06:33:22 nicm Exp $ */
 
 /*
  * Copyright (c) 2019 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -140,6 +140,7 @@ spawn_window(struct spawn_context *sc, char **cause)
 			}
 		}
 
+		window_unzoom(w, 1);
 		sc->wp0 = TAILQ_FIRST(&w->panes);
 		TAILQ_REMOVE(&w->panes, sc->wp0, entry);
 
@@ -326,11 +327,12 @@ spawn_pane(struct spawn_context *sc, char **cause)
 			sc->wp0->event = NULL;
 		}
 		if (sc->wp0->fd != -1) {
+			window_pane_utmp_remove(sc->wp0);
 			close(sc->wp0->fd);
 			sc->wp0->fd = -1;
 		}
 		window_pane_reset_mode_all(sc->wp0);
-		screen_reinit(&sc->wp0->base, 0);
+		screen_reinit(&sc->wp0->base);
 		if (sc->wp0->ictx != NULL) {
 			input_free(sc->wp0->ictx);
 			sc->wp0->ictx = NULL;
@@ -383,7 +385,9 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	 * directory.
 	 */
 	if (sc->argc == 0 && (~sc->flags & SPAWN_RESPAWN)) {
-		cmd = options_get_string(s->options, "default-command");
+		cmd = options_get_string(w->options, "window-default-command");
+		if (cmd == NULL || *cmd == '\0')
+			cmd = options_get_string(s->options, "default-command");
 		if (cmd != NULL && *cmd != '\0') {
 			argc = 1;
 			argv = (char **)&cmd;
@@ -465,6 +469,8 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	/* If the command is empty, don't fork a child process. */
 	if (sc->flags & SPAWN_EMPTY) {
 		new_wp->flags |= PANE_EMPTY;
+		new_wp->pid = 0;
+		*new_wp->tty = '\0';
 		new_wp->base.mode &= ~MODE_CURSOR;
 		new_wp->base.mode |= MODE_CRLF;
 		goto complete;
@@ -485,6 +491,10 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	new_wp->pid = fdforkpty(ptm_fd, &new_wp->fd, new_wp->tty, NULL, &ws);
 	if (new_wp->pid == -1) {
 		xasprintf(cause, "fork failed: %s", strerror(errno));
+		if (actual_cwd != NULL &&
+		    chdir(path) != 0 &&
+		    (home == NULL || chdir(home) != 0))
+			chdir("/");
 		new_wp->fd = -1;
 		sigprocmask(SIG_SETMASK, &oldset, NULL);
 		environ_free(child);
@@ -579,16 +589,8 @@ spawn_pane(struct spawn_context *sc, char **cause)
 
 complete:
 	cmd_free_argv(prefix_argc, prefix_argv);
-#ifdef HAVE_UTEMPTER
-	if (~new_wp->flags & PANE_EMPTY) {
-		xasprintf(&cp, "tmux(%lu).%%%u", (long)getpid(), new_wp->id);
-		utempter_add_record(new_wp->fd, cp);
-		kill(getpid(), SIGCHLD);
-		free(cp);
-	}
-#endif
-
 	new_wp->flags &= ~PANE_EXITED;
+	window_pane_utmp_add(new_wp);
 
 	sigprocmask(SIG_SETMASK, &oldset, NULL);
 	window_pane_set_event(new_wp);
@@ -715,7 +717,7 @@ spawn_editor_finish(struct window_pane *wp)
 
 struct spawn_editor_state *
 spawn_editor(struct client *c, const char *buf, size_t len,
-    spawn_finish_edit_cb cb, void *arg)
+    const char *editor, spawn_finish_edit_cb cb, void *arg)
 {
 	struct spawn_editor_state	*es;
 	struct spawn_context		 sc = { 0 };
@@ -729,13 +731,13 @@ spawn_editor(struct client *c, const char *buf, size_t len,
 	FILE				*f;
 	char				*cmd, *cause = NULL;
 	char				 path[] = _PATH_TMP "tmux.XXXXXXXX";
-	const char			*editor;
 	int				 fd;
 
 	if (w->modal != NULL)
 		return (NULL);
 
-	editor = options_get_string(global_options, "editor");
+	if (editor == NULL)
+		editor = options_get_string(global_options, "editor");
 	fd = mkstemp(path);
 	if (fd == -1)
 		return (NULL);

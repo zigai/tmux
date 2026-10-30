@@ -1,4 +1,4 @@
-/* $OpenBSD: screen.c,v 1.107 2026/07/26 09:20:54 nicm Exp $ */
+/* $OpenBSD: screen.c,v 1.108 2026/10/12 10:50:06 nicm Exp $ */
 
 /*
  * Copyright (c) 2007 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -93,29 +93,16 @@ screen_init(struct screen *s, u_int sx, u_int sy, u_int hlimit)
 	s->tabs = NULL;
 	s->sel = NULL;
 
-#ifdef ENABLE_SIXEL
-	TAILQ_INIT(&s->images);
-	TAILQ_INIT(&s->saved_images);
-#endif
-
-#ifdef ENABLE_KITTY_IMAGES
-	TAILQ_INIT(&s->kitty_images);
-	TAILQ_INIT(&s->kitty_placements);
-	TAILQ_INIT(&s->saved_kitty_images);
-	TAILQ_INIT(&s->saved_kitty_placements);
-	memset(&s->kitty_pending, 0, sizeof(s->kitty_pending));
-#endif
-
 	s->write_list = NULL;
 	s->hyperlinks = NULL;
 	s->ranges = NULL;
 
-	screen_reinit(s, 1);
+	screen_reinit(s);
 }
 
 /* Reinitialise screen. */
 void
-screen_reinit(struct screen *s, int check)
+screen_reinit(struct screen *s)
 {
 	s->cx = 0;
 	s->cy = 0;
@@ -134,17 +121,11 @@ screen_reinit(struct screen *s, int check)
 	s->saved_cy = UINT_MAX;
 
 	screen_reset_tabs(s);
-	if (check)
-		grid_check_is_clear(s->grid);
+	grid_free_lines(s->grid, s->grid->hsize, s->grid->sy);
 	grid_clear_lines(s->grid, s->grid->hsize, s->grid->sy, 8);
 
 	screen_clear_selection(s);
 	screen_free_titles(s);
-
-#ifdef ENABLE_SIXEL
-	image_free_all(s);
-#endif
-
 	screen_set_progress_bar(s, PROGRESS_BAR_HIDDEN, 0);
 	screen_reset_hyperlinks(s);
 }
@@ -163,10 +144,6 @@ screen_reset_hyperlinks(struct screen *s)
 void
 screen_free(struct screen *s)
 {
-#ifdef ENABLE_SIXEL
-	struct image	*im;
-#endif
-
 	pane_ranges_free(s);
 	free(s->sel);
 	free(s->tabs);
@@ -184,23 +161,6 @@ screen_free(struct screen *s)
 		hyperlinks_free(s->hyperlinks);
 	screen_free_titles(s);
 
-#ifdef ENABLE_SIXEL
-	/*
-	 * Images saved when entering the alternate screen stay linked in the
-	 * global list; move them back so they are freed and unlinked here, or
-	 * a later eviction would write through this freed screen.
-	 */
-	TAILQ_CONCAT(&s->images, &s->saved_images, entry);
-	TAILQ_FOREACH(im, &s->images, entry)
-		im->list = &s->images;
-	image_free_all(s);
-#endif
-
-#ifdef ENABLE_KITTY_IMAGES
-	kitty_image_free_all(s);
-	kitty_image_free_lists(&s->saved_kitty_images,
-	    &s->saved_kitty_placements);
-#endif
 }
 
 /* Reset tabs to default, eight spaces apart. */
@@ -393,10 +353,6 @@ screen_resize_cursor(struct screen *s, u_int sx, u_int sy, int reflow,
 	if (sy != screen_size_y(s))
 		screen_resize_y(s, sy, eat_empty, &cy);
 
-#ifdef ENABLE_SIXEL
-	image_free_all(s);
-#endif
-
 	if (reflow)
 		screen_reflow(s, sx, &cx, &cy, cursor);
 
@@ -453,6 +409,12 @@ screen_resize_y(struct screen *s, u_int sy, int eat_empty, u_int *cy)
 			if (available > 0) {
 				if (available > needed)
 					available = needed;
+#ifdef ENABLE_IMAGES
+				for (i = oldy - available; i < oldy; i++) {
+					image_grid_free_line(gd,
+					    &gd->linedata[gd->hsize + i]);
+				}
+#endif
 				grid_view_delete_lines(gd, oldy - available,
 				    available, 8);
 			}
@@ -708,10 +670,6 @@ int
 screen_alternate_on(struct screen *s, struct grid_cell *gc, int cursor)
 {
 	u_int		 sx, sy;
-#ifdef ENABLE_SIXEL
-	struct image	*im;
-#endif
-
 	if (SCREEN_IS_ALTERNATE(s))
 		return 0;
 	sx = screen_size_x(s);
@@ -725,20 +683,7 @@ screen_alternate_on(struct screen *s, struct grid_cell *gc, int cursor)
 	}
 	memcpy(&s->saved_cell, gc, sizeof s->saved_cell);
 
-#ifdef ENABLE_SIXEL
-	TAILQ_CONCAT(&s->saved_images, &s->images, entry);
-	TAILQ_FOREACH(im, &s->saved_images, entry)
-	    im->list = &s->saved_images;
-#endif
-
-#ifdef ENABLE_KITTY_IMAGES
-	{
-		TAILQ_CONCAT(&s->saved_kitty_images, &s->kitty_images, entry);
-		TAILQ_CONCAT(&s->saved_kitty_placements, &s->kitty_placements,
-		    entry);
-	}
-#endif
-
+	grid_free_lines(s->grid, screen_hsize(s), sy);
 	grid_view_clear(s->grid, 0, 0, sx, sy, 8);
 
 	s->saved_flags = s->grid->flags;
@@ -752,10 +697,6 @@ int
 screen_alternate_off(struct screen *s, struct grid_cell *gc, int cursor)
 {
 	u_int		 sx = screen_size_x(s), sy = screen_size_y(s);
-#ifdef ENABLE_SIXEL
-	struct image	*im;
-#endif
-
 	/*
 	 * If the current size is different, temporarily resize to the old size
 	 * before copying back.
@@ -783,6 +724,10 @@ screen_alternate_off(struct screen *s, struct grid_cell *gc, int cursor)
 		return 0;
 	}
 
+	/* Clamp cursor to the current screen size. */
+	if (s->cy > screen_size_y(s) - 1)
+		s->cy = screen_size_y(s) - 1;
+
 	/* Restore the saved grid. */
 	grid_duplicate_lines(s->grid, screen_hsize(s), s->saved_grid, 0,
 	    s->saved_grid->sy);
@@ -797,19 +742,6 @@ screen_alternate_off(struct screen *s, struct grid_cell *gc, int cursor)
 
 	grid_destroy(s->saved_grid);
 	s->saved_grid = NULL;
-
-#ifdef ENABLE_SIXEL
-	image_free_all(s);
-	TAILQ_CONCAT(&s->images, &s->saved_images, entry);
-	TAILQ_FOREACH(im, &s->images, entry)
-	    im->list = &s->images;
-#endif
-
-#ifdef ENABLE_KITTY_IMAGES
-	kitty_image_free_all(s);
-	TAILQ_CONCAT(&s->kitty_images, &s->saved_kitty_images, entry);
-	TAILQ_CONCAT(&s->kitty_placements, &s->saved_kitty_placements, entry);
-#endif
 
 	if (s->cx > screen_size_x(s) - 1)
 		s->cx = screen_size_x(s) - 1;

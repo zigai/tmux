@@ -1,4 +1,4 @@
-/* $OpenBSD: utf8.c,v 1.74 2026/10/05 08:32:24 nicm Exp $ */
+/* $OpenBSD: utf8.c,v 1.77 2026/10/27 15:36:33 nicm Exp $ */
 
 /*
  * Copyright (c) 2008 Nicholas Marriott <nicholas.marriott@gmail.com>
@@ -208,7 +208,8 @@ static struct utf8_width_item utf8_default_width_cache[] = {
 	{ .wc = 0x1FAF5, .width = 2 },
 	{ .wc = 0x1FAF6, .width = 2 },
 	{ .wc = 0x1FAF7, .width = 2 },
-	{ .wc = 0x1FAF8, .width = 2 }
+	{ .wc = 0x1FAF8, .width = 2 },
+	{ .wc = 0x10EEEE, .width = 1 }
 };
 
 struct utf8_item {
@@ -676,6 +677,11 @@ utf8_fromwc(wchar_t wc, struct utf8_data *ud)
 {
 	int	size, width;
 
+	memset(ud, 0, sizeof *ud);
+
+	if (wc < 0 || wc > 0x10ffff || (wc >= 0xd800 && wc <= 0xdfff))
+		return (UTF8_ERROR);
+
 #ifdef HAVE_UTF8PROC
 	size = utf8proc_wctomb(ud->data, wc);
 #else
@@ -835,7 +841,7 @@ utf8_isvalid(const char *s)
 				continue;
 			return (0);
 		}
-		if (*s < 0x20 || *s > 0x7e)
+		if (*s != '\t' && *s != '\n' && (*s < 0x20 || *s > 0x7e))
 			return (0);
 		s++;
 	}

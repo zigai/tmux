@@ -56,7 +56,7 @@ check_support(void)
 	}
 	pclose(f);
 	run_tmux("kill-server");
-	return (strstr(out, "kitty") != NULL);
+	return (strcmp(out, "1\n") == 0);
 }
 
 static size_t
@@ -89,15 +89,26 @@ read_pty_until(int fd, char *buf, size_t max, const char *needle,
 	return (len);
 }
 
+static size_t
+count_matches(const char *buf, const char *needle)
+{
+	size_t	n = 0;
+
+	while ((buf = strstr(buf, needle)) != NULL) {
+		n++;
+		buf += strlen(needle);
+	}
+	return (n);
+}
+
 static void
 write_test_images(void)
 {
 	FILE	*f;
 	int	 fd;
 
-	snprintf(data_file, sizeof data_file, "/tmp/kdraw_%ld.bin",
-	    (long)getpid());
-	fd = open(data_file, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	strlcpy(data_file, "/tmp/kdraw.XXXXXX", sizeof data_file);
+	fd = mkstemp(data_file);
 	if (fd < 0)
 		return;
 	f = fdopen(fd, "wb");
@@ -106,10 +117,10 @@ write_test_images(void)
 		return;
 	}
 
-	/* 1. Image 77: compressed, placement 9 and 10. */
-	fprintf(f, "\033_Ga=T,i=77,p=9,f=24,o=z,s=2,v=2,x=1,y=2,w=3,h=4,q=1,"
-	    "X=5,Y=6,c=7,r=8,z=-3;QUJDREVGR0hJSktM\033\\");
-	fprintf(f, "\033_Ga=p,i=77,p=10,c=1,r=1,q=1\033\\");
+	/* 1. Image 77: compressed 2x2 RGB, placements 9 and 10. */
+	fprintf(f, "\033_Ga=T,i=77,p=9,f=24,o=z,s=2,v=2,x=1,y=0,w=1,h=2,q=1,"
+	    "X=5,Y=6,c=7,r=8,z=-3;eJz7z8DA8B+E////DwAd7gX7\033\\");
+	fprintf(f, "\033[10;10H\033_Ga=p,i=77,p=10,c=1,r=1,q=1\033\\");
 
 	/* 2. Image 88: offscreen at col 101 (p=20) and onscreen at col 1 (p=21). */
 	fprintf(f,
@@ -117,7 +128,7 @@ write_test_images(void)
 	fprintf(f, "\033[1;1H\033_Ga=p,i=88,p=21,c=1,r=1,q=1\033\\");
 
 	/* 3. Anonymous direct image. */
-	fprintf(f, "\033_Ga=T,f=24,s=1,v=1,c=1,r=1;QUJD\033\\");
+	fprintf(f, "\033[20;20H\033_Ga=T,f=24,s=1,v=1,c=1,r=1;QUJD\033\\");
 
 	fclose(f);
 }
@@ -127,7 +138,7 @@ main(void)
 {
 	const char	*env_tmux;
 	char		 setup_cmd[4096];
-	char		 out[65536], redraw[65536], out2[65536];
+	static char	 out[1 << 20], redraw[1 << 20], out2[1 << 20];
 	struct winsize	 ws;
 	pid_t		 child1, child2;
 	int		 master1, master2;
@@ -144,7 +155,7 @@ main(void)
 
 	if (!check_support()) {
 		printf("Kitty graphics not supported by binary, skipping\n");
-		return (0);
+		return (101);
 	}
 
 	/* Clean previous server if any. */
@@ -154,7 +165,7 @@ main(void)
 
 	snprintf(setup_cmd, sizeof setup_cmd,
 	    "%s -L%s -f/dev/null start-server \\; "
-	    "set-option -g terminal-features 'xterm*:kitty' \\; "
+	    "set-option -g terminal-features 'xterm*:kittygraphics' \\; "
 	    "set-option -g window-size manual \\; "
 	    "new-session -x 120 -y 24 -d -s %s "
 	    "\"cat %s; sleep 30\"",
@@ -189,7 +200,7 @@ main(void)
 	}
 
 	/* Read initial draw from Client 1. */
-	len = read_pty_until(master1, out, sizeof out, "z=-3", 5.0);
+	len = read_pty_until(master1, out, sizeof out, NULL, 3.0);
 	if (len == 0) {
 		fprintf(stderr, "FAIL: did not receive initial draw\n");
 		kill(child1, SIGKILL);
@@ -199,42 +210,35 @@ main(void)
 	}
 
 	/* Assert expected protocol elements are present for Client 1. */
-	if (strstr(out, "QUJDREVGR0hJSktM") == NULL) {
-		fprintf(stderr, "FAIL: missing payload data in draw\n");
+	if (strstr(out, "\033_Ga=t,f=32,") == NULL ||
+	    strstr(out, "o=z") != NULL) {
+		fprintf(stderr, "FAIL: images not uploaded as RGBA pixels\n");
 		kill(child1, SIGKILL);
 		run_tmux("kill-server");
 		unlink(data_file);
 		return (1);
 	}
-	if (strstr(out, "z=-3") == NULL || strstr(out, "o=z") == NULL) {
-		fprintf(stderr, "FAIL: missing z-index or compression flags\n");
+	if (strstr(out, ",z=-3,") == NULL) {
+		fprintf(stderr, "FAIL: missing z-index\n");
 		kill(child1, SIGKILL);
 		run_tmux("kill-server");
 		unlink(data_file);
 		return (1);
 	}
-	if (strstr(out, "p=9") == NULL || strstr(out, "p=10") == NULL) {
-		fprintf(stderr, "FAIL: missing placement 9 or 10\n");
+	/*
+	 * Each visible placement is uploaded once: placements 9 and 10 of
+	 * image 77, placement 21 of image 88 and the anonymous image. The
+	 * offscreen placement 20 is not.
+	 */
+	if (count_matches(out, "\033_Ga=t,") != 4) {
+		fprintf(stderr, "FAIL: expected 4 uploads, got %zu\n",
+		    count_matches(out, "\033_Ga=t,"));
 		kill(child1, SIGKILL);
 		run_tmux("kill-server");
 		unlink(data_file);
 		return (1);
 	}
-	if (strstr(out, "p=21") == NULL) {
-		fprintf(stderr, "FAIL: missing onscreen placement 21\n");
-		kill(child1, SIGKILL);
-		run_tmux("kill-server");
-		unlink(data_file);
-		return (1);
-	}
-	if (strstr(out, "p=20") != NULL) {
-		fprintf(stderr, "FAIL: offscreen placement 20 was emitted\n");
-		kill(child1, SIGKILL);
-		run_tmux("kill-server");
-		unlink(data_file);
-		return (1);
-	}
-	if (strstr(out, "\033_Ga=p,i=0") != NULL) {
+	if (strstr(out, "\033_Ga=p,i=0,") != NULL) {
 		fprintf(stderr,
 		    "FAIL: unexpected anonymous placement with id zero\n");
 		kill(child1, SIGKILL);
@@ -247,7 +251,7 @@ main(void)
 	run_tmux("refresh-client");
 	len = read_pty_until(master1, redraw, sizeof redraw, NULL, 1.5);
 	if (len > 0) {
-		if (strstr(redraw, "QUJDREVGR0hJSktM") != NULL) {
+		if (strstr(redraw, "\033_Ga=t,") != NULL) {
 			fprintf(stderr,
 			    "FAIL: redraw re-uploaded image payload\n");
 			kill(child1, SIGKILL);
@@ -259,9 +263,8 @@ main(void)
 
 	/*
 	 * Multi-Client Isolation Verification:
-	 * Attach Client 2 with TERM=dumb (no kitty capability).
-	 * Client 2 MUST receive [KITTY IMAGE ...] fallback placeholder,
-	 * NOT raw escape sequences.
+	 * Attach Client 2 with TERM=vt100 (no Kitty graphics). Client 2 must
+	 * be drawn with the text fallback and receive no graphics commands.
 	 */
 	child2 = forkpty(&master2, NULL, NULL, &ws);
 	if (child2 >= 0) {
@@ -273,11 +276,10 @@ main(void)
 			_exit(127);
 		}
 
-		len = read_pty_until(master2, out2, sizeof out2, "KITTY IMAGE",
-		    3.0);
-		if (strstr(out2, "KITTY IMAGE") == NULL) {
+		len = read_pty_until(master2, out2, sizeof out2, NULL, 3.0);
+		if (len == 0 || strstr(out2, "\033_G") != NULL) {
 			fprintf(stderr,
-			    "FAIL: client 2 did not receive fallback placeholder\n");
+			    "FAIL: client 2 was not drawn without graphics\n");
 			kill(child1, SIGKILL);
 			kill(child2, SIGKILL);
 			run_tmux("kill-server");

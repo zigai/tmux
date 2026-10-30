@@ -1,33 +1,44 @@
 #!/bin/sh
 
+# Build and run the Kitty graphics unit tests against the built tmux objects.
+
 PATH=/bin:/usr/bin
 export PATH
 
 cd "$(dirname "$0")" || exit 1
 
+[ -f ../image-kitty.o ] || exit 101
+
 CC=${CC:-cc}
 PROG=$(mktemp)
 ERR=$(mktemp)
-trap "rm -f $PROG $ERR" 0 1 15
+MAIN=$(mktemp).o
+trap 'rm -f "$PROG" "$ERR" "$MAIN"' 0 1 15
 
-if grep -q -- "-DHAVE_B64_NTOP=1" ../Makefile 2>/dev/null; then
-	CPPFLAGS="$CPPFLAGS -DHAVE_B64_NTOP=1"
-fi
-if grep -q -- "-lresolv" ../Makefile 2>/dev/null; then
-	LIBS="$LIBS -lresolv"
-fi
-
-try_compile() {
-	$CC $CPPFLAGS $CFLAGS -DKITTY_TEST -DENABLE_KITTY_IMAGES \
-	    -I.. -I../compat kitty-test.c $LDFLAGS "$@" -o "$PROG" \
-	    2>"$ERR"
+makevar() {
+	${MAKE:-make} -s -C .. --no-print-directory \
+	    --eval 'print-%: ; $(info $($*))@:' "print-$1" || exit 1
 }
 
-if ! try_compile $LIBS; then
-	if ! try_compile $LIBS -lresolv; then
-		cat "$ERR"
-		exit 1
-	fi
+OBJS=$MAIN
+for o in ../*.o ../compat/*.o; do
+	case $o in
+	../tmux.o|../image-kitty.o)
+		;;
+	*)
+		OBJS="$OBJS $o"
+		;;
+	esac
+done
+
+eval "set -- $(makevar DEFS) $(makevar AM_CPPFLAGS) $(makevar CPPFLAGS) \
+    $(makevar AM_CFLAGS) $(makevar CFLAGS)"
+# Keep the helpers and globals from tmux.c but not its main.
+if ! $CC "$@" -Dmain=tmux_main -I.. -I../compat -c -o "$MAIN" ../tmux.c \
+    2>"$ERR" || ! $CC "$@" -I.. -I../compat -o "$PROG" kitty-test.c $OBJS \
+    $(makevar LDFLAGS) $(makevar LIBS) 2>"$ERR"; then
+	cat "$ERR"
+	exit 1
 fi
 
 "$PROG"
