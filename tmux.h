@@ -717,6 +717,7 @@ enum tty_code_code {
 	TTYC_SMULX,
 	TTYC_SMXX,
 	TTYC_SPB,
+	TTYC_SPTR,
 	TTYC_SXL,
 	TTYC_SS,
 	TTYC_SWD,
@@ -1118,6 +1119,13 @@ struct progress_bar {
 	int			progress;
 };
 
+/* Mouse pointer shape stack, OSC 22. */
+#define POINTER_SHAPE_STACK 16
+struct pointer_shapes {
+	u_char	stack[POINTER_SHAPE_STACK];
+	u_int	count;
+};
+
 /* Virtual screen. */
 struct screen_sel;
 struct screen_titles;
@@ -1157,6 +1165,9 @@ struct screen {
 	struct hyperlinks		*hyperlinks;
 	struct pane_ranges		*ranges;
 	struct progress_bar		 progress_bar;
+
+	struct pointer_shapes		 main_pointer_shapes;
+	struct pointer_shapes		 alternate_pointer_shapes;
 };
 
 enum pane_range_state {
@@ -1948,6 +1959,7 @@ struct tty {
 #define TTY_HAVEKITTYGRAPHICS 0x20000
 #define TTY_WINSZPIXELS 0x40000
 #define TTY_WINSZAPPLY 0x80000
+#define TTY_MOUSEPOSITION 0x100000
 #define TTY_ALL_REQUEST_FLAGS \
 	(TTY_HAVEDA|TTY_HAVEDA2|TTY_HAVEXDA|TTY_HAVESYNC|TTY_HAVEKITTYGRAPHICS)
 	int		 flags;
@@ -1967,6 +1979,7 @@ struct tty {
 	int		 mouse_slider_mpos;
 	int			 mouse_capture_pane;
 	int              mouse_last_pane;
+	int		 pointer_shape;
 	void		(*mouse_drag_update)(struct client *,
 			    struct mouse_event *);
 	void		(*mouse_drag_release)(struct client *,
@@ -3109,6 +3122,7 @@ void	tty_stop_tty(struct tty *);
 void	tty_set_title(struct tty *, const char *);
 void	tty_set_path(struct tty *, const char *);
 void	tty_set_progress_bar(struct tty *, struct progress_bar *);
+void	tty_set_pointer_shape(struct tty *, u_int);
 void	tty_default_attributes(struct tty *, u_int,
 	    const struct tty_style_ctx *);
 void	tty_update_mode(struct tty *, int, struct screen *);
@@ -3860,6 +3874,11 @@ int	 screen_set_path(struct screen *, const char *, int);
 void	 screen_push_title(struct screen *);
 void	 screen_pop_title(struct screen *);
 void	 screen_set_progress_bar(struct screen *, enum progress_bar_state, int);
+void	 screen_reset_pointer_shapes(struct screen *);
+void	 screen_set_pointer_shape(struct screen *, u_int);
+void	 screen_push_pointer_shape(struct screen *, u_int);
+void	 screen_pop_pointer_shape(struct screen *);
+u_int	 screen_pointer_shape(struct screen *);
 void	 screen_resize(struct screen *, u_int, u_int, int);
 void	 screen_resize_cursor(struct screen *, u_int, u_int, int, int, int);
 void	 screen_set_selection(struct screen *, u_int, u_int, u_int, u_int,
@@ -4451,6 +4470,11 @@ struct hyperlinks	*hyperlinks_init(void);
 struct hyperlinks	*hyperlinks_copy(struct hyperlinks *);
 void			 hyperlinks_reset(struct hyperlinks *);
 void			 hyperlinks_free(struct hyperlinks *);
+
+/* pointer-shapes.c */
+u_int		 pointer_shape_find(const char *);
+u_int		 pointer_shape_find_alias(const char *);
+const char	*pointer_shape_name(u_int);
 
 /* json.c */
 struct json_node	*json_parse(const char *, char **);

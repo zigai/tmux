@@ -398,6 +398,17 @@ static const struct tty_feature tty_feature_progressbar = {
 	0
 };
 
+/* Terminal supports OSC 22 mouse pointer shapes. */
+static const char *const tty_feature_pointershape_capabilities[] = {
+	"Sptr=\\E]22;%p1%s\\E\\\\",
+	NULL
+};
+static const struct tty_feature tty_feature_pointershape = {
+	"pointershape",
+	tty_feature_pointershape_capabilities,
+	0
+};
+
 /* Terminal supports UTF-8. */
 static const struct tty_feature tty_feature_utf8 = {
 	"utf8",
@@ -423,6 +434,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_mouse,
 	&tty_feature_osc7,
 	&tty_feature_overline,
+	&tty_feature_pointershape,
 	&tty_feature_progressbar,
 	&tty_feature_rectfill,
 	&tty_feature_rgb,
@@ -618,6 +630,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "overline,"
 			      "usstyle,"
 			      "hyperlinks,"
+			      "pointershape,"
 			      "progressbar"
 		},
 		{ .name = "rxvt-unicode",
@@ -677,6 +690,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "sync,"
 			      "usstyle,"
 			      "progressbar,"
+			      "pointershape,"
 			      "kittygraphics"
 		},
 		{ .name = "kitty",
@@ -688,6 +702,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "hyperlinks,"
 			      "imagescroll,"
 			      "osc7,"
+			      "pointershape,"
 			      "sync,"
 			      "usstyle,"
 			      "kittygraphics"

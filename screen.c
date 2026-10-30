@@ -127,6 +127,7 @@ screen_reinit(struct screen *s)
 	screen_clear_selection(s);
 	screen_free_titles(s);
 	screen_set_progress_bar(s, PROGRESS_BAR_HIDDEN, 0);
+	screen_reset_pointer_shapes(s);
 	screen_reset_hyperlinks(s);
 }
 
@@ -322,6 +323,68 @@ screen_set_progress_bar(struct screen *s, enum progress_bar_state pbs, int p)
 	s->progress_bar.state = pbs;
 	if (p >= 0 && pbs != PROGRESS_BAR_INDETERMINATE)
 		s->progress_bar.progress = p;
+}
+
+/* Get the pointer shape stack for the current (main or alternate) screen. */
+static struct pointer_shapes *
+screen_pointer_shapes(struct screen *s)
+{
+	if (SCREEN_IS_ALTERNATE(s))
+		return (&s->alternate_pointer_shapes);
+	return (&s->main_pointer_shapes);
+}
+
+/* Empty both pointer shape stacks. */
+void
+screen_reset_pointer_shapes(struct screen *s)
+{
+	s->main_pointer_shapes.count = 0;
+	s->alternate_pointer_shapes.count = 0;
+}
+
+/* Replace the top pointer shape, or add it if the stack is empty. */
+void
+screen_set_pointer_shape(struct screen *s, u_int shape)
+{
+	struct pointer_shapes	*ps = screen_pointer_shapes(s);
+
+	if (ps->count == 0)
+		ps->count = 1;
+	ps->stack[ps->count - 1] = shape;
+}
+
+/* Push a pointer shape, dropping the bottom shape if the stack is full. */
+void
+screen_push_pointer_shape(struct screen *s, u_int shape)
+{
+	struct pointer_shapes	*ps = screen_pointer_shapes(s);
+
+	if (ps->count == POINTER_SHAPE_STACK) {
+		memmove(ps->stack, ps->stack + 1, ps->count - 1);
+		ps->count--;
+	}
+	ps->stack[ps->count++] = shape;
+}
+
+/* Pop the top pointer shape. */
+void
+screen_pop_pointer_shape(struct screen *s)
+{
+	struct pointer_shapes	*ps = screen_pointer_shapes(s);
+
+	if (ps->count != 0)
+		ps->count--;
+}
+
+/* Get the current pointer shape, zero if none. */
+u_int
+screen_pointer_shape(struct screen *s)
+{
+	struct pointer_shapes	*ps = screen_pointer_shapes(s);
+
+	if (ps->count == 0)
+		return (0);
+	return (ps->stack[ps->count - 1]);
 }
 
 

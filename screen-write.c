@@ -457,6 +457,7 @@ screen_write_reset(struct screen_write_ctx *ctx)
 	struct screen	*s = ctx->s;
 
 	screen_reset_tabs(s);
+	screen_reset_pointer_shapes(s);
 	screen_write_scrollregion(ctx, 0, screen_size_y(s) - 1);
 
 	s->mode = MODE_CURSOR|MODE_WRAP;
