@@ -2295,13 +2295,40 @@ kitty_feature_supported(char action, char key, const char *value)
 		keys = "pxywhXYcrCz";
 		break;
 	case KITTY_ACTION_DELETE:
-		keys = "dpxyz";
+		keys = "dpxyzr";
+		break;
+	case KITTY_ACTION_TRANSMIT_FRAME:
+		keys = "ftosvSOxycrzXY";
+		break;
+	case KITTY_ACTION_CONTROL_ANIMATION:
+		keys = "srzcv";
+		break;
+	case KITTY_ACTION_COMPOSE_FRAME:
+		keys = "rcxyXYwhC";
 		break;
 	default:
 		return (0);
 	}
 	if (strchr(keys, key) == NULL)
 		return (0);
+
+	/* Animation keys with a fixed set of values. */
+	switch (action) {
+	case KITTY_ACTION_TRANSMIT_FRAME:
+		if (key == 'f') {
+			return (strcmp(value, "24") == 0 ||
+			    strcmp(value, "100") == 0);
+		}
+		if (key == 'X')
+			return (strcmp(value, "1") == 0);
+		break;
+	case KITTY_ACTION_CONTROL_ANIMATION:
+		if (key == 's') {
+			return (strchr("123", value[0]) != NULL &&
+			    value[1] == '\0');
+		}
+		break;
+	}
 
 	switch (key) {
 	case 'f':
@@ -2312,7 +2339,7 @@ kitty_feature_supported(char action, char key, const char *value)
 	case 't':
 		return (strchr("fts", value[0]) != NULL && value[1] == '\0');
 	case 'd':
-		return (strchr("AiInNcCpPqQrRxXyYzZ", value[0]) != NULL &&
+		return (strchr("AiInNcCpPqQrRxXyYzZfF", value[0]) != NULL &&
 		    value[1] == '\0');
 	case 'C':
 		return (strcmp(value, "1") == 0);
@@ -2334,7 +2361,10 @@ kitty_handle_feature_query(struct input_ctx *ictx, struct kitty_command *cmd,
 	    cmd->feature == KITTY_ACTION_TRANSMIT ||
 	    cmd->feature == KITTY_ACTION_TRANSMIT_AND_DISPLAY ||
 	    cmd->feature == KITTY_ACTION_PLACE ||
-	    cmd->feature == KITTY_ACTION_DELETE)
+	    cmd->feature == KITTY_ACTION_DELETE ||
+	    cmd->feature == KITTY_ACTION_TRANSMIT_FRAME ||
+	    cmd->feature == KITTY_ACTION_CONTROL_ANIMATION ||
+	    cmd->feature == KITTY_ACTION_COMPOSE_FRAME)
 		xasprintf(&extra, ",e=%c", cmd->feature);
 
 	copy = ptr = xstrndup(data, size);

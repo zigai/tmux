@@ -3014,6 +3014,20 @@ test_feature_query(void)
 	reply = test_graphics("a=q,i=31,e=d,d=A,d=a,x=3", NULL);
 	TEST_ASSERT("feature_query: delete",
 	    test_replied(reply, "i=31,e=d,d=A,x=3;OK"));
+	reply = test_graphics("a=q,i=31,e=d,d=F,r=2", NULL);
+	TEST_ASSERT("feature_query: frame delete",
+	    test_replied(reply, "i=31,e=d,d=F,r=2;OK"));
+	reply = test_graphics("a=q,i=31,e=f,f=24,f=8,X=1,X=2,z=-1,c=2,Y=255,"
+	    "o=z,t=s,C=1", NULL);
+	TEST_ASSERT("feature_query: frame",
+	    test_replied(reply, "i=31,e=f,f=24,X=1,z=-1,c=2,Y=255,o=z,t=s;OK"));
+	reply = test_graphics("a=q,i=31,e=a,s=3,s=4,v=2,c=1,r=1,z=50,x=1",
+	    NULL);
+	TEST_ASSERT("feature_query: animation",
+	    test_replied(reply, "i=31,e=a,s=3,v=2,c=1,r=1,z=50;OK"));
+	reply = test_graphics("a=q,i=31,e=c,r=1,c=2,X=1,w=2,C=1,z=1", NULL);
+	TEST_ASSERT("feature_query: compose",
+	    test_replied(reply, "i=31,e=c,r=1,c=2,X=1,w=2,C=1;OK"));
 	reply = test_graphics("a=q,i=31,e=Z,C=1", NULL);
 	TEST_ASSERT("feature_query: unknown action",
 	    test_replied(reply, "i=31;OK"));
