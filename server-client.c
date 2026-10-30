@@ -793,6 +793,14 @@ server_client_check_mouse(struct client *c, struct key_event *event)
 		type = KEYC_TYPE_MOUSEMOVE;
 		x = m->x, y = m->y, b = 0;
 		log_debug("move at %u,%u", x, y);
+	} else if (MOUSE_DRAG(m->b) &&
+	    c->tty.mouse_button_pressed != (int)MOUSE_BUTTONS(m->b) +
+	    1) {
+		type = KEYC_TYPE_MOUSEMOVE;
+		x = m->x, y = m->y, b = 0;
+		m->b = m->sgr_b = (m->b & MOUSE_MASK_MODIFIERS) |
+		    MOUSE_MASK_DRAG | 3;
+		m->lb = 3;
 	} else if (MOUSE_DRAG(m->b)) {
 		type = KEYC_TYPE_MOUSEDRAG;
 		if (c->tty.mouse_drag_flag) {
@@ -847,6 +855,13 @@ have_event:
 	if (type == KEYC_TYPE_NOTYPE)
 		return (KEYC_UNKNOWN);
 
+	if (type == KEYC_TYPE_MOUSEDOWN ||
+	    type == KEYC_TYPE_SECONDCLICK ||
+	    type == KEYC_TYPE_TRIPLECLICK)
+		c->tty.mouse_button_pressed = MOUSE_BUTTONS(b) + 1;
+	else if (type == KEYC_TYPE_MOUSEUP || type == KEYC_TYPE_MOUSEMOVE)
+		c->tty.mouse_button_pressed = 0;
+
 	/* Save the session. */
 	m->s = s->id;
 	m->w = -1;
@@ -857,7 +872,22 @@ have_event:
 	/* Is this on the status line? */
 	m->statusat = status_at_line(c);
 	m->statuslines = status_line_size(c);
-	if (m->statusat != -1 &&
+	if (w->modal != NULL &&
+	    (type == KEYC_TYPE_MOUSEDRAG || type == KEYC_TYPE_MOUSEUP) &&
+	    c->tty.mouse_capture_pane == (int)w->modal->id) {
+		modal_drag = 1;
+		wp = w->modal;
+		loc = KEYC_MOUSE_LOCATION_PANE;
+		m->wp = wp->id;
+		m->w = w->id;
+		m->captured = 1;
+		tty_window_offset(&c->tty, &m->ox, &m->oy, &sx, &sy);
+		px = x + m->ox;
+		py = y + m->oy;
+		if (m->statusat == 0 && y >= m->statuslines)
+			py -= m->statuslines;
+	}
+	if (!modal_drag && m->statusat != -1 &&
 	    y >= (u_int)m->statusat &&
 	    y < m->statusat + m->statuslines) {
 		sr = status_get_range(c, x, y - m->statusat);
@@ -946,33 +976,21 @@ have_event:
 		py = py + m->oy;
 		if (w->modal != NULL &&
 		    !window_pane_contains(w->modal, px, py)) {
-			if ((type == KEYC_TYPE_MOUSEDRAG ||
-			    type == KEYC_TYPE_MOUSEUP) &&
-			    ((lwp == w->modal && c->tty.mouse_drag_flag != 0) ||
-			     c->tty.mouse_capture_pane == (int)w->modal->id)) {
-				modal_drag = 1;
-				wp = w->modal;
-				loc = KEYC_MOUSE_LOCATION_PANE;
-				m->wp = wp->id;
-				m->w = wp->window->id;
-				m->captured = 1;
-			} else {
-				server_client_update_scrollbar_hover(c, type,
-				    -1, -1);
-				c->tty.mouse_drag_update = NULL;
-				c->tty.mouse_drag_release = NULL;
-				c->tty.mouse_drag_flag = 0;
-				c->tty.mouse_scrolling_flag = 0;
-				c->tty.mouse_slider_mpos = -1;
-				c->tty.mouse_last_pane = -1;
-				c->tty.mouse_capture_pane = -1;
-				if ((w->modal->flags & PANE_CLOSEONCLICK) &&
-				    (type == KEYC_TYPE_MOUSEDOWN ||
-				    type == KEYC_TYPE_SECONDCLICK ||
-				    type == KEYC_TYPE_TRIPLECLICK))
-					server_kill_pane(w->modal);
-				return (KEYC_UNKNOWN);
-			}
+			server_client_update_scrollbar_hover(c, type,
+			    -1, -1);
+			c->tty.mouse_drag_update = NULL;
+			c->tty.mouse_drag_release = NULL;
+			c->tty.mouse_drag_flag = 0;
+			c->tty.mouse_scrolling_flag = 0;
+			c->tty.mouse_slider_mpos = -1;
+			c->tty.mouse_last_pane = -1;
+			c->tty.mouse_capture_pane = -1;
+			if ((w->modal->flags & PANE_CLOSEONCLICK) &&
+			    (type == KEYC_TYPE_MOUSEDOWN ||
+			     type == KEYC_TYPE_SECONDCLICK ||
+			     type == KEYC_TYPE_TRIPLECLICK))
+				server_kill_pane(w->modal);
+			return (KEYC_UNKNOWN);
 		}
 		server_client_update_scrollbar_hover(c, type, px, py);
 
@@ -1020,7 +1038,9 @@ have_event:
 	 * A press inside a modal pane captures the pointer, so a drag or
 	 * release outside it still goes to that pane.
 	 */
-	if (type == KEYC_TYPE_MOUSEDOWN) {
+	if (type == KEYC_TYPE_MOUSEDOWN ||
+	    type == KEYC_TYPE_SECONDCLICK ||
+	    type == KEYC_TYPE_TRIPLECLICK) {
 		if (loc == KEYC_MOUSE_LOCATION_PANE && wp != NULL &&
 		    wp == w->modal)
 			c->tty.mouse_capture_pane = wp->id;
@@ -1035,8 +1055,10 @@ have_event:
 	    type == KEYC_TYPE_TRIPLECLICK) {
 		if (type != KEYC_TYPE_MOUSEDOWN &&
 		    (m->b != c->click_button ||
-		    loc != (enum key_code_mouse_location)c->click_loc ||
-		    m->wp != c->click_wp)) {
+		     loc != (enum key_code_mouse_location)c->click_loc ||
+		     m->wp != c->click_wp ||
+		     m->w != c->click_event.w ||
+		     m->s != c->click_event.s)) {
 			type = KEYC_TYPE_MOUSEDOWN;
 			log_debug("click sequence reset at %u,%u", x, y);
 			c->flags &= ~CLIENT_TRIPLECLICK;
@@ -1064,7 +1086,6 @@ have_event:
 	    type != KEYC_TYPE_WHEELUP &&
 	    type != KEYC_TYPE_WHEELDOWN &&
 	    type != KEYC_TYPE_DOUBLECLICK &&
-	    type != KEYC_TYPE_TRIPLECLICK &&
 	    c->tty.mouse_drag_flag != 0) {
 		if (c->tty.mouse_drag_release != NULL)
 			c->tty.mouse_drag_release(c, m);
@@ -1338,7 +1359,8 @@ server_client_handle_dead_key(struct window_pane *wp, key_code key)
 static enum cmd_retval
 server_client_key_callback(struct cmdq_item *item, void *data)
 {
-	struct key_event		*event = data;
+	struct key_event		*event = data, *press_event;
+	struct mouse_event		 release_event;
 	struct client			*c, *ec = event->client;
 	key_code			 key = event->key;
 	struct mouse_event		*m = &event->m;
@@ -1372,11 +1394,64 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 		fatal("gettimeofday failed");
 	session_update_activity(s, &c->activity_time);
 
+	if (key == KEYC_FOCUS_OUT) {
+		memset(&release_event, 0, sizeof release_event);
+		release_event.valid = 1;
+		release_event.x = c->tty.mouse_last_x;
+		release_event.y = c->tty.mouse_last_y;
+		release_event.statusat = status_at_line(c);
+		release_event.statuslines = status_line_size(c);
+		release_event.wp = c->tty.mouse_capture_pane;
+		if (release_event.wp == -1)
+			release_event.wp = c->tty.mouse_last_pane;
+		release_event.s = s->id;
+		release_event.w = wl->window->id;
+		release_event.b = 3;
+		release_event.sgr_type = 'm';
+		if (c->tty.mouse_button_pressed != 0)
+			release_event.sgr_b = c->tty.mouse_button_pressed - 1;
+		wp = window_pane_find_by_id(c->tty.mouse_capture_pane);
+		if (wp != NULL)
+			input_key_mouse_release(wp, release_event.sgr_b);
+		if (c->tty.mouse_drag_release != NULL)
+			c->tty.mouse_drag_release(c, &release_event);
+		c->tty.mouse_drag_update = NULL;
+		c->tty.mouse_drag_release = NULL;
+		c->tty.mouse_drag_flag = 0;
+		c->tty.mouse_button_pressed = 0;
+		c->tty.mouse_scrolling_flag = 0;
+		c->tty.mouse_slider_mpos = -1;
+		c->tty.mouse_last_pane = -1;
+		c->tty.mouse_capture_pane = -1;
+		evtimer_del(&c->click_timer);
+		c->flags &= ~(CLIENT_DOUBLECLICK|CLIENT_TRIPLECLICK);
+	}
+
 	/* Check for mouse keys. */
 	m->valid = 0;
 	if (key == KEYC_MOUSE || key == KEYC_DOUBLECLICK) {
 		if (c->flags & CLIENT_READONLY)
 			goto out;
+		if (key == KEYC_MOUSE && c->tty.mouse_drag_flag != 0 &&
+		    !MOUSE_DRAG(m->b) && !MOUSE_RELEASE(m->b) &&
+		    !MOUSE_WHEEL(m->b)) {
+			press_event = xcalloc(1, sizeof *press_event);
+			memcpy(press_event, event, sizeof *press_event);
+			event->buf = NULL;
+			event->len = 0;
+			press_event->client = c;
+			c->references++;
+			cmdq_insert_after(item, cmdq_get_callback(
+			    server_client_key_callback, press_event));
+			m->x = m->lx;
+			m->y = m->ly;
+			m->sgr_b = (c->tty.mouse_drag_flag - 1) |
+			    (m->lb &
+			     (MOUSE_MASK_SHIFT|MOUSE_MASK_META|
+			      MOUSE_MASK_CTRL));
+			m->sgr_type = 'm';
+			m->b = 3;
+		}
 		key = server_client_check_mouse(c, event);
 		if (key == KEYC_UNKNOWN)
 			goto out;
@@ -1677,14 +1752,6 @@ server_client_handle_key0(struct client *c, struct key_event *event,
 		return (0);
 	}
 
-	/* Release a captured drag if the client loses focus. */
-	if (event->key == KEYC_FOCUS_OUT && c->tty.mouse_capture_pane != -1) {
-		wp = window_pane_find_by_id(c->tty.mouse_capture_pane);
-		c->tty.mouse_capture_pane = -1;
-		if (wp != NULL)
-			input_key_mouse_release(wp);
-	}
-
 	/*
 	 * Dead panes waiting for a key, modal cancel keys, panes capturing all keys
 	 * and the command prompt are special cases. The queue might be blocked so
@@ -1710,7 +1777,8 @@ server_client_handle_key0(struct client *c, struct key_event *event,
 		if (wp != NULL &&
 		    (wp->flags & PANE_CAPTUREALLKEYS) &&
 		    TAILQ_EMPTY(&wp->modes) &&
-		    !KEYC_IS_MOUSE(event->key)) {
+		    !KEYC_IS_MOUSE(event->key) &&
+		    event->key != KEYC_FOCUS_OUT) {
 			if (~wp->flags & PANE_EXITED) {
 				window_pane_key(wp, c, s, s->curw, event->key,
 				    &event->m);

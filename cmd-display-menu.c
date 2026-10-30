@@ -427,8 +427,10 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 	}
 	if (tc->flags & CLIENT_CONTROL)
 		return (CMD_RETURN_NORMAL);
-	if (w->modal != NULL)
-		return (CMD_RETURN_NORMAL);
+	if (w->modal != NULL) {
+		cmdq_error(item, "window already has a modal pane");
+		return (CMD_RETURN_ERROR);
+	}
 
 	value = args_get(args, 'b');
 	if (args_has(args, 'B'))
