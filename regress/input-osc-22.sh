@@ -41,26 +41,32 @@ query osc-22-replace "\\033]22;>wait,grab\\033\\\\\\033]22;help\\033\\\\\\033]22
 check_capture osc-22-replace 'X^[]22;wait^[\'
 
 # Pushing more than the stack holds drops the oldest shape.
-seq='\033]22;>help'
+seq='\033]22;>help,wait'
 i=0
-while [ "$i" -lt 16 ]; do
+while [ "$i" -lt 15 ]; do
 	seq="$seq,text"
 	i=$((i + 1))
 done
 seq="$seq\\033\\\\"
 i=0
-while [ "$i" -lt 16 ]; do
+while [ "$i" -lt 15 ]; do
 	seq="$seq\\033]22;<\\033\\\\"
 	i=$((i + 1))
 done
-query osc-22-overflow "$seq$Q"
-check_capture osc-22-overflow 'X^[]22;0^[\'
+query osc-22-overflow "$seq$Q\\033]22;<\\033\\\\$Q"
+check_capture osc-22-overflow 'X^[]22;wait^[\^[]22;0^[\'
 
 query osc-22-alternate "\\033]22;pointer\\033\\\\\\033[?1049h$Q\\033]22;move\\033\\\\$Q\\033[?1049l$Q\\033[?1049h$Q\\033[?1049l"
 check_capture osc-22-alternate 'X^[]22;0^[\^[]22;move^[\^[]22;pointer^[\^[]22;move^[\'
 
 query osc-22-ris "\\033]22;pointer\\033\\\\\\033c$Q"
 check_capture osc-22-ris 'X^[]22;0^[\'
+
+query osc-22-respawn "\\033]22;pointer\\033\\\\$Q"
+check_capture osc-22-respawn 'X^[]22;pointer^[\'
+$TMUX respawn-pane -k -t osc-22-respawn: \
+    "stty raw -echo; printf '$Q'; printf X; exec cat -v" || exit 1
+check_capture osc-22-respawn 'X^[]22;0^[\'
 
 query osc-22-support '\033]22;?pointer,zoom-out,hand2,no-such-shape,__default__,__grabbed__\033\\'
 check_capture osc-22-support 'X^[]22;1,1,0,0,default,default^[\'
