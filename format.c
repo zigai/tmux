@@ -1359,6 +1359,39 @@ format_cb_mouse_hyperlink(struct format_tree *ft)
 	return (format_grid_hyperlink(gd, x, gd->hsize + y, wp->screen));
 }
 
+/* Callback for mouse_range_group. */
+static void *
+format_cb_mouse_range_group(struct format_tree *ft)
+{
+	struct pane_range	*r = pane_ranges_mouse(&ft->m);
+
+	if (r == NULL)
+		return (NULL);
+	return (xstrdup(r->group));
+}
+
+/* Callback for mouse_range_id. */
+static void *
+format_cb_mouse_range_id(struct format_tree *ft)
+{
+	struct pane_range	*r = pane_ranges_mouse(&ft->m);
+
+	if (r == NULL)
+		return (NULL);
+	return (format_printf("%u", r->id));
+}
+
+/* Callback for mouse_range_name. */
+static void *
+format_cb_mouse_range_name(struct format_tree *ft)
+{
+	struct pane_range	*r = pane_ranges_mouse(&ft->m);
+
+	if (r == NULL)
+		return (NULL);
+	return (xstrdup(r->name));
+}
+
 /* Callback for mouse_line. */
 static void *
 format_cb_mouse_line(struct format_tree *ft)
@@ -3880,6 +3913,15 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "mouse_pane", FORMAT_TABLE_STRING,
 	  format_cb_mouse_pane
+	},
+	{ "mouse_range_group", FORMAT_TABLE_STRING,
+	  format_cb_mouse_range_group
+	},
+	{ "mouse_range_id", FORMAT_TABLE_STRING,
+	  format_cb_mouse_range_id
+	},
+	{ "mouse_range_name", FORMAT_TABLE_STRING,
+	  format_cb_mouse_range_name
 	},
 	{ "mouse_sgr_flag", FORMAT_TABLE_STRING,
 	  format_cb_mouse_sgr_flag

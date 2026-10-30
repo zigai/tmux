@@ -195,6 +195,7 @@ enum key_code_mouse_location {
 	KEYC_MOUSE_LOCATION_SCROLLBAR_SLIDER,
 	KEYC_MOUSE_LOCATION_SCROLLBAR_DOWN,
 	KEYC_MOUSE_LOCATION_EMPTY,
+	KEYC_MOUSE_LOCATION_RANGE,
 	KEYC_MOUSE_LOCATION_CONTROL0, /* keep order */
 	KEYC_MOUSE_LOCATION_CONTROL1,
 	KEYC_MOUSE_LOCATION_CONTROL2,
@@ -267,6 +268,7 @@ enum key_code_mouse_location {
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, SCROLLBAR_SLIDER), \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, SCROLLBAR_DOWN),   \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, EMPTY),            \
+	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, RANGE),            \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL0),         \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL1),         \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL2),         \
@@ -317,6 +319,7 @@ enum key_code_mouse_location {
 	{ #s "ScrollbarSlider", KEYC_ ## name ## _SCROLLBAR_SLIDER }, \
 	{ #s "ScrollbarDown", KEYC_ ## name ## _SCROLLBAR_DOWN },     \
 	{ #s "Empty", KEYC_ ## name ## _EMPTY },		      \
+	{ #s "Range", KEYC_ ## name ## _RANGE },			      \
 	{ #s "Border", KEYC_ ## name ## _BORDER },		      \
 	{ #s "Control0", KEYC_ ## name ## _CONTROL0 },		      \
 	{ #s "Control1", KEYC_ ## name ## _CONTROL1 },		      \
@@ -3701,6 +3704,18 @@ void			  pane_ranges_copy_cell(struct window_mode_entry *,
 int			  pane_ranges_redraw_cells(struct tty *,
     const struct tty_ctx *, u_int);
 
+/* pane-ranges-find.c */
+struct pane_range	*pane_ranges_cell(struct window_pane *, struct grid *,
+    u_int, u_int);
+struct pane_range	*pane_ranges_visible(struct window_pane *, u_int,
+    u_int);
+struct pane_range	*pane_ranges_mouse(struct mouse_event *);
+key_code		 pane_ranges_mouse_key(struct window_pane *, key_code,
+    u_int, u_int);
+struct key_binding	*pane_ranges_key_binding(struct key_table *, key_code);
+int			 pane_ranges_find(struct window_pane *, struct grid *,
+    u_int *, u_int *, int, const char *);
+
 /* grid.c */
 extern const struct grid_cell grid_default_cell;
 void	 grid_check_is_clear(struct grid *);
@@ -4234,6 +4249,8 @@ int				 window_copy_get_selection_span(
     struct window_pane *, struct window_copy_selection *);
 struct grid			*window_copy_get_backing(struct window_pane *,
     uint64_t *, int *);
+struct grid			*window_copy_get_cell_grid(struct window_pane *,
+    struct window_pane **, u_int *, u_int *);
 extern const struct window_mode window_copy_mode;
 extern const struct window_mode window_view_mode;
 void printflike(3, 4) window_copy_add(struct window_pane *, int, const char *,

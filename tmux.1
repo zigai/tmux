@@ -2241,6 +2241,13 @@ Move to the next paragraph.
 .Xc
 Move to the next prompt.
 .It Xo
+.Ic next\-range
+.Op Ar group
+.Xc
+Move to the start of the next range, or the next range in
+.Ar group .
+A range starts at its first cell.
+.It Xo
 .Ic next\-word
 (vi: w)
 .Xc
@@ -2366,6 +2373,12 @@ Move to the previous paragraph.
 .Op Fl o
 .Xc
 Move to the previous prompt.
+.It Xo
+.Ic previous\-range
+.Op Ar group
+.Xc
+Move to the start of the previous range, or the previous range in
+.Ar group .
 .It Xo
 .Ic previous\-word
 (vi: b)
@@ -7213,12 +7226,38 @@ and a location suffix, one of the following:
 .It Li "ScrollbarUp" Ta "above the scrollbar slider"
 .It Li "ScrollbarDown" Ta "below the scrollbar slider"
 .It Li "Empty" Ta "empty space in the window"
+.It Li "Range" Ta "a pane range in the contents of a pane"
 .It Li "ControlN" Ta "on control range N"
 .El
 .Pp
 See the
 .Sx STYLES
 section for information on control ranges.
+.Pp
+.Ql Range
+is used instead of
+.Ql Pane
+when the cell under the mouse is covered by a range (see
+.Ic new\-range ) ,
+including in copy mode.
+If a
+.Ql Range
+key has no binding in a key table, the matching
+.Ql Pane
+binding in that table is used, so ranges change nothing without
+configuration.
+The
+.Ql mouse_range_id ,
+.Ql mouse_range_name
+and
+.Ql mouse_range_group
+formats give the newest range under the mouse.
+A binding decides whether the application in the pane also gets the event,
+for example:
+.Bd -literal -offset indent
+bind -n MouseUp1Range if -F '#{mouse_any_flag}' 'send -M' \e
+    'display "#{mouse_range_name}"'
+.Ed
 .Pp
 The following mouse events are available:
 .Bl -column "MouseDown1" "MouseDrag1" "WheelDown" -offset indent
@@ -7857,6 +7896,7 @@ The following variables are available, where appropriate:
 .It Li "copy_command_status" Ta "" Ta "OSC 133 exit status when the block is completed"
 .It Li "copy_cursor_hyperlink" Ta "" Ta "Hyperlink under cursor in copy mode"
 .It Li "copy_cursor_line" Ta "" Ta "Line the cursor is on in copy mode"
+.It Li "copy_cursor_range_id" Ta "" Ta "ID of newest range under cursor in copy mode"
 .It Li "copy_cursor_word" Ta "" Ta "Word under cursor in copy mode"
 .It Li "copy_cursor_x" Ta "" Ta "Cursor X position in copy mode"
 .It Li "copy_cursor_y" Ta "" Ta "Cursor Y position in copy mode"
@@ -7918,6 +7958,9 @@ The following variables are available, where appropriate:
 .It Li "mouse_button_flag" Ta "" Ta "Pane mouse button flag"
 .It Li "mouse_hyperlink" Ta "" Ta "Hyperlink under mouse, if any"
 .It Li "mouse_line" Ta "" Ta "Line under mouse, if any"
+.It Li "mouse_range_group" Ta "" Ta "Group of newest range under mouse, if any"
+.It Li "mouse_range_id" Ta "" Ta "ID of newest range under mouse, if any"
+.It Li "mouse_range_name" Ta "" Ta "Name of newest range under mouse, if any"
 .It Li "mouse_sgr_flag" Ta "" Ta "Pane mouse SGR flag"
 .It Li "mouse_standard_flag" Ta "" Ta "Pane mouse standard flag"
 .It Li "mouse_status_line" Ta "" Ta "Status line on which mouse event took place"
