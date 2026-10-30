@@ -95,6 +95,7 @@ struct kitty_clipboard_request {
 	char				*pane_id;
 	const char			*end;
 	struct event			 timer;
+	int				 late;
 
 	int				 collect;
 	char				*textmime;
@@ -408,18 +409,16 @@ kitty_clipboard_free_request(struct kitty_clipboard_request *r)
 	free(r);
 }
 
-/* Fail a request the terminal has not answered. */
+/*
+ * The terminal may be asking the user, so a request it has not answered keeps
+ * waiting, but no longer makes keys wait for a reply.
+ */
 static void
 kitty_clipboard_timer(__unused int fd, __unused short events, void *data)
 {
 	struct kitty_clipboard_request	*r = data;
-	struct window_pane		*wp;
 
-	if ((wp = window_pane_find_by_id(r->pane)) != NULL) {
-		kitty_clipboard_status(wp, r->write ? "write" : "read",
-		    r->pane_id, "EBUSY", r->end);
-	}
-	kitty_clipboard_free_request(r);
+	r->late = 1;
 }
 
 static struct kitty_clipboard_request *
@@ -1015,6 +1014,7 @@ kitty_clipboard_reply(struct client *c, const char *buf, size_t len)
 			kitty_clipboard_free_request(r);
 			goto out;
 		}
+		r->late = 0;
 		evtimer_add(&r->timer, &tv);
 	}
 
@@ -1084,14 +1084,14 @@ kitty_clipboard_free(struct window_pane *wp)
 	}
 }
 
-/* Is a request waiting for this client to answer? */
+/* Is a request waiting for this client to answer, and not yet late? */
 int
 kitty_clipboard_waiting(struct client *c)
 {
 	struct kitty_clipboard_request	*r;
 
 	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
-		if (r->c == c)
+		if (r->c == c && !r->late)
 			return (1);
 	}
 	return (0);
