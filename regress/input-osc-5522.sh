@@ -99,6 +99,30 @@ check "\\033]5522;type=write:id=w7\\033\\\\\
 \\033c\\033]5522;type=wdata\\033\\\\" '' "write ended after reset"
 [ "$($TMUX show-buffer)" = one ] || fail "buffer from forgotten write"
 
+# MIME types and aliases past 64 are ignored.
+types=
+aliases=
+n=0
+for prefix in YWF YWJ; do
+	for x in B C D E F G H I J K L M N O P Q R S T U V W X Y Z a \
+	    h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6; do
+		[ $n -eq 64 ] && break 2
+		types="$types\\033]5522;type=wdata:mime=$prefix$x;b25l\\033\\\\"
+		aliases="$aliases\\033]5522;type=walias:mime=dGV4dC9odG1s;$prefix$x\
+\\033\\\\"
+		n=$((n + 1))
+	done
+done
+check "\\033]5522;type=write:id=w8\\033\\\\$types\
+\\033]5522;type=wdata:mime=$PLAIN;b25l\\033\\\\\
+\\033]5522;type=wdata\\033\\\\" \
+    '^[]5522;type=write:status=ENOSYS:id=w8^[\' "too many types"
+check "\\033]5522;type=write:id=w9\\033\\\\\
+\\033]5522;type=wdata:mime=dGV4dC9odG1s;b25l\\033\\\\$aliases\
+\\033]5522;type=walias:mime=dGV4dC9odG1s;$PLAIN\\033\\\\\
+\\033]5522;type=wdata\\033\\\\" \
+    '^[]5522;type=write:status=ENOSYS:id=w9^[\' "too many aliases"
+
 # A write over 64 MB is too big and the rest of it is ignored.
 cat >$TMP/big.awk <<'EOF2'
 BEGIN {
