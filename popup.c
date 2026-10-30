@@ -253,6 +253,7 @@ popup_draw_cb(struct client *c, void *data)
 	style_ctx.palette = &pd->palette;
 	style_ctx.dim = 0;
 	style_ctx.hyperlinks = s.hyperlinks;
+	style_ctx.ranges = NULL;
 
 	c->overlay_check = NULL;
 	c->overlay_data = NULL;

@@ -6,6 +6,10 @@ CHANGES FROM 3.7c TO 3.8
   reflow and the alternate screen. The history_collected counter is now 64
   bits.
 
+* Draw pane ranges with a style, given by new-range and set-range -s or the
+  pane-range-style option. The style is a format so it can depend on the
+  range state, and the pane-ranges option hides all range styles.
+
 * Many improvements to floating panes:
 
   - new-pane and split-window can now set the title with -T and border lines

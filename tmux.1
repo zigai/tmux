@@ -4273,6 +4273,7 @@ destroyed.
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
 .Op Fl g Ar group
+.Op Fl s Ar style
 .Pq Fl S | Fl r Ar range
 .Xc
 Create a range over text in a pane.
@@ -4325,16 +4326,42 @@ No cell is tagged.
 Ranges created on the alternate screen are gone when it is left.
 Respawning a pane clears its screen.
 Ranges that are gone remain listed until killed.
+.Pp
+.Fl s
+sets the style used to draw the cells of the range; without it, the
+.Ic pane\-range\-style
+option is used.
+The style is a format expanded with the range formats, so it can depend on
+the range, for example:
+.Bd -literal -offset indent
+new-range -r 0:0-0:9 -s '#{?#{==:#{range_state},live},bg=colour237,dim}'
+.Ed
+.Pp
+The style is applied when the pane is drawn and is never part of the pane
+contents, so it does not appear in
+.Ic capture\-pane
+output or copied text.
+Where ranges overlap, their styles are combined and the newest range wins
+where they conflict.
+In copy mode, the selection, search matches and the current line style are
+drawn over range styles.
+.Ic pane\-ranges
+hides all range styles.
 .Tg set-range
 .It Xo Ic set\-range
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
+.Op Fl s Ar style
 .Op Fl r Ar range
 .Ar range-id
 .Xc
-Change the name of a range or, with
+Change the name or style of a range or, with
 .Fl r ,
 move it to different cells and capture its text again.
+An empty
+.Ar style
+makes the range use
+.Ic pane\-range\-style .
 .Tg kill-range
 .It Xo Ic kill\-range
 .Op Fl t Ar target-pane
@@ -6149,6 +6176,21 @@ and
 .Ql heavy
 will fall back to standard ACS line drawing when UTF\-8 is not supported.
 .Pp
+.It Ic pane\-range\-style Ar style
+Set the style of pane ranges that do not have their own; see
+.Ic new\-range .
+The style is expanded as a format for each range.
+For how to specify
+.Ar style ,
+see the
+.Sx STYLES
+section.
+.Pp
+.It Xo Ic pane\-ranges
+.Op Ic on | off
+.Xc
+If off, pane ranges are drawn without their styles.
+.Pp
 .It Xo Ic pane\-scrollbars
 .Op Ic off | modal | on | auto\-hide
 .Xc
@@ -7580,6 +7622,7 @@ The following variables are available, where appropriate:
 .It Li "range_start_line" Ta "" Ta "History line of first tagged cell, or empty if gone"
 .It Li "range_start_x" Ta "" Ta "Column of first tagged cell, or empty if gone"
 .It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone"
+.It Li "range_style" Ta "" Ta "Style of range, or empty to use pane-range-style"
 .It Li "range_text" Ta "" Ta "Text captured when range was created or moved"
 .It Li "range_visible_y" Ta "" Ta "First visible row with a tagged cell, or empty"
 .It Li "rectangle_toggle" Ta "" Ta "1 if rectangle selection is activated"

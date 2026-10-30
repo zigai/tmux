@@ -2060,6 +2060,9 @@ tty_cmd_cell(struct tty *tty, const struct tty_ctx *ctx)
 	py = ctx->yoff + ctx->ocy - ctx->woy;
 	if (!tty_is_visible(tty, ctx, ctx->ocx, ctx->ocy, 1, 1))
 		return;
+	if (ctx->style_ctx.ranges != NULL &&
+	    pane_ranges_redraw_cells(tty, ctx, gcp->data.width))
+		return;
 
 	if (gcp->data.width == 1 && !tty_check_overlay(tty, px, py))
 		return;
@@ -2100,6 +2103,9 @@ tty_cmd_cells(struct tty *tty, const struct tty_ctx *ctx)
 	size_t			 n = ctx->data.size;
 
 	if (!tty_is_visible(tty, ctx, ctx->ocx, ctx->ocy, n, 1))
+		return;
+	if (ctx->style_ctx.ranges != NULL &&
+	    pane_ranges_redraw_cells(tty, ctx, n))
 		return;
 
 	if ((ctx->flags & TTY_CTX_WINDOW_BIGGER) &&
@@ -3143,6 +3149,7 @@ tty_style_changed(struct window_pane *wp)
 
 	log_debug("%%%u: style changed", wp->id);
 	wp->flags &= ~PANE_STYLECHANGED;
+	pane_ranges_style_changed(wp);
 
 	ft = format_create(NULL, NULL, FORMAT_PANE|wp->id, FORMAT_NOJOBS);
 	format_defaults(ft, NULL, NULL, NULL, wp);
