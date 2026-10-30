@@ -64,14 +64,14 @@ if ! wait_for_mode 'Kitty 1'; then
 fi
 
 # Modifiers, including the Kitty-only Super and Hyper.
-assert_key 'Escape [97;2u' 'S-a'
+assert_key 'Escape [97;2u' 'A'
 assert_key 'Escape [97;3u' 'M-a'
 assert_key 'Escape [97;5u' 'C-a'
 assert_key 'Escape [97;6u' 'C-S-a'
 assert_key 'Escape [97;7u' 'C-M-a'
 assert_key 'Escape [97;9u' 's-a'
 assert_key 'Escape [97;17u' 'H-a'
-assert_key 'Escape [65;2u' 'S-A'
+assert_key 'Escape [65;2u' 'A'
 
 # Keys with a dedicated tmux key code.
 assert_key 'Escape [9;5u' 'C-Tab'
@@ -91,9 +91,11 @@ assert_key 'Escape [1;5P' 'C-F1'
 assert_key 'Escape [57399;5u' 'C-KP0'
 assert_key 'Escape [233;5u' 'C-é'
 
-# The alternate key and associated text fields are not requested but must be
-# ignored if a terminal sends them anyway.
-assert_key 'Escape [97:65;2u' 'S-a'
+# A key with only Shift is the character it types, from the alternate key or
+# the associated text when the terminal sends them.
+assert_key 'Escape [97:65;2u' 'A'
+assert_key 'Escape [49:33;2u' '!'
+assert_key 'Escape [49;2;33u' '!'
 assert_key 'Escape [97:65:97;5u' 'C-a'
 assert_key 'Escape [97;5;97u' 'C-a'
 

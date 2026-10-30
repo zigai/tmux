@@ -2591,11 +2591,12 @@ static void *
 format_cb_pane_key_mode(struct format_tree *ft)
 {
 	char	*s;
+	u_int	 flags;
 
 	if (ft->wp != NULL && ft->wp->screen != NULL) {
-		if (ft->wp->screen->kitty_keys.flags != 0) {
-			xasprintf(&s, "Kitty %u",
-			    ft->wp->screen->kitty_keys.flags);
+		flags = input_kitty_flags(ft->wp->screen);
+		if (flags != 0) {
+			xasprintf(&s, "Kitty %u", flags);
 			return (s);
 		}
 		switch (ft->wp->screen->mode & EXTENDED_KEY_MODES) {

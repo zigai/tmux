@@ -88,8 +88,7 @@ screen_init(struct screen *s, u_int sx, u_int sy, u_int hlimit)
 	s->default_cstyle = SCREEN_CURSOR_DEFAULT;
 	s->mode = MODE_CURSOR;
 	s->default_mode = 0;
-	memset(&s->kitty_keys, 0, sizeof s->kitty_keys);
-	memset(&s->saved_kitty_keys, 0, sizeof s->saved_kitty_keys);
+	input_kitty_reset(s);
 	s->ccolour = -1;
 	s->default_ccolour = -1;
 	s->tabs = NULL;
@@ -672,7 +671,7 @@ screen_alternate_on(struct screen *s, struct grid_cell *gc, int cursor)
 	u_int		 sx, sy;
 	if (SCREEN_IS_ALTERNATE(s))
 		return 0;
-	input_kitty_alternate_on(s);
+	input_kitty_alternate(s);
 	sx = screen_size_x(s);
 	sy = screen_size_y(s);
 
@@ -724,7 +723,7 @@ screen_alternate_off(struct screen *s, struct grid_cell *gc, int cursor)
 			s->cy = screen_size_y(s) - 1;
 		return 0;
 	}
-	input_kitty_alternate_off(s);
+	input_kitty_alternate(s);
 
 	/* Clamp cursor to the current screen size. */
 	if (s->cy > screen_size_y(s) - 1)

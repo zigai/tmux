@@ -115,7 +115,7 @@ static const struct input_kitty_key input_kitty_keys[] = {
 	{ KEYC_KP_END|KEYC_KEYPAD, 57424, 'u' },
 	{ KEYC_KP_IC|KEYC_KEYPAD, 57425, 'u' },
 	{ KEYC_KP_DC|KEYC_KEYPAD, 57426, 'u' },
-	{ KEYC_KP_BEGIN|KEYC_KEYPAD, 57427, '~' },
+	{ KEYC_KP_BEGIN|KEYC_KEYPAD, 57427, 'u' },
 	{ KEYC_MEDIA_PLAY, 57428, 'u' },
 	{ KEYC_MEDIA_PAUSE, 57429, 'u' },
 	{ KEYC_MEDIA_PLAYPAUSE, 57430, 'u' },
@@ -145,73 +145,107 @@ static const struct input_kitty_key input_kitty_keys[] = {
 	{ KEYC_ISO_LEVEL5_SHIFT, 57454, 'u' }
 };
 
+
 void
 input_kitty_reset(struct screen *s)
 {
 	memset(&s->kitty_keys, 0, sizeof s->kitty_keys);
-}
-
-void
-input_kitty_alternate_on(struct screen *s)
-{
-	s->saved_kitty_keys = s->kitty_keys;
-	input_kitty_reset(s);
-}
-
-void
-input_kitty_alternate_off(struct screen *s)
-{
-	s->kitty_keys = s->saved_kitty_keys;
 	memset(&s->saved_kitty_keys, 0, sizeof s->saved_kitty_keys);
+}
+
+/* Swap the main and alternate screen stacks. */
+void
+input_kitty_alternate(struct screen *s)
+{
+	struct kitty_key_state	tmp;
+
+	tmp = s->kitty_keys;
+	s->kitty_keys = s->saved_kitty_keys;
+	s->saved_kitty_keys = tmp;
+}
+
+u_int
+input_kitty_flags(struct screen *s)
+{
+	return (s->kitty_keys.flags[s->kitty_keys.idx]);
 }
 
 void
 input_kitty_set(struct screen *s, u_int flags, int mode)
 {
-	flags &= KITTY_KEY_SUPPORTED;
+	struct kitty_key_state	*kks = &s->kitty_keys;
+
 	if (mode == 2)
-		s->kitty_keys.flags |= flags;
+		kks->flags[kks->idx] |= flags;
 	else if (mode == 3)
-		s->kitty_keys.flags &= ~flags;
+		kks->flags[kks->idx] &= ~flags;
 	else
-		s->kitty_keys.flags = flags;
+		kks->flags[kks->idx] = flags;
 }
 
+/* Push flags, dropping the oldest entry when the stack is full. */
 void
 input_kitty_push(struct screen *s, u_int flags)
 {
-	s->kitty_keys.saved_flags = s->kitty_keys.flags;
-	s->kitty_keys.have_saved = 1;
-	s->kitty_keys.flags = flags & KITTY_KEY_SUPPORTED;
+	struct kitty_key_state	*kks = &s->kitty_keys;
+
+	kks->idx = (kks->idx + 1) % KITTY_KEY_STACK;
+	kks->flags[kks->idx] = flags;
 }
 
 void
 input_kitty_pop(struct screen *s, u_int count)
 {
-	if (count == 0)
+	struct kitty_key_state	*kks = &s->kitty_keys;
+	u_int			 i;
+
+	if (count >= KITTY_KEY_STACK) {
+		memset(kks, 0, sizeof *kks);
 		return;
-	if (s->kitty_keys.have_saved && count == 1)
-		s->kitty_keys.flags = s->kitty_keys.saved_flags;
-	else
-		s->kitty_keys.flags = 0;
-	s->kitty_keys.have_saved = 0;
+	}
+	for (i = 0; i < count; i++) {
+		kks->flags[kks->idx] = 0;
+		kks->idx = (kks->idx + KITTY_KEY_STACK - 1) % KITTY_KEY_STACK;
+	}
+}
+
+int
+input_kitty_modifier_key(key_code key)
+{
+	key &= KEYC_MASK_KEY;
+	if (key == KEYC_CAPSLOCK || key == KEYC_NUMLOCK)
+		return (1);
+	return (key >= KEYC_LEFT_SHIFT && key <= KEYC_ISO_LEVEL5_SHIFT);
+}
+
+/*
+ * Releases and modifier keys only come from a terminal using the Kitty
+ * protocol and are never looked up in key tables.
+ */
+int
+input_kitty_bypass(const struct kitty_key *kk, key_code key)
+{
+	if (kk == NULL || kk->number == 0)
+		return (0);
+	return (kk->event == KITTY_EVENT_RELEASE ||
+	    input_kitty_modifier_key(key));
 }
 
 static u_int
 input_kitty_modifiers(key_code key)
 {
-	u_int	modifiers = 1;
+	u_int	modifiers = 0;
 
 	if (key & KEYC_SHIFT)
-		modifiers += 1;
+		modifiers |= KITTY_MOD_SHIFT;
 	if (key & KEYC_META)
-		modifiers += 2;
+		modifiers |= KITTY_MOD_ALT;
 	if (key & KEYC_CTRL)
-		modifiers += 4;
+		modifiers |= KITTY_MOD_CTRL;
 	if (key & KEYC_SUPER)
-		modifiers += 8;
+		modifiers |= KITTY_MOD_SUPER;
 	if (key & KEYC_HYPER)
-		modifiers += 16;
+		modifiers |= KITTY_MOD_HYPER;
 	return (modifiers);
 }
 
@@ -229,96 +263,205 @@ input_kitty_lookup(key_code key)
 	return (NULL);
 }
 
+static int
+input_kitty_control(u_int cp)
+{
+	return (cp < 0x20 || cp == 0x7f);
+}
+
+static void
+input_kitty_write_text(struct bufferevent *bev, const u_int *text,
+    u_int ntext)
+{
+	struct utf8_data	ud;
+	u_int			i;
+
+	for (i = 0; i < ntext; i++) {
+		if (utf8_fromwc(text[i], &ud) == UTF8_DONE)
+			bufferevent_write(bev, ud.data, ud.size);
+	}
+}
+
+/*
+ * Encode a key for a pane which has Kitty flags, following the rules
+ * Ghostty uses so a program sees the same bytes inside tmux as outside.
+ */
 int
-input_key_kitty(struct screen *s, struct bufferevent *bev, key_code key)
+input_key_kitty(struct screen *s, struct bufferevent *bev, key_code key,
+    const struct kitty_key *kk)
 {
 	const struct input_kitty_key	*ikk;
 	struct utf8_data		 ud;
 	wchar_t				 wc;
-	key_code			 modifiers, onlykey;
-	u_int				 flags, number, modifier;
-	char				 tmp[64];
+	key_code			 onlykey;
+	u_int				 flags, number, modifiers, event, binding;
+	u_int				 shifted = 0, base = 0, ntext = 0, i, n;
+	u_int				 text[KITTY_TEXT_MAX];
+	char				 final, tmp[256];
 	size_t				 size;
+	int				 sep;
 
-	flags = s->kitty_keys.flags & KITTY_KEY_SUPPORTED;
-	if (flags == 0)
+	event = KITTY_EVENT_PRESS;
+	if (kk != NULL && kk->event != 0)
+		event = kk->event;
+
+	flags = input_kitty_flags(s);
+	if (flags == 0) {
+		if (event == KITTY_EVENT_RELEASE || input_kitty_modifier_key(key))
+			return (0);
 		return (-1);
+	}
 	if ((key & KEYC_MASK_KEY) == KEYC_BTAB)
 		key = C0_HT|(key & ~KEYC_MASK_KEY)|KEYC_SHIFT;
+	onlykey = key & KEYC_MASK_KEY;
 
-	modifiers = key & (KEYC_SHIFT|KEYC_META|KEYC_CTRL|KEYC_SUPER|KEYC_HYPER);
+	if (event == KITTY_EVENT_RELEASE) {
+		if (~flags & KITTY_KEY_REPORT_EVENTS)
+			return (0);
+		if ((~flags & KITTY_KEY_REPORT_ALL) &&
+		    (onlykey == C0_CR || onlykey == C0_HT ||
+		    onlykey == KEYC_BSPACE))
+			return (0);
+	}
+
+	if (kk != NULL && kk->number != 0) {
+		modifiers = kk->modifiers;
+		shifted = kk->shifted;
+		base = kk->base;
+		ntext = kk->ntext;
+		memcpy(text, kk->text, ntext * sizeof *text);
+	} else
+		modifiers = input_kitty_modifiers(key);
+
 	ikk = input_kitty_lookup(key);
 	if (ikk != NULL) {
-		if ((flags & KITTY_KEY_REPORT_ALL) == 0) {
-			/*
-			 * Enter, Tab and Backspace stay in legacy form only
-			 * when unmodified, so a plain Enter still works after
-			 * a crash, but a modified one is disambiguated.
-			 */
-			if ((ikk->key == C0_CR || ikk->key == C0_HT ||
-			    ikk->key == KEYC_BSPACE) && modifiers == 0)
+		number = ikk->number;
+		final = ikk->final;
+	} else {
+		final = 'u';
+		if (kk != NULL && kk->number != 0)
+			number = kk->number;
+		else {
+			if (KEYC_IS_UNICODE(key)) {
+				utf8_to_data(onlykey, &ud);
+				if (utf8_towc(&ud, &wc) != UTF8_DONE)
+					return (-1);
+				number = wc;
+			} else if (onlykey <= 0x7f)
+				number = onlykey;
+			else
 				return (-1);
 
 			/*
-			 * A modified F3 in legacy form ("\033[1;mR") is
-			 * indistinguishable from a cursor position report,
-			 * so it must always be disambiguated too.
+			 * Without the terminal's own report, the text is the
+			 * key itself and the key number its unshifted form.
 			 */
-			if (ikk->final != 'u' &&
-			    (modifiers & (KEYC_SUPER|KEYC_HYPER)) == 0 &&
-			    (ikk->key != KEYC_F3 || modifiers == 0))
-				return (-1);
+			if ((modifiers & ~KITTY_MOD_SHIFT) == 0 &&
+			    !input_kitty_control(number))
+				text[ntext++] = number;
+			if (number >= 'A' && number <= 'Z') {
+				number += 'a' - 'A';
+				modifiers |= KITTY_MOD_SHIFT;
+			}
+			if ((modifiers & KITTY_MOD_SHIFT) && ntext != 0 &&
+			    text[0] != number)
+				shifted = text[0];
 		}
-		number = ikk->number;
-		modifier = input_kitty_modifiers(key);
-		if (ikk->final == 'u') {
-			if (modifier == 1)
-				size = xsnprintf(tmp, sizeof tmp, "\033[%uu", number);
-			else
-				size = xsnprintf(tmp, sizeof tmp, "\033[%u;%uu",
-				    number, modifier);
-		} else if (ikk->final == '~') {
-			if (modifier == 1)
-				size = xsnprintf(tmp, sizeof tmp, "\033[%u~", number);
-			else
-				size = xsnprintf(tmp, sizeof tmp, "\033[%u;%u~",
-				    number, modifier);
-		} else {
-			if (modifier == 1)
-				size = xsnprintf(tmp, sizeof tmp, "\033[%c",
-				    ikk->final);
-			else
-				size = xsnprintf(tmp, sizeof tmp, "\033[1;%u%c",
-				    modifier, ikk->final);
+	}
+
+	/* Shift is consumed when it changed the text. */
+	binding = modifiers & (KITTY_MOD_SHIFT|KITTY_MOD_ALT|KITTY_MOD_CTRL|
+	    KITTY_MOD_SUPER);
+	if (ntext != 0 && text[0] != number)
+		binding &= ~KITTY_MOD_SHIFT;
+
+	if ((~flags & KITTY_KEY_REPORT_ALL) && binding == 0) {
+		/*
+		 * Enter, Tab and Backspace stay in legacy form so a shell is
+		 * still usable if a program exits without resetting the
+		 * flags. Plain text is sent as itself.
+		 */
+		if (ikk != NULL && onlykey == C0_CR) {
+			bufferevent_write(bev, "\r", 1);
+			return (0);
 		}
+		if (ikk != NULL && onlykey == C0_HT) {
+			bufferevent_write(bev, "\t", 1);
+			return (0);
+		}
+		if (ikk != NULL && onlykey == KEYC_BSPACE) {
+			bufferevent_write(bev, "\177", 1);
+			return (0);
+		}
+		if (ntext != 0 && event != KITTY_EVENT_RELEASE) {
+			for (i = 0; i < ntext; i++) {
+				if (input_kitty_control(text[i]))
+					break;
+			}
+			if (i == ntext) {
+				input_kitty_write_text(bev, text, ntext);
+				return (0);
+			}
+		}
+	}
+	if (ikk != NULL && input_kitty_modifier_key(key) &&
+	    (~flags & KITTY_KEY_REPORT_ALL))
+		return (0);
+
+	if (~flags & KITTY_KEY_REPORT_EVENTS)
+		event = 0;
+	if (final != 'u' && final != '~') {
+		if (event != 0) {
+			size = xsnprintf(tmp, sizeof tmp, "\033[1;%u:%u%c",
+			    modifiers + 1, event, final);
+		} else if (modifiers != 0) {
+			size = xsnprintf(tmp, sizeof tmp, "\033[1;%u%c",
+			    modifiers + 1, final);
+		} else
+			size = xsnprintf(tmp, sizeof tmp, "\033[%c", final);
 		goto write;
 	}
 
-	if ((flags & KITTY_KEY_REPORT_ALL) == 0 &&
-	    (modifiers & (KEYC_META|KEYC_CTRL|KEYC_SUPER|KEYC_HYPER)) == 0)
-		return (-1);
-
-	onlykey = key & KEYC_MASK_KEY;
-	if (KEYC_IS_UNICODE(key)) {
-		utf8_to_data(onlykey, &ud);
-		if (utf8_towc(&ud, &wc) != UTF8_DONE)
-			return (-1);
-		number = wc;
-	} else if (onlykey <= 0x7f)
-		number = onlykey;
-	else
-		return (-1);
-	if (number >= 'A' && number <= 'Z') {
-		number += 'a' - 'A';
-		key |= KEYC_SHIFT;
+	size = xsnprintf(tmp, sizeof tmp, "\033[%u", number);
+	if ((flags & KITTY_KEY_REPORT_ALTERNATES) &&
+	    !input_kitty_control(number)) {
+		if (shifted != 0) {
+			size += xsnprintf(tmp + size, sizeof tmp - size, ":%u",
+			    shifted);
+		}
+		if (base != 0) {
+			size += xsnprintf(tmp + size, sizeof tmp - size,
+			    shifted != 0 ? ":%u" : "::%u", base);
+		}
 	}
-
-	modifier = input_kitty_modifiers(key);
-	if (modifier == 1)
-		size = xsnprintf(tmp, sizeof tmp, "\033[%uu", number);
-	else
-		size = xsnprintf(tmp, sizeof tmp, "\033[%u;%uu", number,
-		    modifier);
+	sep = 0;
+	if (event != 0 && event != KITTY_EVENT_PRESS) {
+		size += xsnprintf(tmp + size, sizeof tmp - size, ";%u:%u",
+		    modifiers + 1, event);
+		sep = 1;
+	} else if (modifiers != 0) {
+		size += xsnprintf(tmp + size, sizeof tmp - size, ";%u",
+		    modifiers + 1);
+		sep = 1;
+	}
+	if ((flags & KITTY_KEY_REPORT_TEXT) &&
+	    event != KITTY_EVENT_RELEASE &&
+	    (modifiers & (KITTY_MOD_ALT|KITTY_MOD_CTRL|KITTY_MOD_SUPER|
+	    KITTY_MOD_HYPER|KITTY_MOD_META)) == 0) {
+		n = 0;
+		for (i = 0; i < ntext; i++) {
+			if (input_kitty_control(text[i]))
+				continue;
+			if (n++ != 0)
+				size += xsnprintf(tmp + size, sizeof tmp - size,
+				    ":%u", text[i]);
+			else {
+				size += xsnprintf(tmp + size, sizeof tmp - size,
+				    "%s%u", sep ? ";" : ";;", text[i]);
+			}
+		}
+	}
+	size += xsnprintf(tmp + size, sizeof tmp - size, "%c", final);
 
 write:
 	log_debug("%s: %.*s", __func__, (int)size, tmp);

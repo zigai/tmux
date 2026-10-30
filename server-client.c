@@ -1452,6 +1452,74 @@ server_client_handle_dead_key(struct window_pane *wp, key_code key)
 	return (1);
 }
 
+/* Remember the pane a key from a Kitty terminal was sent to. */
+void
+server_client_kitty_press(struct client *c, struct window_pane *wp,
+    const struct kitty_key *kk)
+{
+	u_int	i;
+
+	if (kk == NULL || kk->number == 0 || kk->event == KITTY_EVENT_RELEASE)
+		return;
+	for (i = 0; i < c->kitty_npressed; i++) {
+		if (c->kitty_pressed[i].number == kk->number &&
+		    c->kitty_pressed[i].final == kk->final)
+			break;
+	}
+	if (i == c->kitty_npressed) {
+		if (i == CLIENT_KITTY_PRESSED) {
+			memmove(&c->kitty_pressed[0], &c->kitty_pressed[1],
+			    (i - 1) * sizeof c->kitty_pressed[0]);
+			i--;
+		} else
+			c->kitty_npressed++;
+	}
+	c->kitty_pressed[i].number = kk->number;
+	c->kitty_pressed[i].final = kk->final;
+	c->kitty_pressed[i].pane = wp->id;
+}
+
+/*
+ * Handle a key release or a modifier key from a Kitty terminal. These never
+ * fire key bindings. A release goes to the pane which had the press, or
+ * nowhere if tmux used the press itself.
+ */
+static void
+server_client_kitty_key(struct client *c, struct key_event *event)
+{
+	struct kitty_key	*kk = &event->kitty;
+	struct session		*s = c->session;
+	struct window		*w = s->curw->window;
+	struct window_pane	*wp = NULL;
+	u_int			 i;
+
+	if (c->flags & CLIENT_READONLY)
+		return;
+	if (kk->event == KITTY_EVENT_RELEASE) {
+		for (i = 0; i < c->kitty_npressed; i++) {
+			if (c->kitty_pressed[i].number == kk->number &&
+			    c->kitty_pressed[i].final == kk->final)
+				break;
+		}
+		if (i == c->kitty_npressed)
+			return;
+		wp = window_pane_find_by_id(c->kitty_pressed[i].pane);
+		c->kitty_npressed--;
+		memmove(&c->kitty_pressed[i], &c->kitty_pressed[i + 1],
+		    (c->kitty_npressed - i) * sizeof c->kitty_pressed[0]);
+	} else if (server_client_is_default_key_table(c, c->keytable) &&
+	    (~c->flags & CLIENT_REPEAT) &&
+	    c->prompt == NULL &&
+	    w->menu == NULL) {
+		wp = w->active;
+		if (wp != NULL && window_pane_has_prompt(wp))
+			wp = NULL;
+	}
+	if (wp == NULL || !TAILQ_EMPTY(&wp->modes))
+		return;
+	window_pane_key(wp, c, s, s->curw, event->key, NULL, kk);
+}
+
 /*
  * Handle data key input from client. This owns and can modify the key event it
  * is given and is responsible for freeing it.
@@ -1497,6 +1565,11 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 	if (gettimeofday(&c->activity_time, NULL) != 0)
 		fatal("gettimeofday failed");
 	session_update_activity(s, &c->activity_time);
+
+	if (input_kitty_bypass(&event->kitty, key)) {
+		server_client_kitty_key(c, event);
+		goto out;
+	}
 
 	/* Check for mouse keys. */
 	m->valid = 0;
@@ -1718,7 +1791,7 @@ forward_key:
 	if (c->flags & CLIENT_READONLY)
 		goto out;
 	if (wp != NULL)
-		window_pane_key(wp, c, s, wl, key, m);
+		window_pane_key(wp, c, s, wl, key, m, &event->kitty);
 	goto out;
 
 paste_key:
@@ -1819,8 +1892,10 @@ server_client_handle_key0(struct client *c, struct key_event *event,
 	 * Dead panes waiting for a key, modal cancel keys, panes capturing all
 	 * keys and the command prompt are special cases. The queue might be
 	 * blocked so they need to be processed immediately rather than queued.
+	 * Kitty releases and modifier keys are left for the queue.
 	 */
-	if (~c->flags & CLIENT_READONLY) {
+	if ((~c->flags & CLIENT_READONLY) &&
+	    !input_kitty_bypass(&event->kitty, event->key)) {
 		if (c->message_string != NULL) {
 			if (c->message_ignore_keys)
 				return (0);
@@ -1851,7 +1926,8 @@ server_client_handle_key0(struct client *c, struct key_event *event,
 				m->valid = 1;
 				m->key = key;
 			}
-			window_pane_key(wp, c, s, s->curw, key, m);
+			window_pane_key(wp, c, s, s->curw, key, m,
+			    &event->kitty);
 			return (0);
 		}
 

@@ -46,6 +46,7 @@ struct tty_key_parse {
 	key_code		 key;
 	size_t			 size;
 	struct mouse_event	 m;
+	struct kitty_key	 kitty;
 
 	int			 flags;
 #define TTY_KEY_PARSE_NO_META 0x1
@@ -689,7 +690,8 @@ tty_keys_reply(struct tty *tty, const char *buf, size_t len,
 		return (1);
 	}
 
-	switch (tty_keys_kitty(tty, buf, len, &kp->size, &kp->key)) {
+	switch (tty_keys_kitty(tty, buf, len, &kp->size, &kp->key,
+	    &kp->kitty)) {
 	case 0:		/* yes */
 		return (0);
 	case -1:	/* no, or not valid */
@@ -1011,6 +1013,7 @@ complete_key:
 		event = xcalloc(1, sizeof *event);
 		event->key = kp.key;
 		memcpy(&event->m, &kp.m, sizeof event->m);
+		memcpy(&event->kitty, &kp.kitty, sizeof event->kitty);
 
 		event->buf = xmalloc(kp.size);
 		event->len = kp.size;

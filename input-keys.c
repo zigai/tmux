@@ -395,7 +395,8 @@ input_key_build(void)
 
 /* Translate a key code into an output key sequence for a pane. */
 int
-input_key_pane(struct window_pane *wp, key_code key, struct mouse_event *m)
+input_key_pane(struct window_pane *wp, key_code key, struct mouse_event *m,
+    const struct kitty_key *kk)
 {
 	if (log_get_level() != 0) {
 		log_debug("writing key 0x%llx (%s) to %%%u", key,
@@ -407,7 +408,7 @@ input_key_pane(struct window_pane *wp, key_code key, struct mouse_event *m)
 			input_key_mouse(wp, m);
 		return (0);
 	}
-	return (input_key(wp->screen, wp->event, key));
+	return (input_key(wp->screen, wp->event, key, kk));
 }
 
 static void
@@ -581,7 +582,8 @@ input_key_mode1(struct bufferevent *bev, key_code key)
 
 /* Translate a key code into an output key sequence. */
 int
-input_key(struct screen *s, struct bufferevent *bev, key_code key)
+input_key(struct screen *s, struct bufferevent *bev, key_code key,
+    const struct kitty_key *kk)
 {
 	struct input_key_entry	*ike = NULL;
 	key_code		 newkey;
@@ -599,7 +601,7 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key)
 	}
 
 	/* Kitty keys take precedence if the application asked for them. */
-	if (input_key_kitty(s, bev, key) == 0)
+	if (input_key_kitty(s, bev, key, kk) == 0)
 		return (0);
 
 	/* Is this backspace? */
@@ -691,8 +693,7 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key)
 		log_debug("%s: ignoring key 0x%llx", __func__, key);
 		return (0);
 	}
-	if ((key & (KEYC_SUPER|KEYC_HYPER)) ||
-	    (s->kitty_keys.flags & KITTY_KEY_SUPPORTED))
+	if (key & (KEYC_SUPER|KEYC_HYPER))
 		return (input_key_vt10x(bev, key));
 
 	/*

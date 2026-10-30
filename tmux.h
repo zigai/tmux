@@ -841,10 +841,28 @@ enum tty_code_code {
 #define EXTENDED_KEYS_XTERM 1
 #define EXTENDED_KEYS_KITTY 2
 
-/* Supported Kitty keyboard protocol flags. */
+/* Kitty keyboard protocol flags. */
 #define KITTY_KEY_DISAMBIGUATE 0x1
+#define KITTY_KEY_REPORT_EVENTS 0x2
+#define KITTY_KEY_REPORT_ALTERNATES 0x4
 #define KITTY_KEY_REPORT_ALL 0x8
-#define KITTY_KEY_SUPPORTED (KITTY_KEY_DISAMBIGUATE|KITTY_KEY_REPORT_ALL)
+#define KITTY_KEY_REPORT_TEXT 0x10
+#define KITTY_KEY_FLAGS 0x1f
+
+/* Kitty keyboard protocol event types. */
+#define KITTY_EVENT_PRESS 1
+#define KITTY_EVENT_REPEAT 2
+#define KITTY_EVENT_RELEASE 3
+
+/* Kitty keyboard protocol modifier bits. */
+#define KITTY_MOD_SHIFT 0x1
+#define KITTY_MOD_ALT 0x2
+#define KITTY_MOD_CTRL 0x4
+#define KITTY_MOD_SUPER 0x8
+#define KITTY_MOD_HYPER 0x10
+#define KITTY_MOD_META 0x20
+#define KITTY_MOD_CAPSLOCK 0x40
+#define KITTY_MOD_NUMLOCK 0x80
 
 /* Mouse protocol constants. */
 #define MOUSE_PARAM_MAX 0xff
@@ -1199,10 +1217,10 @@ struct progress_bar {
 /* Virtual screen. */
 struct screen_sel;
 struct screen_titles;
+#define KITTY_KEY_STACK 8
 struct kitty_key_state {
-	u_int	flags;
-	u_int	saved_flags;
-	int	have_saved;
+	u_int	flags[KITTY_KEY_STACK];
+	u_int	idx;
 };
 struct screen {
 	char				*title;
@@ -1869,12 +1887,26 @@ enum key_event_delivery {
 	KEY_EVENT_CONSUMED
 };
 
+/* Kitty keyboard protocol details of a key event. */
+#define KITTY_TEXT_MAX 16
+struct kitty_key {
+	u_int			 number;
+	char			 final;
+	u_int			 modifiers;
+	u_int			 event;
+	u_int			 shifted;
+	u_int			 base;
+	u_int			 text[KITTY_TEXT_MAX];
+	u_int			 ntext;
+};
+
 /* Key event. */
 struct key_event {
 	struct client		*client;
 
 	key_code		 key;
 	struct mouse_event	 m;
+	struct kitty_key	 kitty;
 	enum key_event_delivery	 delivered;
 
 	char			*buf;
@@ -2527,6 +2559,14 @@ struct client {
 	struct key_table	*keytable;
 	key_code		 last_key;
 	time_t			 paste_time;
+
+#define CLIENT_KITTY_PRESSED 16
+	struct {
+		u_int		 number;
+		char		 final;
+		u_int		 pane;
+	}			 kitty_pressed[CLIENT_KITTY_PRESSED];
+	u_int			 kitty_npressed;
 
 	int			 message_ignore_keys;
 	int			 message_ignore_styles;
@@ -3241,7 +3281,7 @@ int		tty_keys_colours(struct tty *, const char *, size_t, size_t *,
 
 /* tty-kitty.c */
 int		tty_keys_kitty(struct tty *, const char *, size_t, size_t *,
-		     key_code *);
+		     key_code *, struct kitty_key *);
 int		tty_keys_kitty_query(struct tty *, const char *, size_t,
 		     size_t *, int);
 
@@ -3517,6 +3557,8 @@ void	 server_client_set_key_table(struct client *, const char *);
 const char *server_client_get_key_table(struct client *);
 int	 server_client_check_nested(struct client *);
 int	 server_client_handle_key(struct client *, struct key_event *);
+void	 server_client_kitty_press(struct client *, struct window_pane *,
+	     const struct kitty_key *);
 int	 server_client_handle_key_after(struct client *, struct key_event *,
 	     struct cmdq_item *, struct cmdq_item **);
 int	 server_client_key_prompt(struct cmdq_item *, void *);
@@ -3647,19 +3689,24 @@ void	 input_cancel_requests(struct client *);
 
 /* input-key.c */
 void	 input_key_build(void);
-int	 input_key_pane(struct window_pane *, key_code, struct mouse_event *);
-int	 input_key(struct screen *, struct bufferevent *, key_code);
+int	 input_key_pane(struct window_pane *, key_code, struct mouse_event *,
+	     const struct kitty_key *);
+int	 input_key(struct screen *, struct bufferevent *, key_code,
+	     const struct kitty_key *);
 int	 input_key_get_mouse(struct screen *, struct mouse_event *, u_int,
 	     u_int, const char **, size_t *);
 
 /* input-kitty.c */
 void	 input_kitty_reset(struct screen *);
-void	 input_kitty_alternate_on(struct screen *);
-void	 input_kitty_alternate_off(struct screen *);
+void	 input_kitty_alternate(struct screen *);
+u_int	 input_kitty_flags(struct screen *);
 void	 input_kitty_set(struct screen *, u_int, int);
 void	 input_kitty_push(struct screen *, u_int);
 void	 input_kitty_pop(struct screen *, u_int);
-int	 input_key_kitty(struct screen *, struct bufferevent *, key_code);
+int	 input_kitty_modifier_key(key_code);
+int	 input_kitty_bypass(const struct kitty_key *, key_code);
+int	 input_key_kitty(struct screen *, struct bufferevent *, key_code,
+	     const struct kitty_key *);
 
 /* colour.c */
 int	 colour_find_rgb(u_char, u_char, u_char);
@@ -3983,7 +4030,7 @@ void		 window_pane_reset_mode(struct window_pane *);
 void		 window_pane_reset_mode_all(struct window_pane *);
 int		 window_pane_key(struct window_pane *, struct client *,
 		     struct session *, struct winlink *, key_code,
-		     struct mouse_event *);
+		     struct mouse_event *, const struct kitty_key *);
 void		 window_pane_paste(struct window_pane *, key_code, char *,
 		     size_t);
 void		 window_pane_set_prompt(struct window_pane *, struct client *,
