@@ -98,7 +98,10 @@ check "\033]99;i=$(oid $A inew):a=focus,report:p=title:e=1;TmV3\033\\\\" \
 has full 'TG9zdA' && fail "dropped notification sent"
 
 # A respawned pane starts without the old process's unfinished notification.
-emit "$A" '\033]99;i=p:d=0;Old\033\\'
+$TMUX respawn-pane -k -t "$A" "stty raw -echo;
+    printf '\033]99;i=p:d=0;Old\033\\\\\033]99;i=s:p=close;\033\\\\';
+    exec cat" || exit 1
+check "\033]99;i=$(oid $A is):p=close;\033\\\\" "close after unfinished chunk"
 $TMUX respawn-pane -k -t "$A" \
     "stty raw -echo; printf '\033]99;i=p;New\033\\\\'; exec cat" || exit 1
 check "\033]99;i=$(oid $A ip):a=focus,report:p=title:e=1;TmV3\033\\\\" \
