@@ -164,7 +164,9 @@ for name, report in reports:
                 assert not matches(name, baseline), (context, baseline)
                 wire = (b"\033" if prefixed else b"") + report
                 if delivery == "invalid":
-                    # A near match must fall back to ordinary key parsing.
+                    # A near match must fall back to ordinary key parsing,
+                    # except a graphics reply to anything but the query,
+                    # which is consumed without enabling the feature.
                     if name == "kitty-graphics":
                         wire = b"\033_Gi=32;OK\033\\"
                     else:
@@ -198,7 +200,8 @@ for name, report in reports:
                         assert time.monotonic() < deadline, (context, "timer stalled")
                         if select.select([fd], [], [], .01)[0]:
                             os.read(fd, 65536)
-                if delivery in ("invalid", "expired"):
+                if delivery == "expired" or (delivery == "invalid" and
+                    name != "kitty-graphics"):
                     expected = wire.replace(b"\033", b"^[").decode() + "Z"
                 # A trailing key confirms that the entire reply has been
                 # processed, including cases with no extra Escape.
