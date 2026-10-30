@@ -785,6 +785,14 @@ server_client_check_mouse(struct client *c, struct key_event *event)
 		type = KEYC_TYPE_MOUSEMOVE;
 		x = m->x, y = m->y, b = 0;
 		log_debug("move at %u,%u", x, y);
+	} else if (MOUSE_DRAG(m->b) &&
+	    c->tty.mouse_button_pressed != (int)MOUSE_BUTTONS(m->b) +
+	    1) {
+		type = KEYC_TYPE_MOUSEMOVE;
+		x = m->x, y = m->y, b = 0;
+		m->b = m->sgr_b = (m->b & MOUSE_MASK_MODIFIERS) |
+		    MOUSE_MASK_DRAG | 3;
+		m->lb = 3;
 	} else if (MOUSE_DRAG(m->b)) {
 		type = KEYC_TYPE_MOUSEDRAG;
 		if (c->tty.mouse_drag_flag) {
@@ -1040,7 +1048,9 @@ have_event:
 		if (type != KEYC_TYPE_MOUSEDOWN &&
 		    (m->b != c->click_button ||
 		     loc != (enum key_code_mouse_location)c->click_loc ||
-		     m->wp != c->click_wp)) {
+		     m->wp != c->click_wp ||
+		     m->w != c->click_event.w ||
+		     m->s != c->click_event.s)) {
 			type = KEYC_TYPE_MOUSEDOWN;
 			log_debug("click sequence reset at %u,%u", x, y);
 			c->flags &= ~CLIENT_TRIPLECLICK;
@@ -1336,7 +1346,7 @@ server_client_handle_dead_key(struct window_pane *wp, key_code key)
 static enum cmd_retval
 server_client_key_callback(struct cmdq_item *item, void *data)
 {
-	struct key_event		*event = data;
+	struct key_event		*event = data, *press_event;
 	struct mouse_event		 release_event;
 	struct client			*c, *ec = event->client;
 	key_code			 key = event->key;
@@ -1409,6 +1419,26 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 	if (key == KEYC_MOUSE || key == KEYC_DOUBLECLICK) {
 		if (c->flags & CLIENT_READONLY)
 			goto out;
+		if (key == KEYC_MOUSE && c->tty.mouse_drag_flag != 0 &&
+		    !MOUSE_DRAG(m->b) && !MOUSE_RELEASE(m->b) &&
+		    !MOUSE_WHEEL(m->b)) {
+			press_event = xcalloc(1, sizeof *press_event);
+			memcpy(press_event, event, sizeof *press_event);
+			event->buf = NULL;
+			event->len = 0;
+			press_event->client = c;
+			c->references++;
+			cmdq_insert_after(item, cmdq_get_callback(
+			    server_client_key_callback, press_event));
+			m->x = m->lx;
+			m->y = m->ly;
+			m->sgr_b = (c->tty.mouse_drag_flag - 1) |
+			    (m->lb &
+			     (MOUSE_MASK_SHIFT|MOUSE_MASK_META|
+			      MOUSE_MASK_CTRL));
+			m->sgr_type = 'm';
+			m->b = 3;
+		}
 		key = server_client_check_mouse(c, event);
 		if (key == KEYC_UNKNOWN)
 			goto out;
