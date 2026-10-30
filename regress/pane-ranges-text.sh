@@ -157,6 +157,8 @@ output '\033[S'
 assert_field "$a" "$span" 'hidden|:-:|'
 output '\033[12;1Hhere'
 assert_field "$a" "$span" 'live|10:0-11:3|10'
+output '\033[2J\033[1;20Hwords here'
+assert_field "$a" "$span" 'clipped|0:19-0:28|0'
 
 # Unrelated changes raise no event.
 count_events
