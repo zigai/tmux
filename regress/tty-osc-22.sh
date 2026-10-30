@@ -38,11 +38,11 @@ attach()
 	clients=$4
 
 	$OUTER new-window -d -n "$name" \
-	    "while [ ! -e '$DIR/go-$name' ]; do sleep 0.01; done; TERM=$term exec $INNER attach -t $session" ||
+	    "while [ ! -e '$DIR/go-$name' ]; do sleep 0.01; done; TERM=$term exec $INNER attach -t =$session" ||
 	    exit 1
 	$OUTER pipe-pane -t "=outer:=$name" -O "cat >>'$DIR/$name'" || exit 1
 	touch "$DIR/go-$name"
-	wait_for_output "$clients" $INNER display-message -p -t "$session" \
+	wait_for_output "$clients" $INNER display-message -p -t "=$session:" \
 	    '#{session_attached}' || exit 1
 }
 
@@ -72,10 +72,10 @@ move()
 $INNER new-session -d -s a -x80 -y24 'stty raw -echo; exec cat' || exit 1
 $INNER set-option -g mouse on || exit 1
 $INNER set-option -s terminal-features 'screen:pointershape@' || exit 1
-$INNER split-window -h -t a 'stty raw -echo; exec cat' || exit 1
+$INNER split-window -h -t =a: 'stty raw -echo; exec cat' || exit 1
 $INNER new-session -d -s b -x80 -y24 'stty raw -echo; exec cat' || exit 1
-left=$($INNER display-message -p -t a:.0 '#{pane_id}')
-right=$($INNER display-message -p -t a:.1 '#{pane_id}')
+left=$($INNER display-message -p -t =a:.0 '#{pane_id}')
+right=$($INNER display-message -p -t =a:.1 '#{pane_id}')
 
 $OUTER new-session -d -s outer -x80 -y24 'exec sleep 1000' || exit 1
 $OUTER set-option -g status off || exit 1
@@ -124,7 +124,7 @@ check a 'pointer pointer'
 # Clients follow their own panes; a client without the feature gets nothing.
 attach b b tmux-256color 1
 attach c b screen 2
-emit b: '\033]22;crosshair\033\\'
+emit =b: '\033]22;crosshair\033\\'
 check b 'crosshair'
 check a ''
 wait_for_text '?1002h' cat -v "$DIR/c" || fail "c: no mouse mode"
@@ -133,20 +133,20 @@ if cat -v "$DIR/c" | grep -q '\]22;\|?1003h'; then
 fi
 
 # Switching windows uses the pane now under the mouse.
-$INNER new-window -t a 'stty raw -echo; exec cat' || exit 1
+$INNER new-window -t =a: 'stty raw -echo; exec cat' || exit 1
 check a 'reset'
-$INNER previous-window -t a || exit 1
+$INNER previous-window -t =a: || exit 1
 check a 'reset pointer'
 $INNER kill-pane -t "$left" || exit 1
 check a 'reset pointer reset'
 
 # Queries are answered from the client's features.
-$INNER new-window -d -t b \
+$INNER new-window -d -t =b: \
     "stty raw -echo; printf '\\033]22;?pointer,no-such-shape\\033\\\\'; exec cat -v" ||
     exit 1
-wait_for_output '^[]22;1,0^[\' $INNER capture-pane -p -t b:\$ || exit 1
+wait_for_output '^[]22;1,0^[\' $INNER capture-pane -p -t =b:\$ || exit 1
 
-$INNER detach-client -s b || exit 1
+$INNER detach-client -s =b || exit 1
 check b 'crosshair reset'
 
 exit 0
