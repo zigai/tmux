@@ -1063,6 +1063,19 @@ kitty_clipboard_free(struct window_pane *wp)
 	}
 }
 
+/* Is a request waiting for this client to answer? */
+int
+kitty_clipboard_waiting(struct client *c)
+{
+	struct kitty_clipboard_request	*r;
+
+	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
+		if (r->c == c)
+			return (1);
+	}
+	return (0);
+}
+
 /* Fail requests waiting for a client which has gone. */
 void
 kitty_clipboard_client_lost(struct client *c)

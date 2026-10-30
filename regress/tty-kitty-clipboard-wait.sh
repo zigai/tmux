@@ -129,8 +129,7 @@ wait_for_output '^[]5522;type=write:status=DONE:id=w3^[\'\
 '^[]5522;type=write:status=DONE:id=w4^[\' cat $TMP/out ||
     fail "write failed by write"
 
-# A reply split over two reads is still a reply, and the request fails when
-# its client goes.
+# A reply split over two reads is still a reply.
 kill -STOP $stopped || exit 1
 : >$TMP/first
 check "\\033]5522;type=read:id=r3;$PLAIN\\033\\\\\
@@ -146,10 +145,24 @@ $TMUX2 send-keys -t t: -l "$(printf '\033\\')" || exit 1
 wait_for_output '^[]5522;type=read:status=EBUSY:id=r3^[\'\
 '^[]5522;type=read:status=OK:id=r4^[\' cat $TMP/out ||
     fail "split reply"
+
+# So is a reply split after its first two bytes, and the request fails when
+# its client goes.
+kill -STOP $stopped || exit 1
+: >$TMP/first
+check "\\033]5522;type=read:id=r5;$PLAIN\\033\\\\" '' "read"
+wait_for_text 'type=read:id=tmux-' cat $TMP/first || fail "read not sent"
+id=$(sent_id read first)
+$TMUX2 send-keys -t t: -l "$(printf '\033]')" || exit 1
+sleep 0.05
+$TMUX2 send-keys -t t: -l "$(printf '5522;type=read:status=OK:id=%s\033\\' $id)" ||
+    exit 1
+wait_for_output '^[]5522;type=read:status=OK:id=r5^[\' cat $TMP/out ||
+    fail "reply split after two bytes"
+
 $TMUX2 respawn-pane -k -t t: "sleep 100" || exit 1
-wait_for_output '^[]5522;type=read:status=EBUSY:id=r3^[\'\
-'^[]5522;type=read:status=OK:id=r4^[\'\
-'^[]5522;type=read:status=EBUSY:id=r4^[\' cat $TMP/out ||
+wait_for_output '^[]5522;type=read:status=OK:id=r5^[\'\
+'^[]5522;type=read:status=EBUSY:id=r5^[\' cat $TMP/out ||
     fail "request not failed when client went"
 
 exit 0
