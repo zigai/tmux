@@ -9,6 +9,7 @@ export PATH TERM
 command -v python3 >/dev/null || exit 101
 
 python3 -B - "$TEST_TMUX" <<'PY'
+import os
 import sys
 from image_test import image_test, kitty, sixel
 from image_kitty import KittyTerminal
@@ -149,4 +150,14 @@ with image_test(sys.argv[1]) as test:
     test.redraw()
     terminal.feed(client.data)
     terminal.check(rectangle(green))
+
+# Graphics replies from the terminal are not passed to the pane as keys.
+with image_test(sys.argv[1]) as test:
+    client = test.attach(kitty_graphics=True)
+    test.run('respawn-pane', '-k', 'stty raw -echo; exec cat -v')
+    os.write(client.fd, b'\033_Gi=5;ENOENT: image not found\033\\'
+        b'\033_Gi=31;OK\033\\x')
+    test.wait(lambda: 'x' in test.run('capture-pane', '-p'))
+    text = test.run('capture-pane', '-p')
+    assert '_G' not in text, text
 PY

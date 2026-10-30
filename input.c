@@ -1428,6 +1428,9 @@ input_esc_dispatch(struct input_ctx *ictx)
 		colour_palette_clear(ictx->palette);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
+#ifdef ENABLE_IMAGES
+		kitty_reset(ictx->kitty_state, sctx);
+#endif
 		screen_write_fullredraw(sctx);
 		break;
 	case INPUT_ESC_IND:
@@ -1767,6 +1770,9 @@ input_csi_dispatch(struct input_ctx *ictx)
 			break;
 		case 2:
 			screen_write_clearscreen(sctx, bg);
+#ifdef ENABLE_IMAGES
+			kitty_clear_screen(ictx->kitty_state, sctx);
+#endif
 			break;
 		case 3:
 			if (input_get(ictx, 1, 0, 0) == 0) {
@@ -1992,9 +1998,15 @@ input_csi_dispatch_rm_private(struct input_ctx *ictx)
 		case 47:
 		case 1047:
 			screen_write_alternateoff(sctx, gc, 0);
+#ifdef ENABLE_IMAGES
+			kitty_alternate_screen(ictx->kitty_state, sctx);
+#endif
 			break;
 		case 1049:
 			screen_write_alternateoff(sctx, gc, 1);
+#ifdef ENABLE_IMAGES
+			kitty_alternate_screen(ictx->kitty_state, sctx);
+#endif
 			break;
 		case 2004:
 			screen_write_mode_clear(sctx, MODE_BRACKETPASTE);
@@ -2096,9 +2108,15 @@ input_csi_dispatch_sm_private(struct input_ctx *ictx)
 		case 47:
 		case 1047:
 			screen_write_alternateon(sctx, gc, 0);
+#ifdef ENABLE_IMAGES
+			kitty_alternate_screen(ictx->kitty_state, sctx);
+#endif
 			break;
 		case 1049:
 			screen_write_alternateon(sctx, gc, 1);
+#ifdef ENABLE_IMAGES
+			kitty_alternate_screen(ictx->kitty_state, sctx);
+#endif
 			break;
 		case 2004:
 			screen_write_mode_set(sctx, MODE_BRACKETPASTE);

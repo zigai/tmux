@@ -138,6 +138,7 @@ struct sixel_pending {
 /* Item in the cache. */
 struct sixel_item {
 	u_int			 id;
+	u_int			 generation;
 	struct sixel_image	*si;
 	size_t			 size;
 
@@ -204,6 +205,10 @@ sixel_cache_cmp(struct sixel_item *a, struct sixel_item *b)
 	if (a->id < b->id)
 		return (-1);
 	if (a->id > b->id)
+		return (1);
+	if (a->generation < b->generation)
+		return (-1);
+	if (a->generation > b->generation)
 		return (1);
 	if (a->cw < b->cw)
 		return (-1);
@@ -1332,8 +1337,11 @@ sixel_get_image(struct image *im, u_int cw, u_int ch)
 	struct sixel_image	*si;
 	struct image_geom	*ig = image_get_geometry(im);
 	size_t			 size;
-	u_int			 id = image_get_id(im);
+	u_int			 id = image_get_id(im), generation;
 	struct sixel_item	*cache, find = { .id = id, .cw = cw, .ch = ch };
+
+	generation = image_get_frame_generation(im, image_get_frame(im));
+	find.generation = generation;
 
 	cache = RB_FIND(sixel_tree, &sixel_tree, &find);
 	if (cache != NULL) {
@@ -1358,6 +1366,7 @@ sixel_get_image(struct image *im, u_int cw, u_int ch)
 
 	cache = xcalloc(1, sizeof *cache);
 	cache->id = id;
+	cache->generation = generation;
 	cache->cw = cw;
 	cache->ch = ch;
 	cache->size = size;

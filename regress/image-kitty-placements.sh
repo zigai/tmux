@@ -45,7 +45,8 @@ with image_test(sys.argv[1]) as test:
 
     def check(command, expected, cursor='0,0'):
         """Check the displayed image, its redraw and the pane cursor."""
-        test.emit(b'\033[2J\033[H' + command)
+        # Clearing the screen frees unplaced images, so upload again.
+        test.emit(b'\033[2J\033[H' + upload + command)
         actual = test.run('display-message', '-p', '#{cursor_x},#{cursor_y}')
         assert actual == cursor, ('cursor', actual, cursor)
         term = Terminal()
@@ -111,11 +112,12 @@ with image_test(sys.argv[1]) as test:
     # Successful source replacement removes all its old placements.
     green = graphics('a=t,i=7,f=32,s=1,v=1', b'\0\xff\0\xff')
     check(first + b'\033[4;5H' + graphics(put) + green, {}, cursor='4,3')
-    check(graphics(put + ',c=1,r=1'), solid(8, 16, colours[1]))
+    check(green + graphics(put + ',c=1,r=1'), solid(8, 16, colours[1]))
 
-    # Replacement also removes displays saved by the alternate screen.
-    check(upload + first + b'\033[?1049h' + green + b'\033[?1049l', {})
-    check(upload + first + b'\033[?1049h' + second + b'\033[?1049l', {})
+    # The alternate screen has separate images, so it cannot replace or
+    # place the primary screen's image.
+    check(first + b'\033[?1049h' + green + b'\033[?1049l', pattern())
+    check(first + b'\033[?1049h' + second + b'\033[?1049l', pattern())
 
     # Anonymous upload-and-place does not require a stored source mapping.
     check(graphics('a=T,f=32,s=1,v=1,p=9,C=1,c=1,r=1', b'\xff' * 4),

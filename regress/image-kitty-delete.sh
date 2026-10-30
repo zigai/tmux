@@ -53,6 +53,10 @@ cases = [
     ('missing image ID', kitty('a=d,d=I'), list(pictures)),
     ('all images', kitty('a=d,d=a'), ['sixel']),
     ('default selector', kitty('a=d'), ['sixel']),
+    # Frame deletes keep the only frame, unless uppercase deletes the image.
+    ('frame selector f', kitty('a=d,d=f,i=7'), list(pictures)),
+    ('frame selector F', kitty('a=d,d=F,i=7'),
+        ['other', 'anonymous', 'sixel']),
     ('all ignores image and placement IDs', kitty('a=d,d=A,i=7,p=1'),
         ['sixel']),
     ('repeated deletion', kitty('a=d,d=I,i=7,p=1') * 2,
@@ -77,9 +81,6 @@ for z in (-2147483648, -1, 1, 2147483647):
         list(pictures)))
     cases.append(('other layer at cell ' + str(z),
         kitty('a=d,d=Q,x=1,y=2,z=%d' % z), list(pictures)))
-for selector in 'fF':
-    cases.append(('unsupported selector ' + selector,
-        kitty('a=d,d=%s,i=7,p=1' % selector), list(pictures)))
 with image_test(sys.argv[1]) as test:
     test.run('set-option', '-g', 'scroll-on-clear', 'off')
     client = test.attach()
@@ -137,11 +138,12 @@ with image_test(sys.argv[1]) as test:
     snapshot(test, client, {})
     test.run('send-keys', '-X', 'cancel')
 
-# Deletion on the alternate screen leaves the saved primary placements intact.
+# Deletion on the alternate screen, which has its own images, leaves the saved
+# primary placements intact.
 with image_test(sys.argv[1]) as test:
     client = test.attach()
     test.emit(uploads + b'\033[H' + kitty(put + ',p=1') + b'\033[?1049h\033[H' +
-        kitty(put + ',p=2'))
+        uploads + kitty(put + ',p=2'))
     snapshot(test, client, rectangle(red))
     test.emit(kitty('a=d,d=I,i=7'))
     snapshot(test, client, {})

@@ -135,6 +135,7 @@ struct image_backend {
 	void		(*scroll)(struct tty *, u_int, u_int, u_int, u_int, int);
 	void		(*free)(struct tty *, int);
 	void		(*remove_image)(struct image *);
+	void			 (*update_frames)(struct tty *);
 };
 
 /* Backend definitions. */
@@ -144,6 +145,7 @@ static struct image_backend image_backend_fallback = {
 	fallback_select,
 	fallback_map_cell,
 	fallback_map_placeholder,
+	NULL,
 	NULL,
 	NULL,
 	NULL,
@@ -164,6 +166,7 @@ static struct image_backend image_backend_sixel = {
 	NULL,
 	NULL,
 	sixel_free_pending,
+	NULL,
 	NULL
 };
 static struct image_backend image_backend_kitty = {
@@ -178,7 +181,8 @@ static struct image_backend image_backend_kitty = {
 	kitty_redraw_finish,
 	kitty_scroll,
 	kitty_free_output_state,
-	kitty_remove_image
+	kitty_remove_image,
+	kitty_update_frames
 };
 
 /* Backends in order of preference. */
@@ -233,6 +237,14 @@ image_hide_placeholder(const struct grid_cell *gc, struct grid_cell *out)
 	return (out);
 }
 
+/* Get a terminal's cell pixel size, using a default if it is unknown. */
+static void
+image_cell_size(struct tty *tty, u_int *xpixel, u_int *ypixel)
+{
+	*xpixel = (tty->xpixel == 0 ? 8 : tty->xpixel);
+	*ypixel = (tty->ypixel == 0 ? 16 : tty->ypixel);
+}
+
 /*
  * Map an image grid cell to text for the selected backend. Kitty placeholder
  * cells are resolved using the pane's images; without a pane or an image they
@@ -246,17 +258,20 @@ image_map_cell(struct tty *tty, struct window_pane *wp, struct kitty_run *run,
 	struct image_backend	*backend;
 	const struct grid_cell	*gcp = NULL;
 	struct image		*im;
-	u_int			 col, row;
+	u_int			 col, row, xpixel, ypixel;
 
 	image_tty_update(tty);
 	backend = tty->image_backend;
 	if (kitty_is_placeholder(&gc->data)) {
+		image_cell_size(tty, &xpixel, &ypixel);
 		if (wp != NULL &&
 		    backend->map_placeholder != NULL &&
-		    kitty_placeholder_get(wp, run, gd, x, y, gc, tty->xpixel,
-		    tty->ypixel, &im, &col, &row))
+		    kitty_placeholder_get(wp, run, gd, x, y, gc, xpixel, ypixel,
+		    &im, &col, &row)) {
+			image_animation_drawn(im);
 			gcp = backend->map_placeholder(tty, im, col, row, gc,
 			    out);
+		}
 		if (gcp == NULL)
 			gcp = image_hide_placeholder(gc, out);
 		return (gcp);
@@ -295,6 +310,7 @@ image_draw_placeholder_rect(struct image_backend *backend, struct tty *tty,
 	if (rect->image == NULL)
 		return;
 	image_touch(rect->image);
+	image_animation_drawn(rect->image);
 	backend->draw_rect(tty, rect);
 	rect->image = NULL;
 }
@@ -315,7 +331,9 @@ image_draw_placeholders(struct image_backend *backend, struct tty *tty,
 	struct image_rect	 rect;
 	struct image		*im;
 	u_int			 x, end, col, row, gy = gd->hsize + py;
+	u_int			 xpixel, ypixel;
 
+	image_cell_size(tty, &xpixel, &ypixel);
 	gl = grid_get_line(gd, gy);
 	if (~gl->flags & GRID_LINE_EXTENDED)
 		return;
@@ -328,8 +346,8 @@ image_draw_placeholders(struct image_backend *backend, struct tty *tty,
 	for (x = px; x < end; x++) {
 		grid_get_cell(gd, x, gy, &gc);
 		if (!kitty_is_placeholder(&gc.data) ||
-		    !kitty_placeholder_get(wp, &run, gd, x, gy, &gc,
-		    tty->xpixel, tty->ypixel, &im, &col, &row)) {
+		    !kitty_placeholder_get(wp, &run, gd, x, gy, &gc, xpixel,
+		    ypixel, &im, &col, &row)) {
 			image_draw_placeholder_rect(backend, tty, &rect);
 			continue;
 		}
@@ -364,8 +382,6 @@ image_draw_line(struct tty *tty, struct window_pane *wp, u_int px, u_int py,
 
 	image_tty_update(tty);
 	backend = tty->image_backend;
-	if (backend->draw_rect == NULL)
-		return;
 	if (py >= s->grid->sy)
 		return;
 	if (backend->map_placeholder == NULL)
@@ -384,8 +400,11 @@ image_draw_line(struct tty *tty, struct window_pane *wp, u_int px, u_int py,
 			continue;
 		if (span_end > end)
 			span_end = end;
-		image_draw_span(backend, tty, span, start, span_end, px, atx,
-		    aty);
+		image_animation_drawn(span->placement->image);
+		if (backend->draw_rect != NULL) {
+			image_draw_span(backend, tty, span, start, span_end, px,
+			    atx, aty);
+		}
 	}
 }
 
@@ -445,6 +464,131 @@ image_tty_free(struct tty *tty, int send)
 		tty->image_backend = NULL;
 		tty->image_data = NULL;
 	}
+}
+
+/*
+ * Check whether placeholder cells on a pane line show an image, and damage
+ * them if redrawing.
+ */
+static int
+image_placeholders_show(struct window_pane *wp, struct image *im, u_int y,
+    int redraw)
+{
+	struct grid		*gd = wp->screen->grid;
+	struct grid_line	*gl;
+	struct grid_cell	 gc;
+	struct kitty_run	 run;
+	struct image		*pim;
+	u_int			 x, col, row, start = 0, gy = gd->hsize + y;
+	int			 shown = 0, in = 0, match;
+
+	gl = grid_get_line(gd, gy);
+	if (~gl->flags & GRID_LINE_PLACEHOLDER)
+		return (0);
+	memset(&run, 0, sizeof run);
+	for (x = 0; x <= gl->cellsize; x++) {
+		match = 0;
+		if (x < gl->cellsize) {
+			grid_get_cell(gd, x, gy, &gc);
+			if (kitty_is_placeholder(&gc.data) &&
+			    kitty_placeholder_get(wp, &run, gd, x, gy, &gc, 0,
+			    0, &pim, &col, &row))
+				match = (image_get_root(pim) == im);
+		}
+		if (match && !redraw)
+			return (1);
+		if (match && !in) {
+			start = x;
+			in = 1;
+		} else if (!match && in) {
+			redraw_damage_window(wp->window, wp->xoff + start,
+			    wp->yoff + y, x - start, 1);
+			in = 0;
+			shown = 1;
+		}
+	}
+	return (shown);
+}
+
+/* Check whether a pane shows an image, and damage it if redrawing. */
+static int
+image_pane_shows(struct window_pane *wp, struct image *im, int redraw)
+{
+	struct grid		*gd = wp->screen->grid;
+	struct image_line	*line;
+	struct image_span	*span;
+	u_int			 y;
+	int			 shown = 0;
+
+	for (y = 0; y < gd->sy; y++) {
+		if (image_placeholders_show(wp, im, y, redraw)) {
+			if (!redraw)
+				return (1);
+			shown = 1;
+		}
+		line = gd->linedata[gd->hsize + y].images;
+		if (line == NULL)
+			continue;
+		TAILQ_FOREACH(span, &line->spans, line_entry) {
+			if (image_get_root(span->placement->image) != im)
+				continue;
+			if (!redraw)
+				return (1);
+			shown = 1;
+			redraw_damage_window(wp->window, wp->xoff + span->x,
+			    wp->yoff + y, span->sx, 1);
+		}
+	}
+	return (shown);
+}
+
+/*
+ * Bring each client showing an image up to date with its current frame. Clients
+ * which need a redraw are only redrawn if requested. Returns IMAGE_SHOWN flags.
+ */
+int
+image_show_frame(struct image *im, int redraw)
+{
+	struct client		*c;
+	struct tty		*tty;
+	struct window		*w;
+	struct window_pane	*wp;
+	int			 flags = 0, shown;
+
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->session == NULL ||
+		    (c->flags & (CLIENT_UNATTACHEDFLAGS|CLIENT_CONTROL)))
+			continue;
+		tty = &c->tty;
+		if (~tty->flags & TTY_STARTED)
+			continue;
+		w = c->session->curw->window;
+		shown = 0;
+		TAILQ_FOREACH(wp, &w->panes, entry) {
+			if (window_pane_is_visible(wp) &&
+			    image_pane_shows(wp, im, 0)) {
+				shown = 1;
+				break;
+			}
+		}
+		if (!shown)
+			continue;
+		flags |= IMAGE_SHOWN;
+
+		image_tty_update(tty);
+		if (tty->image_backend->update_frames != NULL) {
+			tty->image_backend->update_frames(tty);
+			continue;
+		}
+		flags |= IMAGE_SHOWN_REDRAW;
+		if (redraw) {
+			TAILQ_FOREACH(wp, &w->panes, entry) {
+				if (window_pane_is_visible(wp))
+					image_pane_shows(wp, im, 1);
+			}
+		}
+	}
+	return (flags);
 }
 
 /* Get the placement store for a grid. */
@@ -1429,6 +1573,31 @@ image_grid_resize_width(struct grid *gd, u_int new_sx)
 	}
 }
 
+/*
+ * Find where repeated index moves the cursor and how many times it scrolls
+ * the region. Index scrolls only at the region bottom and stops at the screen
+ * bottom outside the region.
+ */
+static u_int
+image_index_lines(struct screen *s, u_int cy, u_int rows, u_int *end_y)
+{
+	u_int	y = cy, lines = 0, limit, i;
+
+	limit = screen_size_y(s);
+	if (cy >= s->rupper && cy <= s->rlower)
+		limit += s->rlower - cy;
+	if (rows > limit)
+		rows = limit;
+	for (i = 0; i < rows; i++) {
+		if (y == s->rlower)
+			lines++;
+		else if (y < screen_size_y(s) - 1)
+			y++;
+	}
+	*end_y = y;
+	return (lines);
+}
+
 /* Place an image at the cursor. */
 void
 image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
@@ -1442,24 +1611,59 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	struct image_line	*line;
 	u_int			 cx = s->cx, cy = s->cy, y, lines;
 	u_int			 sx = ig->sx, sy = ig->sy;
-	u_int			 cursor_x = 0, cursor_rows;
+	u_int			 cursor_x = 0, cursor_y, cursor_rows;
 	u_int			 origin_y = 0, h_origin_y, region_height;
 	u_int			 remaining, n;
+	int			 wrap = 0, history = 1;
 
 	if (sx > screen_size_x(s) - cx)
 		sx = screen_size_x(s) - cx;
 	if (sx == 0)
 		return;
 
-	/* Kitty moves to the last image row; SIXEL advances past it. */
+	/*
+	 * Kitty moves to the last image row, or the next row if the image
+	 * reaches the right edge; SIXEL advances past it.
+	 */
 	cursor_rows = sy;
-	if (image_get_type(im) == IMAGE_TYPE_KITTY)
-		cursor_rows--;
+	if (image_get_type(im) == IMAGE_TYPE_KITTY) {
+		wrap = (ig->sx >= screen_size_x(s) - cx);
+		if (!wrap)
+			cursor_rows--;
+	}
 
 	/* Scroll images that move the cursor. */
+	cursor_y = cy + cursor_rows;
 	if (no_cursor) {
 		if (sy > screen_size_y(s) - cy)
 			sy = screen_size_y(s) - cy;
+	} else if (image_get_type(im) == IMAGE_TYPE_KITTY &&
+	    (s->rupper != 0 || s->rlower != screen_size_y(s) - 1)) {
+		history = 0;
+		lines = image_index_lines(s, cy, cursor_rows, &cursor_y);
+		region_height = s->rlower - s->rupper + 1;
+		for (remaining = lines; remaining > 0; remaining -= n) {
+			n = (remaining < region_height ? remaining :
+			    region_height);
+			screen_write_scrollup(ctx, n, bg);
+		}
+
+		/* Only an image wholly inside the region moves with it. */
+		if (cy >= s->rupper && cy + sy - 1 <= s->rlower) {
+			if (lines > cy - s->rupper) {
+				origin_y = lines - (cy - s->rupper);
+				cy = s->rupper;
+			} else
+				cy -= lines;
+			sy = (origin_y < sy ? sy - origin_y : 0);
+		}
+		if (sy > screen_size_y(s) - cy)
+			sy = screen_size_y(s) - cy;
+		if (sy == 0) {
+			screen_write_cursormove(ctx, wrap ? 0 : cx + sx,
+			    cursor_y, 0);
+			return;
+		}
 	} else if (screen_size_y(s) - cy <= cursor_rows) {
 		lines = cursor_rows - (screen_size_y(s) - cy) + 1;
 		region_height = s->rlower - s->rupper + 1;
@@ -1484,6 +1688,7 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 		cy = s->cy;
 		sy -= origin_y;
 		cursor_rows -= origin_y;
+		cursor_y = cy + cursor_rows;
 	}
 	plmt = image_placement_create(gd, im);
 	if (sx < ig->sx) {
@@ -1492,7 +1697,7 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	}
 
 	/* Attach scrolled image rows to the available history lines. */
-	h_origin_y = origin_y;
+	h_origin_y = (history ? origin_y : 0);
 	if (h_origin_y > gd->hsize)
 		h_origin_y = gd->hsize;
 	for (y = 0; y < h_origin_y; y++) {
@@ -1511,9 +1716,9 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 	image_store_prune(gd->images);
 	image_redraw_area(ctx, cx, cy, sx, sy);
 	if (!no_cursor) {
-		if (image_get_type(im) == IMAGE_TYPE_KITTY)
+		if (image_get_type(im) == IMAGE_TYPE_KITTY && !wrap)
 			cursor_x = cx + sx;
-		screen_write_cursormove(ctx, cursor_x, cy + cursor_rows, 0);
+		screen_write_cursormove(ctx, cursor_x, cursor_y, 0);
 	}
 }
 

@@ -38,7 +38,23 @@
  * the helpers here to map output cells or pixels back to the source image.
  * This lets clients with different cell pixel sizes draw the same image
  * without changing its stored pixels.
+ *
+ * An image without a parent has one or more frames of pixels, of which one is
+ * current. Child images always show the current frame of their parent. When
+ * playback is running, a timer moves to the next frame while the image is
+ * visible on a client.
  */
+
+/* Minimum interval between redraws for a changed frame, in milliseconds. */
+#define IMAGE_ANIMATION_REDRAW 30
+
+/* A frame of pixels. Generations are unique and change when pixels change. */
+struct image_frame {
+	u_char			*pixels;
+	u_int			 gap;
+	u_int			 id;
+	u_int			 generation;
+};
 
 /* An image. */
 TAILQ_HEAD(image_list, image);
@@ -52,16 +68,28 @@ struct image {
 	struct image_list	 children;
 	u_int			 order_id;
 	int32_t			 zindex;
+	int			 transient;
 
 	/*
 	 * RGBA pixels use four bytes each. Stride is the number of bytes
 	 * between the start of each row. Size is the number of bytes
-	 * containing all of this image's pixels - it may include pixels that
-	 * are part of the parent image but not part of this image.
+	 * containing all of this image's pixels in one frame - it may include
+	 * pixels that are part of the parent image but not part of this image.
 	 */
 	size_t			 stride;
 	size_t			 size;
-	u_char			*pixels;
+
+	/* Frames and playback, only for images without a parent. */
+	struct image_frame	*frames;
+	u_int			 nframes;
+	u_int			 frame;
+	enum image_animation	 animation;
+	u_int			 loops;
+	u_int			 loop;
+	uint64_t		 shown;
+	uint64_t		 redrawn;
+	int			 redraw;
+	struct event		 timer;
 
 	RB_ENTRY(image)		 entry;
 	TAILQ_ENTRY(image)	 all_entry;
@@ -79,6 +107,9 @@ static size_t image_size;
 
 /* Next image ID. */
 static u_int image_next_id;
+
+/* Next frame ID and generation. */
+static u_int image_next_frame;
 
 /* Compare images by IDs. */
 static int
@@ -149,6 +180,13 @@ image_set_zindex(struct image *im, int32_t zindex)
 	im->zindex = zindex;
 }
 
+/* Mark an image as only needed for a short time. */
+void
+image_set_transient(struct image *im, int transient)
+{
+	im->transient = transient;
+}
+
 /* Get the type of an image. */
 enum image_type
 image_get_type(struct image *im)
@@ -169,12 +207,30 @@ image_remove_all(struct image *im)
 	image_free(im);
 }
 
-/* Find the oldest image. */
+/*
+ * Get the order to remove an image when over the limits: unused transient
+ * images first, then other unused images, then transient images. Kitty images
+ * without placements are unused.
+ */
+static int
+image_eviction_priority(struct image *im)
+{
+	int	priority = (im->transient ? 0 : 1);
+
+	if (im->parent != NULL ||
+	    im->type != IMAGE_TYPE_KITTY ||
+	    !TAILQ_EMPTY(&im->children))
+		priority += 2;
+	return (priority);
+}
+
+/* Find the image to remove first, the oldest with the lowest priority. */
 static struct image *
 image_find_oldest(struct image *keep, size_t size)
 {
-	struct image	*im, *parent;
+	struct image	*im, *parent, *found = NULL;
 	size_t		 limit;
+	int		 priority, found_priority = INT_MAX;
 
 	limit = options_get_number(global_options, "image-total-size-limit");
 	TAILQ_FOREACH_REVERSE(im, &all_images, image_list, all_entry) {
@@ -185,21 +241,26 @@ image_find_oldest(struct image *keep, size_t size)
 			if (parent == im)
 				break;
 		}
-		if (parent == NULL)
-			return (im);
+		if (parent != NULL)
+			continue;
+		priority = image_eviction_priority(im);
+		if (priority < found_priority) {
+			found = im;
+			found_priority = priority;
+		}
 	}
-	return (NULL);
+	return (found);
 }
 
-/* Is there enough space for this image? */
+/* Is there enough space for this image or frame? */
 static int
-image_can_add(size_t size)
+image_can_add(size_t size, int new_image)
 {
 	u_int	count;
 	size_t	limit;
 
 	count = options_get_number(global_options, "image-total-count-limit");
-	if (image_count >= count)
+	if (new_image && image_count >= count)
 		return (0);
 	limit = options_get_number(global_options, "image-total-size-limit");
 	if (image_size > limit || size > limit - image_size)
@@ -209,7 +270,7 @@ image_can_add(size_t size)
 
 /* Check limits and remove images if needed. */
 static int
-image_check_limits(struct image *keep, size_t size)
+image_check_limits(struct image *keep, size_t size, int new_image)
 {
 	struct image	*oldest;
 	struct client	*c;
@@ -218,12 +279,12 @@ image_check_limits(struct image *keep, size_t size)
 	limit = options_get_number(global_options, "image-total-size-limit");
 	if (size > limit)
 		return (-1);
-	if (image_can_add(size))
+	if (image_can_add(size, new_image))
 		return (0);
 
 	TAILQ_FOREACH(c, &clients, entry)
 		image_tty_free(&c->tty, 1);
-	while (!image_can_add(size)) {
+	while (!image_can_add(size, new_image)) {
 		oldest = image_find_oldest(keep, size);
 		if (oldest == NULL)
 			break;
@@ -231,15 +292,14 @@ image_check_limits(struct image *keep, size_t size)
 	}
 	TAILQ_FOREACH(c, &clients, entry)
 		server_redraw_client(c);
-	if (!image_can_add(size))
+	if (!image_can_add(size, new_image))
 		return (-1);
 	return (0);
 }
 
 /* Allocate an image and assign a unique ID. */
 static struct image *
-image_alloc(enum image_type type, struct image_geom *ig, size_t stride,
-    u_char *pixels)
+image_alloc(enum image_type type, struct image_geom *ig, size_t stride)
 {
 	struct image	*im;
 	u_int		 id;
@@ -258,26 +318,16 @@ image_alloc(enum image_type type, struct image_geom *ig, size_t stride,
 	im->geom = *ig;
 	im->stride = stride;
 	im->size = (ig->src_h - 1) * stride + ig->src_w * 4;
-	im->pixels = pixels;
 	TAILQ_INIT(&im->children);
 	RB_INSERT(images, &images, im);
 	image_count++;
 	return (im);
 }
 
-/* Create an image with the provided pixels. */
-struct image *
-image_create(enum image_type type, struct image_geom *ig, u_char *pixels)
-{
-	size_t	stride = ig->src_w * 4;
-
-	return (image_create_with_parent(type, NULL, ig, stride, pixels));
-}
-
-/* Create an image based on a parent image. */
-struct image *
-image_create_with_parent(enum image_type type, struct image *parent,
-    struct image_geom *ig, size_t stride, u_char *pixels)
+/* Create an image, either with pixels or sharing a parent's frames. */
+static struct image *
+image_new(enum image_type type, struct image *parent, struct image_geom *ig,
+    size_t stride, u_char *pixels)
 {
 	struct image	*im;
 	size_t		 size = 0, limit;
@@ -287,7 +337,7 @@ image_create_with_parent(enum image_type type, struct image *parent,
 		return (NULL);
 	if (ig->canvas_width == 0 || ig->canvas_height == 0)
 		return (NULL);
-	if (ig->sx == 0 || ig->sy == 0 || pixels == NULL)
+	if (ig->sx == 0 || ig->sy == 0 || (parent == NULL && pixels == NULL))
 		return (NULL);
 	if ((uint64_t)ig->src_w * ig->src_h > limit / 4)
 		return (NULL);
@@ -301,14 +351,19 @@ image_create_with_parent(enum image_type type, struct image *parent,
 	/* Check limits before allocating the image. */
 	if (parent == NULL)
 		size = (ig->src_h - 1) * stride + ig->src_w * 4;
-	if (image_check_limits(parent, size) != 0)
+	if (image_check_limits(parent, size, 1) != 0)
 		return (NULL);
 
-	im = image_alloc(type, ig, stride, pixels);
+	im = image_alloc(type, ig, stride);
 	im->parent = parent;
-	if (parent == NULL)
+	if (parent == NULL) {
+		im->frames = xcalloc(1, sizeof *im->frames);
+		im->nframes = 1;
+		im->frames[0].pixels = pixels;
+		im->frames[0].id = im->frames[0].generation =
+		    ++image_next_frame;
 		image_size += im->size;
-	else {
+	} else {
 		im->order_id = parent->order_id;
 		TAILQ_INSERT_TAIL(&parent->children, im, child_entry);
 		image_ref(parent);
@@ -316,6 +371,21 @@ image_create_with_parent(enum image_type type, struct image *parent,
 	TAILQ_INSERT_HEAD(&all_images, im, all_entry);
 	image_touch(im);
 	return (im);
+}
+
+/* Create an image with the provided pixels. */
+struct image *
+image_create(enum image_type type, struct image_geom *ig, u_char *pixels)
+{
+	return (image_new(type, NULL, ig, ig->src_w * 4, pixels));
+}
+
+/* Create an image showing part of a parent image. */
+struct image *
+image_create_with_parent(enum image_type type, struct image *parent,
+    struct image_geom *ig)
+{
+	return (image_new(type, parent, ig, parent->stride, NULL));
 }
 
 /* Add a reference to an image. */
@@ -331,6 +401,8 @@ image_ref(struct image *im)
 void
 image_free(struct image *im)
 {
+	u_int	i;
+
 	if (im->references == 0)
 		fatalx("invalid image reference %u", im->id);
 	if (--im->references == 0) {
@@ -338,8 +410,12 @@ image_free(struct image *im)
 		TAILQ_REMOVE(&all_images, im, all_entry);
 		image_count--;
 		if (im->parent == NULL) {
-			image_size -= im->size;
-			free(im->pixels);
+			if (evtimer_initialized(&im->timer))
+				evtimer_del(&im->timer);
+			image_size -= im->size * im->nframes;
+			for (i = 0; i < im->nframes; i++)
+				free(im->frames[i].pixels);
+			free(im->frames);
 		} else {
 			TAILQ_REMOVE(&im->parent->children, im, child_entry);
 			image_free(im->parent);
@@ -355,7 +431,29 @@ image_get_geometry(struct image *im)
 	return (&im->geom);
 }
 
-/* Get the image pixels. */
+/* Get the image without a parent which holds an image's frames. */
+struct image *
+image_get_root(struct image *im)
+{
+	while (im->parent != NULL)
+		im = im->parent;
+	return (im);
+}
+
+/* Get the pixels of an image in a frame. */
+static u_char *
+image_frame_pixels(struct image *im, u_int n)
+{
+	u_char	*base;
+
+	if (im->parent != NULL)
+		base = image_frame_pixels(im->parent, n);
+	else
+		base = im->frames[n].pixels;
+	return (base + im->geom.src_y * im->stride + im->geom.src_x * 4);
+}
+
+/* Get the image pixels in the current frame. */
 u_char *
 image_get_pixels(struct image *im, size_t *stride, size_t *size)
 {
@@ -363,7 +461,7 @@ image_get_pixels(struct image *im, size_t *stride, size_t *size)
 		*stride = im->stride;
 	if (size != NULL)
 		*size = im->size;
-	return (im->pixels + im->geom.src_y * im->stride + im->geom.src_x * 4);
+	return (image_frame_pixels(im, image_get_root(im)->frame));
 }
 
 /* Convert an output X position to a source image position in pixels. */
@@ -423,9 +521,19 @@ image_get_bounds(struct image_geom *ig, u_int x, u_int y, u_int w, u_int h,
 	return (1);
 }
 
-/* Map a pixel in the full output canvas to the original source pixels. */
+/* Map a pixel in the full output canvas to the current frame's pixels. */
 u_char *
 image_get_pixel(struct image *im, u_int x, u_int y, u_int w, u_int h)
+{
+	struct image	*root = image_get_root(im);
+
+	return (image_get_frame_pixel(im, root->frame, x, y, w, h));
+}
+
+/* Map a pixel in the full output canvas to a frame's pixels. */
+u_char *
+image_get_frame_pixel(struct image *im, u_int n, u_int x, u_int y, u_int w,
+    u_int h)
 {
 	static u_char		 empty[4];
 	struct image_geom	*ig = &im->geom;
@@ -438,7 +546,7 @@ image_get_pixel(struct image *im, u_int x, u_int y, u_int w, u_int h)
 		return (empty);
 	sx = px;
 	sy = py;
-	return (image_get_pixels(im, NULL, NULL) + sy * im->stride + sx * 4);
+	return (image_frame_pixels(im, n) + sy * im->stride + sx * 4);
 }
 
 /* Calculate the cell size. */
@@ -473,4 +581,289 @@ image_get_pixel_area(struct image *im, u_int x, u_int y, u_int w, u_int h,
 			*ph = ceil(ib.bottom) - *py;
 		}
 	}
+}
+
+/* Get the number of frames of an image. */
+u_int
+image_get_frame_count(struct image *im)
+{
+	return (image_get_root(im)->nframes);
+}
+
+/* Get the current frame of an image. */
+u_int
+image_get_frame(struct image *im)
+{
+	return (image_get_root(im)->frame);
+}
+
+/* Get the full pixels of a frame, or NULL if there is no such frame. */
+u_char *
+image_get_frame_pixels(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes)
+		return (NULL);
+	return (image_frame_pixels(im, n));
+}
+
+/* Get the ID of a frame, which does not change while the frame exists. */
+u_int
+image_get_frame_id(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes)
+		return (0);
+	return (im->frames[n].id);
+}
+
+/* Get the generation of a frame, which changes with its pixels. */
+u_int
+image_get_frame_generation(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes)
+		return (0);
+	return (im->frames[n].generation);
+}
+
+/* Get the total time of all frames. */
+static uint64_t
+image_animation_duration(struct image *im)
+{
+	uint64_t	total = 0;
+	u_int		i;
+
+	for (i = 0; i < im->nframes; i++)
+		total += im->frames[i].gap;
+	return (total);
+}
+
+/* Check whether playback moves an image to other frames. */
+static int
+image_is_animating(struct image *im)
+{
+	if (im->animation == IMAGE_ANIMATION_STOPPED || im->nframes < 2)
+		return (0);
+	if (im->loops != 0 && im->loop >= im->loops)
+		return (0);
+	return (image_animation_duration(im) != 0);
+}
+
+/* Move to the next frame with a gap, unless playback stops first. */
+static int
+image_animation_advance(struct image *im)
+{
+	u_int	n = im->frame, next;
+
+	for (;;) {
+		next = (n + 1) % im->nframes;
+		if (next == 0) {
+			if (im->animation == IMAGE_ANIMATION_LOADING)
+				return (0);
+			im->loop++;
+			if (im->loops != 0 && im->loop >= im->loops)
+				return (0);
+		}
+		n = next;
+		if (im->frames[n].gap != 0)
+			break;
+	}
+	im->frame = n;
+	return (1);
+}
+
+/* Start the playback timer to fire after a delay in milliseconds. */
+static void
+image_animation_schedule(struct image *im, uint64_t delay)
+{
+	struct timeval	tv;
+
+	tv.tv_sec = delay / 1000;
+	tv.tv_usec = (delay % 1000) * 1000;
+	evtimer_add(&im->timer, &tv);
+}
+
+/*
+ * Advance playback and update clients. The timer stops while the image is not
+ * visible and is started again when it is drawn.
+ */
+static void
+image_animation_timer(__unused int fd, __unused short events, void *arg)
+{
+	struct image	*im = arg;
+	uint64_t	 now = get_timer(), next = 0;
+	int		 flags, redraw;
+
+	if (~image_show_frame(im, 0) & IMAGE_SHOWN) {
+		im->redraw = 0;
+		return;
+	}
+
+	if (image_is_animating(im)) {
+		if (im->shown == 0 || im->shown > now)
+			im->shown = now;
+		next = im->shown + im->frames[im->frame].gap;
+		if (now >= next && image_animation_advance(im)) {
+			im->shown = now;
+			im->redraw = 1;
+			next = now + im->frames[im->frame].gap;
+		}
+		if (next <= now)
+			next = 0;
+	}
+
+	redraw = (im->redraw && now >= im->redrawn + IMAGE_ANIMATION_REDRAW);
+	flags = image_show_frame(im, redraw);
+	if (~flags & IMAGE_SHOWN_REDRAW)
+		im->redraw = 0;
+	else if (redraw) {
+		im->redraw = 0;
+		im->redrawn = now;
+	} else if (im->redraw &&
+	    (next == 0 || im->redrawn + IMAGE_ANIMATION_REDRAW < next))
+		next = im->redrawn + IMAGE_ANIMATION_REDRAW;
+
+	if (next != 0)
+		image_animation_schedule(im, next - now);
+}
+
+/* Run the playback timer soon to apply a change. */
+static void
+image_animation_update(struct image *im, int force)
+{
+	if (!evtimer_initialized(&im->timer))
+		evtimer_set(&im->timer, image_animation_timer, im);
+	if (!force && evtimer_pending(&im->timer, NULL))
+		return;
+	if (!image_is_animating(im) && !im->redraw)
+		return;
+	image_animation_schedule(im, 0);
+}
+
+/* Start playback of an image which has been drawn, if it is stopped. */
+void
+image_animation_drawn(struct image *im)
+{
+	im = image_get_root(im);
+	if (im->nframes > 1)
+		image_animation_update(im, 0);
+}
+
+/* Add a frame of full image pixels. Returns -1 if there is no space. */
+int
+image_add_frame(struct image *im, u_char *pixels, u_int gap)
+{
+	struct image_frame	*f;
+
+	im = image_get_root(im);
+	if (image_check_limits(im, im->size, 0) != 0)
+		return (-1);
+
+	im->frames = xreallocarray(im->frames, im->nframes + 1,
+	    sizeof *im->frames);
+	f = &im->frames[im->nframes++];
+	f->pixels = pixels;
+	f->gap = gap;
+	f->id = f->generation = ++image_next_frame;
+	image_size += im->size;
+
+	image_animation_update(im, 1);
+	return (0);
+}
+
+/* Remove a frame, unless it is the only one. */
+void
+image_delete_frame(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes || im->nframes == 1)
+		return;
+
+	free(im->frames[n].pixels);
+	memmove(&im->frames[n], &im->frames[n + 1],
+	    (im->nframes - n - 1) * sizeof *im->frames);
+	im->nframes--;
+	image_size -= im->size;
+
+	if (im->frame > n)
+		im->frame--;
+	else if (im->frame == n) {
+		if (im->frame == im->nframes)
+			im->frame--;
+		im->shown = 0;
+		im->redraw = 1;
+	}
+	image_animation_update(im, 1);
+}
+
+/* Record that the pixels of a frame have changed. */
+void
+image_frame_changed(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes)
+		return;
+	im->frames[n].generation = ++image_next_frame;
+	if (n == im->frame) {
+		im->shown = 0;
+		im->redraw = 1;
+		image_animation_update(im, 1);
+	}
+}
+
+/* Get the time a frame is shown in milliseconds; 0 means it is skipped. */
+u_int
+image_get_frame_gap(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes)
+		return (0);
+	return (im->frames[n].gap);
+}
+
+/* Set the time a frame is shown. */
+void
+image_set_frame_gap(struct image *im, u_int n, u_int gap)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes)
+		return;
+	im->frames[n].gap = gap;
+	image_animation_update(im, 1);
+}
+
+/* Show a frame. */
+void
+image_set_frame(struct image *im, u_int n)
+{
+	im = image_get_root(im);
+	if (n >= im->nframes || n == im->frame)
+		return;
+	im->frame = n;
+	im->shown = 0;
+	im->redraw = 1;
+	image_animation_update(im, 1);
+}
+
+/* Set the playback state. This always resets the loop counter. */
+void
+image_set_animation(struct image *im, enum image_animation animation)
+{
+	im = image_get_root(im);
+	if (im->animation == IMAGE_ANIMATION_STOPPED &&
+	    animation != IMAGE_ANIMATION_STOPPED)
+		im->shown = 0;
+	im->animation = animation;
+	im->loop = 0;
+	image_animation_update(im, 1);
+}
+
+/* Set the number of loops to play; 0 means no limit. */
+void
+image_set_animation_loops(struct image *im, u_int loops)
+{
+	im = image_get_root(im);
+	im->loops = loops;
+	image_animation_update(im, 1);
 }
