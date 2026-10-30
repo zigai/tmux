@@ -5450,6 +5450,8 @@ Allows setting the system clipboard.
 Allows setting the cursor colour.
 .It cstyle
 Allows setting the cursor style.
+.It dnd
+Supports the Kitty drag and drop protocol (OSC 72).
 .It extkeys
 Supports extended keys.
 .It focus
@@ -9389,6 +9391,8 @@ Set, clear, disable or enable DECSLRM margins.
 These are set automatically if the terminal reports it is
 .Em VT420
 compatible.
+.It Em \&Dnd
+Send a Kitty drag and drop (OSC 72) sequence; takes a single string argument.
 .It Em \&Dsbp , \&Enbp
 Disable and enable bracketed paste.
 These are set automatically if the

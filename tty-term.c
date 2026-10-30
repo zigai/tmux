@@ -89,6 +89,7 @@ static const struct tty_term_code_entry tty_term_codes[] = {
 	[TTYC_DIM] = { TTYCODE_STRING, "dim" },
 	[TTYC_DL1] = { TTYCODE_STRING, "dl1" },
 	[TTYC_DL] = { TTYCODE_STRING, "dl" },
+	[TTYC_DND] = { TTYCODE_STRING, "Dnd" },
 	[TTYC_DSEKS] = { TTYCODE_STRING, "Dseks" },
 	[TTYC_DSESC] = { TTYCODE_STRING, "Dsesc" },
 	[TTYC_DSFCS] = { TTYCODE_STRING, "Dsfcs" },

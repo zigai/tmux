@@ -1638,6 +1638,7 @@ window_pane_destroy(struct window_pane *wp)
 
 	RB_REMOVE(window_pane_tree, &all_window_panes, wp);
 	wp->flags |= PANE_DESTROYED;
+	dnd_pane_free(wp);
 	window_pane_clear_prompt(wp);
 
 	window_pane_free_modes(wp);
@@ -1732,6 +1733,7 @@ window_pane_error_callback(__unused struct bufferevent *bufev,
 
 	log_debug("%%%u error", wp->id);
 	wp->flags |= PANE_EXITED;
+	dnd_pane_free(wp);
 
 	if (window_pane_destroy_ready(wp))
 		server_destroy_pane(wp, 1);

@@ -2610,6 +2610,7 @@ server_client_reset_state(struct client *c)
 		tty_update_colours(tty, &wp->base);
 	tty_reset(tty);
 	server_client_set_pointer_shape(c);
+	dnd_tty_update(c);
 
 	/* All writing must be done, send a sync end (if it was started). */
 	tty_sync_end(tty);

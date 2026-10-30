@@ -66,6 +66,8 @@ static int	tty_keys_mouse(struct tty *, const char *, size_t, size_t *,
 		    struct mouse_event *);
 static int	tty_keys_clipboard(struct tty *, const char *, size_t,
 		    size_t *, int);
+static int	tty_keys_dnd(struct tty *, const char *, size_t, size_t *,
+		    int);
 static int	tty_keys_device_attributes(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_device_attributes2(struct tty *, const char *, size_t,
@@ -98,6 +100,7 @@ static const struct {
 } tty_keys_replies[] = {
 	{ KEYC_REPORT_CLIPBOARD, tty_keys_clipboard },
 	{ KEYC_REPORT_KITTY, tty_keys_kitty_query },
+	{ KEYC_REPORT_DND, tty_keys_dnd },
 	{ KEYC_REPORT_SYNC, tty_keys_sync },
 	{ KEYC_REPORT_DA, tty_keys_device_attributes },
 	{ KEYC_REPORT_DA2, tty_keys_device_attributes2 },
@@ -1465,6 +1468,51 @@ tty_keys_notification(struct tty *tty, const char *buf, size_t len,
 		notification_terminal_reply(tty->client, buf + i,
 		    end + 1 - terminator - i);
 	}
+	return (0);
+}
+
+/*
+ * Handle OSC 72 drag and drop input. Returns 0 for success, -1 for failure, 1
+ * for partial.
+ */
+static int
+tty_keys_dnd(struct tty *tty, const char *buf, size_t len, size_t *size,
+    int apply)
+{
+	const char	*prefix = "\033]72;";
+	size_t		 i, end, terminator = 0;
+	char		*copy;
+
+	*size = 0;
+
+	/* First five bytes are always \033]72;. */
+	for (i = 0; i < 5; i++) {
+		if (i == len)
+			return (1);
+		if (buf[i] != prefix[i])
+			return (-1);
+	}
+
+	/* Find the terminator if any. */
+	for (end = 5; end < len; end++) {
+		if (buf[end] == '\007') {
+			terminator = 1;
+			break;
+		}
+		if (end > 5 && buf[end - 1] == '\033' && buf[end] == '\\') {
+			terminator = 2;
+			break;
+		}
+	}
+	if (end == len)
+		return (1);
+	*size = end + 1;
+	if (!apply)
+		return (0);
+
+	copy = xstrndup(buf + 5, end + 1 - terminator - 5);
+	dnd_tty_input(tty, copy);
+	free(copy);
 	return (0);
 }
 

@@ -163,6 +163,7 @@ dist_tmux_SOURCES = \
 	compat.h \
 	control-notify.c \
 	control.c \
+	dnd.c \
 	environ.c \
 	events-payload.c \
 	events.c \

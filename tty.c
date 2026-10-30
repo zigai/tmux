@@ -465,6 +465,9 @@ tty_send_requests(struct tty *tty)
 	tty->flags |= TTY_HAVEKITTYGRAPHICS;
 #endif
 
+	if (~flags & TTY_HAVEDND)
+		tty_puts(tty, "\033]72;t=q\033\\");
+
 	tty_puts(tty, "\033]10;?\033\\\033]11;?\033\\");
 	tty->flags |= (TTY_WAITBG|TTY_WAITFG);
 
@@ -584,6 +587,7 @@ tty_stop_tty(struct tty *tty)
 		tty_raw(tty, "\033[<u");
 		tty->flags &= ~TTY_KKBPUSHED;
 	}
+	dnd_tty_stop(tty);
 
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 1);
@@ -631,6 +635,7 @@ tty_free(struct tty *tty)
 	tty_clear_colours(tty);
 	tty_close(tty);
 	free(tty->notification_caps);
+	dnd_tty_free(tty);
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 0);
 #endif

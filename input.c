@@ -1472,6 +1472,8 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
+		if (ictx->wp != NULL)
+			dnd_pane_reset(ictx->wp);
 		colour_palette_clear(ictx->palette);
 		screen_clear_colours(sctx->s);
 		input_free_colour_stack(ictx);
@@ -2887,6 +2889,10 @@ input_exit_osc(struct input_ctx *ictx)
 		break;
 	case 99:
 		input_osc_99(ictx, p);
+		break;
+	case 72:
+		if (wp != NULL)
+			dnd_pane_input(wp, ictx, p);
 		break;
 	case 104:
 		input_osc_104(ictx, p);
