@@ -3278,25 +3278,6 @@ input_osc_112(struct input_ctx *ictx, const char *p)
 		screen_set_cursor_colour(ictx->ctx.s, -1);
 }
 
-/* Can any client showing this pane set the pointer shape? */
-static int
-input_osc_22_supported(struct window_pane *wp)
-{
-	struct client	*c;
-
-	if (wp == NULL)
-		return (0);
-	TAILQ_FOREACH(c, &clients, entry) {
-		if (c->flags & (CLIENT_UNATTACHEDFLAGS|CLIENT_CONTROL))
-			continue;
-		if (c->session == NULL || !session_has(c->session, wp->window))
-			continue;
-		if (tty_term_has(c->tty.term, TTYC_SPTR))
-			return (1);
-	}
-	return (0);
-}
-
 /* Reply to an OSC 22 query. */
 static void
 input_osc_22_query(struct input_ctx *ictx, const char *p)
@@ -3304,13 +3285,11 @@ input_osc_22_query(struct input_ctx *ictx, const char *p)
 	struct evbuffer	*buffer;
 	char		*copy, *loop, *next;
 	const char	*answer, *end;
-	int		 supported;
 
 	if (ictx->input_end == INPUT_END_BEL)
 		end = "\007";
 	else
 		end = "\033\\";
-	supported = input_osc_22_supported(ictx->wp);
 
 	buffer = evbuffer_new();
 	if (buffer == NULL)
@@ -3318,7 +3297,7 @@ input_osc_22_query(struct input_ctx *ictx, const char *p)
 	loop = copy = xstrdup(p);
 	while ((next = strsep(&loop, ",")) != NULL) {
 		if (pointer_shape_find(next) != 0)
-			answer = supported ? "1" : "0";
+			answer = "1";
 		else if (strcmp(next, "__current__") == 0) {
 			answer = pointer_shape_name(
 			    screen_pointer_shape(ictx->ctx.s));

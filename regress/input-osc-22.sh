@@ -1,8 +1,7 @@
 #!/bin/sh
 
 # OSC 22 keeps a pointer shape stack for each of the main and alternate
-# screens and answers queries. Replies are echoed into the pane by cat -v. No
-# client is attached, so no shape name is reported as supported.
+# screens and answers queries. Replies are echoed into the pane by cat -v.
 
 . ./input-common.inc
 
@@ -64,6 +63,6 @@ query osc-22-ris "\\033]22;pointer\\033\\\\\\033c$Q"
 check_capture osc-22-ris 'X^[]22;0^[\'
 
 query osc-22-support '\033]22;?pointer,zoom-out,hand2,no-such-shape,__default__,__grabbed__\033\\'
-check_capture osc-22-support 'X^[]22;0,0,0,0,default,default^[\'
+check_capture osc-22-support 'X^[]22;1,1,0,0,default,default^[\'
 
 exit $exit_status

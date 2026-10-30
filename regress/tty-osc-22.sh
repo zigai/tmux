@@ -140,12 +140,6 @@ check a 'reset pointer'
 $INNER kill-pane -t "$left" || exit 1
 check a 'reset pointer reset'
 
-# Queries are answered from the client's features.
-$INNER new-window -d -t =b: \
-    "stty raw -echo; printf '\\033]22;?pointer,no-such-shape\\033\\\\'; exec cat -v" ||
-    exit 1
-wait_for_output '^[]22;1,0^[\' $INNER capture-pane -p -t =b:\$ || exit 1
-
 $INNER detach-client -s =b || exit 1
 check b 'crosshair reset'
 
