@@ -238,13 +238,18 @@ cmd_set_range_exec(struct cmd *self, struct cmdq_item *item)
 		return (CMD_RETURN_ERROR);
 
 	if ((args_has(args, 'b') || args_has(args, 'e')) &&
-	    !pane_range_set_text_context(wp, r, args_get(args, 'b'),
-	    args_get(args, 'e'), &cause))
-		goto fail;
+	    r->anchor != PANE_RANGE_TEXT) {
+		cmdq_error(item, "not a text range");
+		return (CMD_RETURN_ERROR);
+	}
 	if (args_has(args, 'r')) {
 		if (!pane_range_parse(wp, args_get(args, 'r'), &span, &cause) ||
 		    !pane_range_move(wp, r, &span, &cause))
 			goto fail;
+	}
+	if (args_has(args, 'b') || args_has(args, 'e')) {
+		pane_range_set_text_context(wp, r, args_get(args, 'b'),
+		    args_get(args, 'e'));
 	}
 	if (args_has(args, 'n')) {
 		free(r->name);

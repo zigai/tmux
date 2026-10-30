@@ -3570,8 +3570,8 @@ struct pane_range	 *pane_range_create(struct window_pane *,
 int			  pane_range_move(struct window_pane *,
     struct pane_range *,
     const struct pane_range_span *, char **);
-int			  pane_range_set_text_context(struct window_pane *,
-    struct pane_range *, const char *, const char *, char **);
+void			  pane_range_set_text_context(struct window_pane *,
+    struct pane_range *, const char *, const char *);
 void			  pane_range_kill(struct window_pane *,
     struct pane_range *);
 void			  pane_ranges_kill_group(struct window_pane *,

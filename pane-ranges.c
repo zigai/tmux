@@ -1701,16 +1701,12 @@ pane_range_move(struct window_pane *wp, struct pane_range *r,
 }
 
 /* Change the text before or after a text range, if not NULL. */
-int
+void
 pane_range_set_text_context(struct window_pane *wp, struct pane_range *r,
-    const char *before, const char *after, char **cause)
+    const char *before, const char *after)
 {
 	struct pane_ranges	*prs = wp->base.ranges;
 
-	if (r->anchor != PANE_RANGE_TEXT) {
-		xasprintf(cause, "not a text range");
-		return (0);
-	}
 	pane_ranges_update(wp);
 	if (before != NULL)
 		pane_range_set_field(&r->before, before);
@@ -1718,7 +1714,6 @@ pane_range_set_text_context(struct window_pane *wp, struct pane_range *r,
 		pane_range_set_field(&r->after, after);
 	prs->text_dirty = 1;
 	pane_ranges_resolve_now(prs);
-	return (1);
 }
 
 /* Remove a range from the list and free it. */

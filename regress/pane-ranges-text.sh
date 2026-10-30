@@ -212,6 +212,11 @@ c=$(new -m ERROR -b 'st:' -e 'one')
 assert_field "$c" "$span" 'live|0:7-0:11|0'
 d=$(new -m 'ERROR two' -b 'second: ')
 assert_field "$d" "$span" 'live|2:3-2:13|2'
+assert_error 'range outside grid' \
+    set-range -t "$pane" -b second: -r 99:0-99:3 "$c"
+assert_error 'range has no text' \
+    set-range -t "$pane" -e two -r 1:10-1:12 "$c"
+assert_field "$c" "$span" 'live|0:7-0:11|0'
 
 # Synchronized output: the range is resolved when the update is released.
 fresh sync
