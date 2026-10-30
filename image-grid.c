@@ -131,6 +131,7 @@ struct image_backend {
 	void		(*scroll)(struct tty *, u_int, u_int, u_int, u_int, int);
 	void		(*free)(struct tty *, int);
 	void		(*remove_image)(struct image *);
+	void			 (*update_frames)(struct tty *);
 };
 
 /* Backend definitions. */
@@ -139,6 +140,7 @@ static struct image_backend image_backend_fallback = {
 	fallback_get_flags,
 	fallback_select,
 	fallback_map_cell,
+	NULL,
 	NULL,
 	NULL,
 	NULL,
@@ -158,6 +160,7 @@ static struct image_backend image_backend_sixel = {
 	NULL,
 	NULL,
 	sixel_free_pending,
+	NULL,
 	NULL
 };
 static struct image_backend image_backend_kitty = {
@@ -171,7 +174,8 @@ static struct image_backend image_backend_kitty = {
 	kitty_redraw_finish,
 	kitty_scroll,
 	kitty_free_output_state,
-	kitty_remove_image
+	kitty_remove_image,
+	kitty_update_frames
 };
 
 /* Backends in order of preference. */
@@ -255,8 +259,6 @@ image_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py,
 
 	image_tty_update(tty);
 	backend = tty->image_backend;
-	if (backend->draw_rect == NULL)
-		return;
 	if (py >= s->grid->sy)
 		return;
 	gy = s->grid->hsize + py;
@@ -273,8 +275,11 @@ image_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py,
 			continue;
 		if (span_end > end)
 			span_end = end;
-		image_draw_span(backend, tty, span, start, span_end, px, atx,
-		    aty);
+		image_animation_drawn(span->placement->image);
+		if (backend->draw_rect != NULL) {
+			image_draw_span(backend, tty, span, start, span_end, px,
+			    atx, aty);
+		}
 	}
 }
 
@@ -334,6 +339,82 @@ image_tty_free(struct tty *tty, int send)
 		tty->image_backend = NULL;
 		tty->image_data = NULL;
 	}
+}
+
+/* Check whether a pane shows an image, and damage it if redrawing. */
+static int
+image_pane_shows(struct window_pane *wp, struct image *im, int redraw)
+{
+	struct grid		*gd = wp->screen->grid;
+	struct image_line	*line;
+	struct image_span	*span;
+	u_int			 y;
+	int			 shown = 0;
+
+	for (y = 0; y < gd->sy; y++) {
+		line = gd->linedata[gd->hsize + y].images;
+		if (line == NULL)
+			continue;
+		TAILQ_FOREACH(span, &line->spans, line_entry) {
+			if (image_get_root(span->placement->image) != im)
+				continue;
+			if (!redraw)
+				return (1);
+			shown = 1;
+			redraw_damage_window(wp->window, wp->xoff + span->x,
+			    wp->yoff + y, span->sx, 1);
+		}
+	}
+	return (shown);
+}
+
+/*
+ * Bring each client showing an image up to date with its current frame. Clients
+ * which need a redraw are only redrawn if requested. Returns IMAGE_SHOWN flags.
+ */
+int
+image_show_frame(struct image *im, int redraw)
+{
+	struct client		*c;
+	struct tty		*tty;
+	struct window		*w;
+	struct window_pane	*wp;
+	int			 flags = 0, shown;
+
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (c->session == NULL ||
+		    (c->flags & (CLIENT_UNATTACHEDFLAGS|CLIENT_CONTROL)))
+			continue;
+		tty = &c->tty;
+		if (~tty->flags & TTY_STARTED)
+			continue;
+		w = c->session->curw->window;
+		shown = 0;
+		TAILQ_FOREACH(wp, &w->panes, entry) {
+			if (window_pane_is_visible(wp) &&
+			    image_pane_shows(wp, im, 0)) {
+				shown = 1;
+				break;
+			}
+		}
+		if (!shown)
+			continue;
+		flags |= IMAGE_SHOWN;
+
+		image_tty_update(tty);
+		if (tty->image_backend->update_frames != NULL) {
+			tty->image_backend->update_frames(tty);
+			continue;
+		}
+		flags |= IMAGE_SHOWN_REDRAW;
+		if (redraw) {
+			TAILQ_FOREACH(wp, &w->panes, entry) {
+				if (window_pane_is_visible(wp))
+					image_pane_shows(wp, im, 1);
+			}
+		}
+	}
+	return (flags);
 }
 
 /* Get the placement store for a grid. */

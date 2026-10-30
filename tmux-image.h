@@ -43,6 +43,19 @@ struct window_pane;
 /* Backend images move with terminal scrolling. */
 #define IMAGE_BACKEND_SCROLLS 0x2
 
+/* Image is visible on a client. */
+#define IMAGE_SHOWN 0x1
+
+/* Image is visible on a client which must redraw it for a new frame. */
+#define IMAGE_SHOWN_REDRAW 0x2
+
+/* Playback state of an image's frames. */
+enum image_animation {
+	IMAGE_ANIMATION_STOPPED,
+	IMAGE_ANIMATION_LOADING,
+	IMAGE_ANIMATION_LOOPING
+};
+
 /* Type of image. */
 enum image_type {
 	IMAGE_TYPE_SIXEL,
@@ -105,10 +118,11 @@ struct image_rect {
 
 /* image.c */
 struct image	*image_create(enum image_type, struct image_geom *, u_char *);
-struct image	*image_create_with_parent(enum image_type, struct image *,
-		     struct image_geom *, size_t, u_char *);
+struct image		*image_create_with_parent(enum image_type,
+    struct image *, struct image_geom *);
 struct image	*image_find(u_int);
 u_int		 image_get_id(struct image *);
+struct image		*image_get_root(struct image *);
 u_int		 image_get_order_id(struct image *);
 void		 image_set_order_id(struct image *, u_int);
 int32_t			 image_get_zindex(struct image *);
@@ -122,10 +136,27 @@ u_char		*image_get_pixels(struct image *, size_t *, size_t *);
 int		 image_get_bounds(struct image_geom *, u_int, u_int, u_int,
 		     u_int, u_int, u_int, struct image_bounds *);
 u_char		*image_get_pixel(struct image *, u_int, u_int, u_int, u_int);
+u_char			*image_get_frame_pixel(struct image *, u_int, u_int,
+    u_int, u_int, u_int);
 void		 image_size_in_cells(u_int, u_int, u_int, u_int, u_int *,
 		     u_int *);
 void		 image_get_pixel_area(struct image *, u_int, u_int, u_int,
 		     u_int, u_int *, u_int *, u_int *, u_int *);
+u_int			 image_get_frame_count(struct image *);
+u_int			 image_get_frame(struct image *);
+u_char			*image_get_frame_pixels(struct image *, u_int);
+u_int			 image_get_frame_id(struct image *, u_int);
+u_int			 image_get_frame_generation(struct image *, u_int);
+void			 image_animation_drawn(struct image *);
+int			 image_add_frame(struct image *, u_char *, u_int);
+void			 image_delete_frame(struct image *, u_int);
+void			 image_frame_changed(struct image *, u_int);
+u_int			 image_get_frame_gap(struct image *, u_int);
+void			 image_set_frame_gap(struct image *, u_int, u_int);
+void			 image_set_frame(struct image *, u_int);
+void			 image_set_animation(struct image *,
+    enum image_animation);
+void			 image_set_animation_loops(struct image *, u_int);
 
 /* image-decode.c */
 u_char		*image_base64_decode(const char *, size_t, size_t, size_t *);
@@ -182,6 +213,7 @@ int		 image_tty_update(struct tty *);
 int		 image_backend_get_flags(struct tty *);
 void		 image_tty_size_changed(struct tty *);
 void		 image_tty_free(struct tty *, int);
+int			 image_show_frame(struct image *, int);
 
 /* image-fallback.c */
 int		 fallback_select(struct tty *);
@@ -208,6 +240,7 @@ void		 kitty_draw_rect(struct tty *, struct image_rect *);
 void		 kitty_redraw_start(struct tty *, u_int, u_int, u_int, u_int);
 void		 kitty_redraw_finish(struct tty *);
 void		 kitty_scroll(struct tty *, u_int, u_int, u_int, u_int, int);
+void		 kitty_update_frames(struct tty *);
 void		 kitty_free_output_state(struct tty *, int);
 void		 kitty_parse_input(struct input_ctx *, struct window_pane *,
 		     struct screen_write_ctx *, u_int, void **, const u_char *,

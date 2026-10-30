@@ -183,9 +183,21 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
                         'f=32,s=1,v=1,o=x']:
             check('invalid-control-' + control,
                   graphics('a=t,i=7,' + control, pixel), invalid)
-        for action in ['f', 'a', 'c']:
-            check('unsupported-action-' + action,
-                  graphics('a=%s,i=7' % action), graphics('i=7', 'ENOTSUP'))
+        stored = graphics(transmit + ',q=2', pixel)
+        check('frame', stored + graphics('a=f,i=7,f=32,s=1,v=1', pixel),
+              graphics('i=7,r=2', 'OK'))
+        check('frame-chunks', stored + graphics('a=f,i=7,f=32,s=1,v=1,m=1',
+              '/wAA') + graphics('m=0', '/w=='), graphics('i=7,r=2', 'OK'))
+        check('frame-missing', graphics('a=f,i=7,r=3,f=32,s=1,v=1', pixel),
+              graphics('i=7,r=3', 'ENOENT'))
+        check('animation-control', stored + graphics('a=a,i=7,s=3,v=1'), '')
+        check('animation-missing', graphics('a=a,i=7,s=3'),
+              graphics('i=7', 'ENOENT'))
+        check('compose', stored + graphics('a=c,i=7,r=1,c=1,w=0'),
+              graphics('i=7', 'EINVAL'))
+        check('compose-frames', stored + graphics('a=f,i=7,q=2,f=32,s=1,v=1',
+              pixel) + graphics('a=c,i=7,r=1,c=2'), ok)
+        check('frame-delete', stored + graphics('a=d,d=f,i=7'), '')
         check('unsupported-medium-s', graphics('a=t,i=7,t=s'),
               graphics('i=7', 'ENOTSUP'))
         check('invalid-medium', graphics('a=t,i=7,t=x', pixel), invalid)
@@ -364,6 +376,8 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('unsupported-delete', stored + graphics('a=d,d=?,i=7'),
               graphics('i=7', 'ENOTSUP'))
         check('malformed-delete', stored + graphics('a=d,i=7,d=ii'), invalid)
+        check('delete-frame-image', stored + first + graphics('a=d,d=F,i=7') +
+              graphics('a=p,i=7,C=1'), missing)
 
         # Position, layer and range selectors remove the placement at the
         # cursor; uppercase selectors also free the unplaced upload.
@@ -383,18 +397,18 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
                   (selector, control)) + graphics('a=p,i=7,C=1'), ok)
         for quiet in [1, 2]:
             check('unsupported-delete-quiet-' + str(quiet), stored + first +
-                  graphics('a=d,d=F,i=7,q=%d' % quiet) +
+                  graphics('a=d,d=?,i=7,q=%d' % quiet) +
                   graphics('a=p,i=7,C=1'),
                   (unsupported if quiet == 1 else '') + ok)
         check('unsupported-delete-named', stored + first +
-              graphics('a=d,d=F,i=7,p=1') + graphics('a=p,i=7,C=1'),
+              graphics('a=d,d=?,i=7,p=1') + graphics('a=p,i=7,C=1'),
               graphics('i=7,p=1', 'ENOTSUP') + ok)
         check('unsupported-delete-aborts-upload', stored +
               graphics(transmit + ',q=2,m=1', '/wAA') +
-              graphics('a=d,d=F,i=7') + graphics('a=p,i=7,C=1'),
+              graphics('a=d,d=?,i=7') + graphics('a=p,i=7,C=1'),
               unsupported + ok)
         check('unsupported-delete-does-not-inherit-id', stored +
-              graphics(transmit + ',m=1', '/wAA') + graphics('a=d,d=F') +
+              graphics(transmit + ',m=1', '/wAA') + graphics('a=d,d=?') +
               graphics('a=p,i=7,C=1'), ok)
         check('layer-delete-aborts-upload', stored +
               graphics(transmit + ',q=2,m=1', '/wAA') +

@@ -2256,32 +2256,411 @@ test_relative_placement_unsupported(void)
 	return (0);
 }
 
-/* Animation actions are not supported. */
+/* Count the frames of a stored image. */
+static u_int
+test_frame_count(u_int id)
+{
+	struct image	*im = test_image(id);
+
+	if (im == NULL)
+		return (0);
+	return (image_get_frame_count(im));
+}
+
+/* Check one RGBA pixel of a frame, numbered from one. */
 static int
-test_unsupported_animation_actions(void)
+test_frame_pixel(u_int id, u_int frame, u_int x, u_int y, const u_char *rgba)
+{
+	struct image		*im = test_image(id);
+	struct image_geom	*ig;
+	u_char			*pixels;
+
+	if (im == NULL || frame == 0)
+		return (0);
+	ig = image_get_geometry(im);
+	pixels = image_get_frame_pixels(im, frame - 1);
+	if (pixels == NULL || x >= ig->src_w || y >= ig->src_h)
+		return (0);
+	return (memcmp(pixels + (y * ig->src_w + x) * 4, rgba, 4) == 0);
+}
+
+/* Check a frame pixel, allowing each channel to differ by one. */
+static int
+test_frame_pixel_near(u_int id, u_int frame, u_int x, u_int y,
+    const u_char *rgba)
+{
+	struct image		*im = test_image(id);
+	struct image_geom	*ig;
+	u_char			*p;
+	u_int			 i;
+
+	if (im == NULL || frame == 0)
+		return (0);
+	ig = image_get_geometry(im);
+	p = image_get_frame_pixels(im, frame - 1);
+	if (p == NULL || x >= ig->src_w || y >= ig->src_h)
+		return (0);
+	p += (y * ig->src_w + x) * 4;
+	for (i = 0; i < 4; i++) {
+		if (abs((int)p[i] - (int)rgba[i]) > 1)
+			return (0);
+	}
+	return (1);
+}
+
+/* Get the gap of a frame, numbered from one. */
+static u_int
+test_frame_gap(u_int id, u_int frame)
+{
+	return (image_get_frame_gap(test_image(id), frame - 1));
+}
+
+/* Store a 2x2 image filled with one colour without a reply. */
+static void
+test_store_2x2(u_int id, const u_char *rgba)
+{
+	char	*control;
+
+	xasprintf(&control, "a=t,q=2,f=32,s=2,v=2,i=%u", id);
+	test_graphics(control, test_fill(2, 2, rgba));
+	free(control);
+}
+
+/* New frames are numbered after the last frame and replies carry it. */
+static int
+test_frame_replies(void)
+{
+	const char	*reply;
+	char		 control[64];
+
+	test_pane_new();
+	test_store_2x2(150, test_red);
+	reply = test_graphics("a=f,i=150,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: new frame",
+	    test_replied(reply, "i=150,r=2;OK") && test_frame_count(150) == 2);
+	reply = test_graphics("a=f,i=150,r=9,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: past end is new",
+	    test_replied(reply, "i=150,r=3;OK") && test_frame_count(150) == 3);
+	reply = test_graphics("a=f,i=150,r=2,f=32,s=1,v=1", TEST_PIXEL);
+	TEST_ASSERT("frame_replies: edit",
+	    test_replied(reply, "i=150,r=2;OK") && test_frame_count(150) == 3);
+	reply = test_graphics("a=f,i=151,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: missing image",
+	    test_replied(reply, "i=151;ENOENT"));
+	reply = test_graphics("a=f,i=151,r=2,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: missing image echoes frame",
+	    test_replied(reply, "i=151,r=2;ENOENT"));
+	reply = test_graphics("a=f,i=150,f=32,s=3,v=1",
+	    test_fill(3, 1, test_red));
+	TEST_ASSERT("frame_replies: larger than image",
+	    test_replied(reply, "i=150;EINVAL") && test_frame_count(150) == 3);
+	reply = test_graphics("a=f,i=150,c=4,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: missing base frame",
+	    test_replied(reply, "i=150,r=4;EINVAL") &&
+	    test_frame_count(150) == 3);
+	reply = test_graphics("a=f,i=150,f=32,s=1,v=1", "!!!!");
+	TEST_ASSERT("frame_replies: bad data",
+	    test_replied(reply, "i=150;EINVAL") && test_frame_count(150) == 3);
+	reply = test_graphics("a=f,i=150,q=1,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: quiet ok", *reply == '\0');
+	reply = test_graphics("a=f,i=151,q=2,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: quiet error", *reply == '\0');
+	reply = test_graphics("a=f,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_replies: anonymous", *reply == '\0');
+
+	reply = test_graphics("a=t,I=7,f=32,s=1,v=1", TEST_PIXEL);
+	TEST_ASSERT("frame_replies: numbered image",
+	    test_map_number(7) != NULL);
+	xsnprintf(control, sizeof control, "i=%u,I=7,r=2;OK",
+	    test_map_number(7)->kitty_id);
+	reply = test_graphics("a=f,I=7,f=24,s=1,v=1", TEST_RGB);
+	TEST_ASSERT("frame_replies: by number", test_replied(reply, control));
+	TEST_PASS("frame_replies");
+	return (0);
+}
+
+/* Frames start from a background colour or a base frame, then add data. */
+static int
+test_frame_canvas(void)
+{
+	static const u_char	 blue[4] = { 0, 0, 0xff, 0xff };
+	static const u_char	 clear[4] = { 0, 0, 0, 0 };
+	static const u_char	 half[4] = { 0, 0, 0xff, 0x80 };
+	static const u_char	 mixed[4] = { 0x7f, 0, 0x80, 0xff };
+	static const u_char	 white[4] = { 0xff, 0xff, 0xff, 0xff };
+	const char		*reply;
+
+	test_pane_new();
+	test_store_2x2(152, test_red);
+
+	/* Frame 2: blue background with green at 1,1. */
+	reply = test_graphics("a=f,i=152,x=1,y=1,Y=65535,f=32,s=1,v=1",
+	    TEST_GREEN);
+	TEST_ASSERT("frame_canvas: background reply",
+	    test_replied(reply, "i=152,r=2;OK"));
+	TEST_ASSERT("frame_canvas: background",
+	    test_frame_pixel(152, 2, 0, 0, blue) &&
+	    test_frame_pixel(152, 2, 1, 0, blue) &&
+	    test_frame_pixel(152, 2, 1, 1, test_green));
+	TEST_ASSERT("frame_canvas: root unchanged",
+	    test_frame_pixel(152, 1, 1, 1, test_red));
+
+	/* Frame 3: no background is transparent; data past the edge clips. */
+	reply = test_graphics("a=f,i=152,x=1,y=0,f=32,s=2,v=1",
+	    test_fill(2, 1, white));
+	TEST_ASSERT("frame_canvas: clipped",
+	    test_replied(reply, "i=152,r=3;OK") &&
+	    test_frame_pixel(152, 3, 0, 0, clear) &&
+	    test_frame_pixel(152, 3, 1, 0, white) &&
+	    test_frame_pixel(152, 3, 1, 1, clear));
+
+	/* Frames 4 and 5: frame 1 as the base, blended or replaced. */
+	reply = test_graphics("a=f,i=152,c=1,f=32,s=1,v=1",
+	    test_base64(half, 4));
+	TEST_ASSERT("frame_canvas: blend",
+	    test_replied(reply, "i=152,r=4;OK") &&
+	    test_frame_pixel_near(152, 4, 0, 0, mixed) &&
+	    test_frame_pixel(152, 4, 1, 1, test_red));
+	reply = test_graphics("a=f,i=152,c=1,f=32,s=1,v=1",
+	    test_base64(clear, 4));
+	TEST_ASSERT("frame_canvas: transparent blend",
+	    test_replied(reply, "i=152,r=5;OK") &&
+	    test_frame_pixel(152, 5, 0, 0, test_red));
+	reply = test_graphics("a=f,i=152,r=5,X=1,f=32,s=1,v=1",
+	    test_base64(clear, 4));
+	TEST_ASSERT("frame_canvas: replace",
+	    test_replied(reply, "i=152,r=5;OK") &&
+	    test_frame_pixel(152, 5, 0, 0, clear) &&
+	    test_frame_pixel(152, 5, 1, 0, test_red));
+
+	/* Editing changes only that frame, and can edit the root frame. */
+	reply = test_graphics("a=f,i=152,r=1,X=1,f=32,s=1,v=1",
+	    test_base64(white, 4));
+	TEST_ASSERT("frame_canvas: edit root",
+	    test_replied(reply, "i=152,r=1;OK") &&
+	    test_frame_pixel(152, 1, 0, 0, white) &&
+	    test_frame_pixel(152, 4, 1, 0, test_red) &&
+	    test_pixel(152, 0, 0, white));
+	TEST_PASS("frame_canvas");
+	return (0);
+}
+
+/* Frame gaps default to 40 ms, and negative gaps skip the frame. */
+static int
+test_frame_gaps(void)
 {
 	const char	*reply;
 
 	test_pane_new();
-	reply = test_graphics("a=f,i=145,f=24,s=1,v=1", TEST_RGB);
-	TEST_ASSERT("unsupported_actions: frame ENOTSUP",
-	    test_replied(reply, "i=145;ENOTSUP"));
-	reply = test_graphics("a=a,i=145", NULL);
-	TEST_ASSERT("unsupported_actions: animation ENOTSUP",
-	    test_replied(reply, "i=145;ENOTSUP"));
-	reply = test_graphics("a=c,i=145", NULL);
-	TEST_ASSERT("unsupported_actions: compose ENOTSUP",
-	    test_replied(reply, "i=145;ENOTSUP"));
-	reply = test_graphics("a=f,i=146,q=2,f=24,s=1,v=1", TEST_RGB);
-	TEST_ASSERT("unsupported_actions: quiet no reply", *reply == '\0');
-	reply = test_graphics("a=f,i=147,f=24,s=1,v=1,m=1", TEST_RGB);
-	TEST_ASSERT("unsupported_actions: chunk ENOTSUP",
-	    test_replied(reply, "i=147;ENOTSUP"));
-	TEST_ASSERT("unsupported_actions: idle", test_idle());
-	TEST_ASSERT("unsupported_actions: no images", test_count_images() == 0);
-	TEST_ASSERT("unsupported_actions: no placements",
-	    !test_placed_at(0, 0));
-	TEST_PASS("unsupported_actions");
+	test_store(153);
+	test_graphics("a=f,q=2,i=153,f=32,s=1,v=1", TEST_GREEN);
+	test_graphics("a=f,q=2,i=153,z=70,f=32,s=1,v=1", TEST_GREEN);
+	test_graphics("a=f,q=2,i=153,z=-5,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_gaps: new frames",
+	    test_frame_gap(153, 1) == 0 && test_frame_gap(153, 2) == 40 &&
+	    test_frame_gap(153, 3) == 70 && test_frame_gap(153, 4) == 0);
+	test_graphics("a=f,q=2,i=153,r=3,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_gaps: edit keeps gap", test_frame_gap(153, 3) == 70);
+	test_graphics("a=f,q=2,i=153,r=3,z=-1,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_gaps: edit gapless", test_frame_gap(153, 3) == 0);
+
+	reply = test_graphics("a=a,i=153,r=1,z=90", NULL);
+	TEST_ASSERT("frame_gaps: control no reply", *reply == '\0');
+	TEST_ASSERT("frame_gaps: root gap", test_frame_gap(153, 1) == 90);
+	test_graphics("a=a,i=153,r=2,z=-1", NULL);
+	test_graphics("a=a,i=153,r=4,z=0", NULL);
+	test_graphics("a=a,i=153,r=9,z=10", NULL);
+	TEST_ASSERT("frame_gaps: control gaps",
+	    test_frame_gap(153, 2) == 0 && test_frame_gap(153, 4) == 0 &&
+	    test_frame_count(153) == 4);
+	TEST_PASS("frame_gaps");
+	return (0);
+}
+
+/* Animation control chooses frames and ignores values out of range. */
+static int
+test_animation_control(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	test_store(154);
+	test_graphics("a=f,q=2,i=154,f=32,s=1,v=1", TEST_GREEN);
+	reply = test_graphics("a=a,i=154,c=2", NULL);
+	TEST_ASSERT("animation_control: no reply", *reply == '\0');
+	TEST_ASSERT("animation_control: current",
+	    test_pixel(154, 0, 0, test_green));
+	test_graphics("a=a,i=154,c=3", NULL);
+	test_graphics("a=a,i=154,c=0", NULL);
+	TEST_ASSERT("animation_control: out of range",
+	    test_pixel(154, 0, 0, test_green));
+	reply = test_graphics("a=a,i=154,s=9,v=0", NULL);
+	TEST_ASSERT("animation_control: invalid ignored", *reply == '\0');
+	reply = test_graphics("a=a,i=155,s=3", NULL);
+	TEST_ASSERT("animation_control: missing image",
+	    test_replied(reply, "i=155;ENOENT"));
+	reply = test_graphics("a=a,i=155,q=2,s=3", NULL);
+	TEST_ASSERT("animation_control: quiet missing", *reply == '\0');
+	TEST_PASS("animation_control");
+	return (0);
+}
+
+/* Composition copies or blends rectangles between frames. */
+static int
+test_frame_compose(void)
+{
+	static const u_char	 blue[4] = { 0, 0, 0xff, 0xff };
+	static const u_char	 clear[4] = { 0, 0, 0, 0 };
+	u_char			 row[16];
+	const char		*reply;
+
+	test_pane_new();
+	test_store_2x2(156, test_red);
+	test_graphics("a=f,q=2,i=156,Y=65535,f=32,s=1,v=1",
+	    test_base64(blue, 4));
+	reply = test_graphics("a=c,i=156,r=1,c=2,x=1,y=1,w=1,h=1", NULL);
+	TEST_ASSERT("frame_compose: reply", test_replied(reply, "i=156;OK"));
+	TEST_ASSERT("frame_compose: copied",
+	    test_frame_pixel(156, 2, 1, 1, test_red) &&
+	    test_frame_pixel(156, 2, 0, 0, blue) &&
+	    test_frame_pixel(156, 2, 1, 0, blue));
+	reply = test_graphics("a=c,i=156,r=2,c=1", NULL);
+	TEST_ASSERT("frame_compose: whole frame",
+	    test_replied(reply, "i=156;OK") &&
+	    test_frame_pixel(156, 1, 0, 0, blue) &&
+	    test_frame_pixel(156, 1, 1, 1, test_red));
+
+	reply = test_graphics("a=c,i=157,r=1,c=1", NULL);
+	TEST_ASSERT("frame_compose: missing image",
+	    test_replied(reply, "i=157;ENOENT"));
+	reply = test_graphics("a=c,i=156,c=1", NULL);
+	TEST_ASSERT("frame_compose: missing source",
+	    test_replied(reply, "i=156;ENOENT"));
+	reply = test_graphics("a=c,i=156,r=1,c=3", NULL);
+	TEST_ASSERT("frame_compose: missing destination",
+	    test_replied(reply, "i=156;ENOENT"));
+	reply = test_graphics("a=c,i=156,r=1,c=2,x=1,w=2", NULL);
+	TEST_ASSERT("frame_compose: destination bounds",
+	    test_replied(reply, "i=156;EINVAL"));
+	reply = test_graphics("a=c,i=156,r=1,c=2,Y=1,h=2", NULL);
+	TEST_ASSERT("frame_compose: source bounds",
+	    test_replied(reply, "i=156;EINVAL"));
+
+	/* Within one frame, the rectangles may not overlap. */
+	memcpy(row, test_red, 4);
+	memcpy(row + 4, test_green, 4);
+	memcpy(row + 8, clear, 4);
+	memcpy(row + 12, blue, 4);
+	test_graphics("a=t,q=2,i=158,f=32,s=4,v=1", test_base64(row, 16));
+	reply = test_graphics("a=c,i=158,r=1,c=1,X=0,x=1,w=2", NULL);
+	TEST_ASSERT("frame_compose: overlap",
+	    test_replied(reply, "i=158;EINVAL") &&
+	    test_frame_pixel(158, 1, 1, 0, test_green));
+	reply = test_graphics("a=c,i=158,r=1,c=1,X=2,x=0,w=2", NULL);
+	TEST_ASSERT("frame_compose: same frame blend",
+	    test_replied(reply, "i=158;OK") &&
+	    test_frame_pixel(158, 1, 0, 0, test_red) &&
+	    test_frame_pixel(158, 1, 1, 0, blue));
+	reply = test_graphics("a=c,i=158,r=1,c=1,X=2,x=0,w=2,C=1", NULL);
+	TEST_ASSERT("frame_compose: same frame replace",
+	    test_replied(reply, "i=158;OK") &&
+	    test_frame_pixel(158, 1, 0, 0, clear));
+	TEST_PASS("frame_compose");
+	return (0);
+}
+
+/* Frame deletes renumber the frames and keep the shown frame. */
+static int
+test_frame_delete(void)
+{
+	static const u_char	 blue[4] = { 0, 0, 0xff, 0xff };
+	const char		*reply;
+
+	test_pane_new();
+	test_store(159);
+	test_graphics("a=f,q=2,i=159,f=32,s=1,v=1", TEST_GREEN);
+	test_graphics("a=f,q=2,i=159,f=32,s=1,v=1", test_base64(blue, 4));
+	test_graphics("a=a,i=159,c=3", NULL);
+	reply = test_graphics("a=d,d=f,i=159,r=2", NULL);
+	TEST_ASSERT("frame_delete: no reply", *reply == '\0');
+	TEST_ASSERT("frame_delete: removed",
+	    test_frame_count(159) == 2 &&
+	    test_frame_pixel(159, 2, 0, 0, blue) &&
+	    test_pixel(159, 0, 0, blue));
+	test_graphics("a=d,d=f,i=159,r=0", NULL);
+	TEST_ASSERT("frame_delete: root promoted",
+	    test_frame_count(159) == 1 &&
+	    test_frame_pixel(159, 1, 0, 0, blue) &&
+	    test_pixel(159, 0, 0, blue));
+	test_graphics("a=d,d=f,i=159", NULL);
+	TEST_ASSERT("frame_delete: last frame kept",
+	    test_frame_count(159) == 1 && test_map(159) != NULL);
+
+	test_graphics("a=f,q=2,i=159,f=32,s=1,v=1", TEST_GREEN);
+	test_graphics("a=a,i=159,c=2", NULL);
+	test_graphics("a=d,d=F,i=159,r=7", NULL);
+	TEST_ASSERT("frame_delete: past end is last",
+	    test_frame_count(159) == 1 && test_pixel(159, 0, 0, blue));
+
+	test_place(0, 0, "i=159");
+	TEST_ASSERT("frame_delete: placed", test_placed_at(0, 0));
+	test_graphics("a=d,d=F,i=159", NULL);
+	TEST_ASSERT("frame_delete: image removed",
+	    test_map(159) == NULL && !test_placed_at(0, 0));
+	TEST_PASS("frame_delete");
+	return (0);
+}
+
+/* Frames count against the total size limit after removing other images. */
+static int
+test_frame_memory_limit(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	options_set_number(global_options, "image-total-size-limit", 48);
+	test_store_2x2(160, test_red);
+	test_store_2x2(161, test_red);
+	reply = test_graphics("a=f,i=160,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_limit: fits",
+	    test_replied(reply, "i=160,r=2;OK") && test_map(161) != NULL);
+	reply = test_graphics("a=f,i=160,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_limit: other image removed",
+	    test_replied(reply, "i=160,r=3;OK") && test_map(161) == NULL);
+	reply = test_graphics("a=f,i=160,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_limit: full",
+	    test_replied(reply, "i=160,r=4;ENOSPC") &&
+	    test_frame_count(160) == 3);
+	reply = test_graphics("a=f,i=160,r=2,f=32,s=1,v=1", TEST_PIXEL);
+	TEST_ASSERT("frame_limit: edit needs no space",
+	    test_replied(reply, "i=160,r=2;OK"));
+	test_graphics("a=d,d=f,i=160,r=2", NULL);
+	reply = test_graphics("a=f,i=160,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_limit: space freed by delete",
+	    test_replied(reply, "i=160,r=3;OK"));
+	TEST_PASS("frame_limit");
+	return (0);
+}
+
+/* Chunked frames use the controls of the first chunk. */
+static int
+test_frame_chunked(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	test_store(162);
+	reply = test_graphics("a=f,i=162,z=70,f=32,s=1,v=1,m=1", "AP8A");
+	TEST_ASSERT("frame_chunked: no reply yet", *reply == '\0');
+	reply = test_graphics("m=0", "/w==");
+	TEST_ASSERT("frame_chunked: reply",
+	    test_replied(reply, "i=162,r=2;OK") &&
+	    test_frame_pixel(162, 2, 0, 0, test_green) &&
+	    test_frame_gap(162, 2) == 70);
+	reply = test_graphics("a=f,i=163,f=32,s=1,v=1,m=1", "AP8A");
+	TEST_ASSERT("frame_chunked: missing image",
+	    test_replied(reply, "i=163;ENOENT") && test_idle());
+	TEST_PASS("frame_chunked");
 	return (0);
 }
 
@@ -2613,7 +2992,14 @@ main(void)
 		test_handle_place_missing,
 		test_handle_place_no_reference,
 		test_relative_placement_unsupported,
-		test_unsupported_animation_actions,
+		test_frame_replies,
+		test_frame_canvas,
+		test_frame_gaps,
+		test_animation_control,
+		test_frame_compose,
+		test_frame_delete,
+		test_frame_memory_limit,
+		test_frame_chunked,
 		test_unknown_actions_rejected,
 		test_image_id_number_conflict,
 		test_handle_place_replace,

@@ -10,10 +10,14 @@ class KittyTerminal(Terminal):
     def __init__(self, *args, scroll_images=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.images = {}
+        self.frames = {}
+        self.current = {}
         self.placements = {}
         self.upload = None
         self.loading = bytearray()
         self.uploads = 0
+        self.frame_uploads = 0
+        self.switches = []
         self.commands = []
         self.scroll_images = scroll_images
 
@@ -28,22 +32,25 @@ class KittyTerminal(Terminal):
         self.commands.append(fields)
         image = int(fields.get(b'i', 0))
         placement = int(fields.get(b'p', 0))
-        if action == b't':
-            assert sep and len(payload) <= 4096, (fields, len(payload))
-            if self.upload is None:
-                assert image and fields[b'f'] == b'32', fields
-                assert fields[b'q'] == b'2', fields
-                self.upload = fields
-                self.loading.clear()
+        if action in (b't', b'f') and self.upload is not None:
+            assert set(fields) == {b'm'}, fields
             self.loading.extend(base64.b64decode(payload, validate=True))
-            if fields.get(b'm', b'0') == b'0':
-                width, height = int(self.upload[b's']), int(self.upload[b'v'])
-                assert len(self.loading) == width * height * 4
-                image = int(self.upload[b'i'])
+            if fields[b'm'] == b'0':
+                self.loaded()
+        elif action in (b't', b'f'):
+            assert sep and len(payload) <= 4096, (fields, len(payload))
+            assert image and fields[b'f'] == b'32', fields
+            assert fields[b'q'] == b'2', fields
+            if action == b't':
                 assert image not in self.images, image
-                self.images[image] = width, height, bytes(self.loading)
-                self.uploads += 1
-                self.upload = None
+            else:
+                # Frames replace the whole canvas and never play by themselves.
+                assert image in self.images and fields[b'X'] == b'1', fields
+                assert b'r' in fields or fields[b'z'] == b'-1', fields
+            self.upload = fields
+            self.loading = bytearray(base64.b64decode(payload, validate=True))
+            if fields.get(b'm', b'0') == b'0':
+                self.loaded()
         elif action == b'p':
             assert fields[b'q'] == b'2' and fields[b'C'] == b'1', fields
             assert placement and image in self.images, fields
@@ -55,14 +62,48 @@ class KittyTerminal(Terminal):
             assert w * r * self.ch == h * c * self.cw, fields
             self.placements[image, placement] = dict(fields,
                 dst_x=self.x, dst_y=self.y)
+        elif action == b'a':
+            assert fields[b'q'] == b'2' and set(fields) == {b'a', b'i',
+                b'c', b'q'}, fields
+            frame = int(fields[b'c'])
+            assert 1 <= frame <= len(self.frames[image]), fields
+            width, height, _ = self.images[image]
+            self.images[image] = width, height, self.frames[image][frame - 1]
+            self.current[image] = frame
+            self.switches.append((image, frame))
         elif action == b'd':
             assert fields[b'q'] == b'2' and fields[b'd'] in (b'i', b'I'), fields
             self.placements = {key: value for key, value in self.placements.items()
                 if key[0] != image or placement and key[1] != placement}
             if fields[b'd'] == b'I':
                 self.images.pop(image, None)
+                self.frames.pop(image, None)
         else:
             raise AssertionError(fields)
+
+    def loaded(self):
+        """Store a completed image or frame upload."""
+        fields, self.upload = self.upload, None
+        width, height = int(fields[b's']), int(fields[b'v'])
+        assert len(self.loading) == width * height * 4
+        image, data = int(fields[b'i']), bytes(self.loading)
+        if fields.get(b'a', b't') == b't':
+            self.images[image] = width, height, data
+            self.frames[image] = [data]
+            self.current[image] = 1
+            self.uploads += 1
+            return
+        assert self.images[image][:2] == (width, height), fields
+        frames = self.frames[image]
+        if b'r' in fields:
+            frame = int(fields[b'r'])
+            assert 1 <= frame <= len(frames), fields
+            frames[frame - 1] = data
+            if frame == self.current[image]:
+                self.images[image] = width, height, data
+        else:
+            frames.append(data)
+        self.frame_uploads += 1
 
     def scroll(self, top, bottom, n):
         """Move graphics with the scroll region when imagescroll is enabled."""

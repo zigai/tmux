@@ -40,6 +40,9 @@
  *
  * Output caches each image and placement separately for each client. Pixels
  * are scaled to the client's cell pixel size on upload and reused in redraws.
+ * Each frame of an animated image is uploaded once as a gapless frame of the
+ * same terminal image, and the terminal is told which frame to show when the
+ * current frame changes, so playback timing stays with tmux.
  *
  * When a redraw is started, old rectangles overlapping the redraw area are
  * marked for deletion, then new rectangles are queued during redraw. At the
@@ -49,6 +52,9 @@
  */
 
 #define KITTY_CHUNK_SIZE 3072
+
+/* Default time to show a new frame, in milliseconds. */
+#define KITTY_FRAME_GAP 40
 
 /* Kitty action types. */
 enum kitty_action {
@@ -100,6 +106,7 @@ struct kitty_command {
 /* State attached to an input parser. */
 struct kitty_state {
 	struct kitty_command		 cmd;
+	u_int				 frame_image;
 
 	u_char				*data;
 	size_t				 size;
@@ -131,6 +138,12 @@ struct kitty_image_map {
 	TAILQ_ENTRY(kitty_image_map)		 entry;
 };
 
+/* A frame uploaded to a terminal, numbered from one in upload order. */
+struct kitty_frame_cache {
+	u_int	id;
+	u_int	generation;
+};
+
 /* An image uploaded to a terminal. */
 struct kitty_image_cache {
 	u_int					image_id;
@@ -143,6 +156,10 @@ struct kitty_image_cache {
 	u_int					ypixel;
 	u_int					next_placement;
 	TAILQ_HEAD(, kitty_placement_cache)	placements;
+
+	struct kitty_frame_cache		*frames;
+	u_int					 nframes;
+	u_int					 frame;
 
 	TAILQ_ENTRY(kitty_image_cache)		entry;
 };
@@ -421,6 +438,7 @@ kitty_free_entry(struct tty *tty, struct kitty_image_cache *entry, int send)
 		TAILQ_REMOVE(&entry->placements, kpl, entry);
 		free(kpl);
 	}
+	free(entry->frames);
 	free(entry);
 }
 
@@ -477,12 +495,14 @@ kitty_images_overlap(struct kitty_image_cache *a, struct kitty_image_cache *b)
 	return (0);
 }
 
-/* Upload a canvas prepared for this terminal's cell pixel size. */
+/*
+ * Send a frame scaled for this terminal's cell pixel size, with the given
+ * action and extra control data on the first chunk.
+ */
 static int
-kitty_upload(struct tty *tty, struct kitty_image_cache *entry)
+kitty_send_frame(struct tty *tty, struct kitty_image_cache *entry,
+    struct image *im, u_int n, char action, u_int id, const char *extra)
 {
-	struct kitty_output	*ko = tty->image_data;
-	struct image		*im = image_find(entry->image_id);
 	struct image_geom	*ig = image_get_geometry(im);
 	char			 s[128], e[4097];
 	u_char			*p, *row, *p0;
@@ -511,7 +531,7 @@ kitty_upload(struct tty *tty, struct kitty_image_cache *entry)
 	for (y = 0; y < height; y++) {
 		row = p + (y + 1) * stride;
 		for (x = 0; x < width; x++) {
-			p0 = image_get_pixel(im, x, y, width, height);
+			p0 = image_get_frame_pixel(im, n, x, y, width, height);
 			memcpy(row + (x + 1) * 4, p0, 4);
 		}
 
@@ -521,11 +541,6 @@ kitty_upload(struct tty *tty, struct kitty_image_cache *entry)
 	}
 	memcpy(p, p + stride, stride);
 	memcpy(p + (h - 1) * stride, p + (h - 2) * stride, stride);
-
-	entry->upload = 0;
-	do
-		entry->kitty_id = ++ko->next_id;
-	while (entry->kitty_id == 0);
 
 	/* Encode and send the pixels in base64 chunks. */
 	for (offset = 0; offset < total; offset += size) {
@@ -537,8 +552,8 @@ kitty_upload(struct tty *tty, struct kitty_image_cache *entry)
 			fatalx("base64 encode failed");
 		if (offset == 0) {
 			xsnprintf(s, sizeof s,
-			    "\033_Ga=t,f=32,s=%u,v=%u,i=%u,q=2,m=%d;",
-			    w, h, entry->kitty_id, offset + size < total);
+			    "\033_Ga=%c,f=32,s=%u,v=%u,i=%u%s,q=2,m=%d;",
+			    action, w, h, id, extra, offset + size < total);
 		} else {
 			if (offset + size < total)
 				xsnprintf(s, sizeof s, "\033_Gm=1;");
@@ -551,6 +566,89 @@ kitty_upload(struct tty *tty, struct kitty_image_cache *entry)
 	}
 	free(p);
 	return (1);
+}
+
+/* Upload the current frame as a new terminal image. */
+static int
+kitty_upload(struct tty *tty, struct kitty_image_cache *entry)
+{
+	struct kitty_output	*ko = tty->image_data;
+	struct image		*im = image_find(entry->image_id);
+	u_int			 n = image_get_frame(im), id;
+
+	do
+		id = ++ko->next_id;
+	while (id == 0);
+	if (!kitty_send_frame(tty, entry, im, n, 't', id, ""))
+		return (0);
+	entry->upload = 0;
+	entry->kitty_id = id;
+
+	entry->frames = xreallocarray(entry->frames, 1, sizeof *entry->frames);
+	entry->frames[0].id = image_get_frame_id(im, n);
+	entry->frames[0].generation = image_get_frame_generation(im, n);
+	entry->nframes = 1;
+	entry->frame = 1;
+	return (1);
+}
+
+/* Show the current frame of an uploaded image, uploading it if needed. */
+static void
+kitty_show_frame(struct tty *tty, struct kitty_image_cache *entry)
+{
+	struct image			*im = image_find(entry->image_id);
+	struct kitty_frame_cache	*kf;
+	char				 control[64];
+	u_int				 n, id, generation, i;
+
+	if (im == NULL || entry->kitty_id == 0 || entry->upload)
+		return;
+	n = image_get_frame(im);
+	id = image_get_frame_id(im, n);
+	generation = image_get_frame_generation(im, n);
+
+	for (i = 0; i < entry->nframes; i++) {
+		if (entry->frames[i].id == id)
+			break;
+	}
+	if (i == entry->nframes) {
+		/* A gapless frame never advances by itself. */
+		if (!kitty_send_frame(tty, entry, im, n, 'f', entry->kitty_id,
+		    ",X=1,z=-1"))
+			return;
+		entry->frames = xreallocarray(entry->frames, i + 1,
+		    sizeof *entry->frames);
+		kf = &entry->frames[i];
+		kf->id = id;
+		kf->generation = generation;
+		entry->nframes++;
+	} else if (entry->frames[i].generation != generation) {
+		xsnprintf(control, sizeof control, ",r=%u,X=1", i + 1);
+		if (!kitty_send_frame(tty, entry, im, n, 'f', entry->kitty_id,
+		    control))
+			return;
+		entry->frames[i].generation = generation;
+	}
+
+	if (entry->frame != i + 1) {
+		xsnprintf(control, sizeof control,
+		    "\033_Ga=a,i=%u,c=%u,q=2\033\\", entry->kitty_id, i + 1);
+		tty_puts(tty, control);
+		entry->frame = i + 1;
+	}
+}
+
+/* Show the current frames of all uploaded images. */
+void
+kitty_update_frames(struct tty *tty)
+{
+	struct kitty_output		*ko = tty->image_data;
+	struct kitty_image_cache	*entry;
+
+	if (ko == NULL || (tty->flags & TTY_BLOCK))
+		return;
+	TAILQ_FOREACH(entry, &ko->images, entry)
+		kitty_show_frame(tty, entry);
 }
 
 /* Finish drawing, replacing overlapping images if needed. */
@@ -621,6 +719,7 @@ kitty_redraw_finish(struct tty *tty)
 	TAILQ_FOREACH(entry, &ko->images, entry) {
 		if (entry->upload && !kitty_upload(tty, entry))
 			continue;
+		kitty_show_frame(tty, entry);
 		TAILQ_FOREACH(kpl, &entry->placements, entry) {
 			if (kpl->id == 0)
 				kitty_send_placement(tty, entry, kpl);
@@ -850,11 +949,10 @@ kitty_check_command(struct kitty_command *cmd)
 	case KITTY_ACTION_TRANSMIT_AND_DISPLAY:
 	case KITTY_ACTION_PLACE:
 	case KITTY_ACTION_DELETE:
-		return (NULL);
 	case KITTY_ACTION_TRANSMIT_FRAME:
 	case KITTY_ACTION_CONTROL_ANIMATION:
 	case KITTY_ACTION_COMPOSE_FRAME:
-		return ("ENOTSUP");
+		return (NULL);
 	}
 	return ("EINVAL");
 }
@@ -1123,6 +1221,46 @@ kitty_delete_selects(struct kitty_command *cmd, struct kitty_image_map *map,
 	return (0);
 }
 
+/* Delete a frame, or the whole image if it has only one and release is set. */
+static void
+kitty_delete_frame(struct kitty_state *ks, struct screen_write_ctx *ctx,
+    int release)
+{
+	struct kitty_command		*cmd = &ks->cmd;
+	struct kitty_image_map		*map;
+	struct kitty_placement_map	*kpl;
+	struct image			*im;
+	u_int				 count, n;
+
+	map = kitty_image_map_select(ks, cmd);
+	if (map == NULL)
+		return;
+	im = image_find(map->image_id);
+	count = image_get_frame_count(im);
+
+	if (count == 1) {
+		if (!release)
+			return;
+		while ((kpl = TAILQ_FIRST(&map->placements)) != NULL) {
+			TAILQ_REMOVE(&map->placements, kpl, entry);
+			image_clear(ctx, kpl->image_id);
+			free(kpl);
+		}
+		TAILQ_REMOVE(&ks->images, map, entry);
+		image_free(im);
+		free(map);
+		return;
+	}
+
+	/* Zero is the first frame and numbers past the end are the last. */
+	n = cmd->rows;
+	if (n > count)
+		n = count;
+	if (n == 0)
+		n = 1;
+	image_delete_frame(im, n - 1);
+}
+
 /* Delete selected Kitty placements. */
 static const char *
 kitty_handle_delete(struct kitty_state *ks, struct screen_write_ctx *ctx)
@@ -1139,6 +1277,10 @@ kitty_handle_delete(struct kitty_state *ks, struct screen_write_ctx *ctx)
 	release = (how >= 'A' && how <= 'Z');
 	if (release)
 		how += 'a' - 'A';
+	if (how == 'f') {
+		kitty_delete_frame(ks, ctx, release);
+		return ("OK");
+	}
 	TAILQ_FOREACH(map, &ks->images, entry)
 		kitty_prune_placements(map, s);
 	if (kitty_delete_area(cmd, s, how) != 0)
@@ -1325,10 +1467,13 @@ kitty_send_reply(struct input_ctx *ictx, struct kitty_command *cmd,
 	char	i[96] = "";
 	char	I[96] = "";
 	char	p[96] = "";
+	char	r[96] = "";
 
 	if (cmd->quiet >= 2)
 		return;
-	if (cmd->action == KITTY_ACTION_DELETE && strcmp(m, "OK") == 0)
+	if ((cmd->action == KITTY_ACTION_DELETE ||
+	    cmd->action == KITTY_ACTION_CONTROL_ANIMATION) &&
+	    strcmp(m, "OK") == 0)
 		return;
 	if (cmd->quiet == 1 && strcmp(m, "OK") == 0)
 		return;
@@ -1345,7 +1490,9 @@ kitty_send_reply(struct input_ctx *ictx, struct kitty_command *cmd,
 	}
 	if (cmd->placement_id != 0)
 		xsnprintf(p, sizeof p, ",p=%u", cmd->placement_id);
-	input_reply(ictx, 0, "\033_G%s%s%s;%s\033\\", i, I, p, m);
+	if (cmd->action == KITTY_ACTION_TRANSMIT_FRAME && cmd->rows != 0)
+		xsnprintf(r, sizeof r, ",r=%u", cmd->rows);
+	input_reply(ictx, 0, "\033_G%s%s%s%s;%s\033\\", i, I, p, r, m);
 }
 
 /* Create a Kitty placement with shared source pixels and stored geometry. */
@@ -1357,8 +1504,7 @@ kitty_place_image(struct image *src, struct kitty_command *cmd, u_int xpixel,
 	enum image_type		 type = image_get_type(src);
 	struct image_geom	 ig = { 0 };
 	struct image		*im;
-	u_char			*pixels;
-	size_t			 stride, limit;
+	size_t			 limit;
 	uint64_t		 cw, ch;
 	double			 size;
 
@@ -1431,8 +1577,7 @@ kitty_place_image(struct image *src, struct kitty_command *cmd, u_int xpixel,
 		return (NULL);
 	ig.canvas_width = cw;
 	ig.canvas_height = ch;
-	pixels = image_get_pixels(src, &stride, NULL);
-	im = image_create_with_parent(type, src, &ig, stride, pixels);
+	im = image_create_with_parent(type, src, &ig);
 	if (im != NULL) {
 		image_set_order_id(im, image_get_order_id(src));
 		image_set_zindex(im, cmd->zindex);
@@ -1477,26 +1622,18 @@ kitty_handle_place(struct kitty_state *ks, struct window_pane *wp,
 	return ("OK");
 }
 
-/* Decode an upload and store it, place it, or only check it for a query. */
+/* Decode a completed transfer into RGBA pixels. */
 static const char *
-kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
-    struct screen_write_ctx *ctx, u_int bg)
+kitty_decode(struct kitty_state *ks, u_char **pixels)
 {
 	struct kitty_command	*cmd = &ks->cmd;
-	struct window		*w = wp->window;
-	struct image_geom	 ig = { 0 };
-	struct kitty_image_map	*map = NULL;
-	struct image		*src, *im = NULL;
 	u_char			*p = NULL;
 	size_t			 limit;
-	u_int			 sx, sy;
-	uint64_t		 cw, ch;
 	int			 z;
 
 	if (cmd->transmission != 'd' && kitty_read_file(ks) != 0)
 		return ("EBADF");
 
-	/* Decode the completed transfer into RGBA pixels. */
 	if (cmd->compression != '\0' && cmd->compression != 'z')
 		return ("EINVAL");
 	z = (cmd->compression == 'z');
@@ -1514,6 +1651,27 @@ kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
 	}
 	if (p == NULL)
 		return ("EINVAL");
+	*pixels = p;
+	return (NULL);
+}
+
+/* Decode an upload and store it, place it, or only check it for a query. */
+static const char *
+kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
+    struct screen_write_ctx *ctx, u_int bg)
+{
+	struct kitty_command	*cmd = &ks->cmd;
+	struct window		*w = wp->window;
+	struct image_geom	 ig = { 0 };
+	struct kitty_image_map	*map = NULL;
+	struct image		*src, *im = NULL;
+	u_char			*p;
+	const char		*m;
+	u_int			 sx, sy;
+	uint64_t		 cw, ch;
+
+	if ((m = kitty_decode(ks, &p)) != NULL)
+		return (m);
 
 	cw = (w->xpixel == 0 ? 8 : w->xpixel);
 	ch = (w->ypixel == 0 ? 16 : w->ypixel);
@@ -1561,6 +1719,242 @@ kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
 	return ("OK");
 }
 
+/* Fill a frame with a colour given as 0xRRGGBBAA. */
+static void
+kitty_fill_frame(u_char *pixels, size_t size, u_int colour)
+{
+	u_char	rgba[4];
+	size_t	i;
+
+	rgba[0] = colour >> 24;
+	rgba[1] = (colour >> 16) & 0xff;
+	rgba[2] = (colour >> 8) & 0xff;
+	rgba[3] = colour & 0xff;
+	for (i = 0; i + 4 <= size; i += 4)
+		memcpy(pixels + i, rgba, 4);
+}
+
+/* Copy a row of RGBA pixels, or blend it over the existing pixels. */
+static void
+kitty_compose_row(u_char *dst, const u_char *src, u_int w, int replace)
+{
+	u_int	x, i, sa, da, oa;
+
+	if (replace) {
+		memcpy(dst, src, (size_t)w * 4);
+		return;
+	}
+	for (x = 0; x < w; x++, dst += 4, src += 4) {
+		sa = src[3];
+		if (sa == 255) {
+			memcpy(dst, src, 4);
+			continue;
+		}
+		if (sa == 0)
+			continue;
+
+		/* Alpha values here are scaled by 255. */
+		sa *= 255;
+		da = dst[3] * (255 - src[3]);
+		oa = sa + da;
+		for (i = 0; i < 3; i++)
+			dst[i] = (src[i] * sa + dst[i] * da + oa / 2) / oa;
+		dst[3] = (oa + 127) / 255;
+	}
+}
+
+/* Find the image for a frame command when its first chunk arrives. */
+static const char *
+kitty_start_frame(struct kitty_state *ks)
+{
+	struct kitty_image_map	*map;
+
+	map = kitty_image_map_select(ks, &ks->cmd);
+	if (map == NULL)
+		return ("ENOENT");
+	ks->frame_image = map->image_id;
+	return (NULL);
+}
+
+/* Add a frame to an image or change an existing frame. */
+static const char *
+kitty_handle_frame(struct kitty_state *ks)
+{
+	struct kitty_command	*cmd = &ks->cmd;
+	struct kitty_image_map	*map;
+	struct image		*im;
+	struct image_geom	*ig;
+	u_char			*p, *frame;
+	const char		*m;
+	size_t			 size, stride;
+	u_int			 count, n, w, h, y, gap;
+	int			 replace = (cmd->cell_xoff == 1);
+
+	/* The image must not have been replaced since the first chunk. */
+	map = kitty_image_map_select(ks, cmd);
+	if (map == NULL || map->image_id != ks->frame_image)
+		return ("ENOENT");
+	cmd->image_id = map->kitty_id;
+	im = image_find(map->image_id);
+	ig = image_get_geometry(im);
+
+	if ((m = kitty_decode(ks, &p)) != NULL)
+		return (m);
+	if (cmd->pixel_width > ig->src_w || cmd->pixel_height > ig->src_h) {
+		free(p);
+		return ("EINVAL");
+	}
+
+	/* Frame numbers past the end add a new frame. */
+	count = image_get_frame_count(im);
+	n = cmd->rows;
+	if (n == 0 || n > count)
+		n = count + 1;
+	cmd->rows = n;
+
+	size = (size_t)ig->src_w * ig->src_h * 4;
+	if (n > count) {
+		if (cmd->cols > count) {
+			free(p);
+			return ("EINVAL");
+		}
+		frame = xmalloc(size);
+		if (cmd->cols != 0) {
+			memcpy(frame, image_get_frame_pixels(im, cmd->cols - 1),
+			    size);
+		} else
+			kitty_fill_frame(frame, size, cmd->cell_yoff);
+	} else
+		frame = image_get_frame_pixels(im, n - 1);
+
+	/* Data outside the image is clipped. */
+	if (cmd->src_x < ig->src_w && cmd->src_y < ig->src_h) {
+		w = cmd->pixel_width;
+		if (w > ig->src_w - cmd->src_x)
+			w = ig->src_w - cmd->src_x;
+		h = cmd->pixel_height;
+		if (h > ig->src_h - cmd->src_y)
+			h = ig->src_h - cmd->src_y;
+		stride = (size_t)ig->src_w * 4;
+		for (y = 0; y < h; y++) {
+			kitty_compose_row(frame + (cmd->src_y + y) * stride +
+			    (size_t)cmd->src_x * 4,
+			    p + (size_t)y * cmd->pixel_width * 4, w, replace);
+		}
+	}
+	free(p);
+
+	/* A zero gap means the default for a new frame and no change. */
+	if (n > count) {
+		if (cmd->zindex > 0)
+			gap = cmd->zindex;
+		else if (cmd->zindex < 0)
+			gap = 0;
+		else
+			gap = KITTY_FRAME_GAP;
+		if (image_add_frame(im, frame, gap) != 0) {
+			free(frame);
+			return ("ENOSPC");
+		}
+		return ("OK");
+	}
+	if (cmd->zindex != 0) {
+		image_set_frame_gap(im, n - 1,
+		    cmd->zindex > 0 ? cmd->zindex : 0);
+	}
+	image_frame_changed(im, n - 1);
+	return ("OK");
+}
+
+/* Control playback of an image's frames. Invalid values are ignored. */
+static const char *
+kitty_handle_animation(struct kitty_state *ks)
+{
+	struct kitty_command	*cmd = &ks->cmd;
+	struct kitty_image_map	*map;
+	struct image		*im;
+	u_int			 count;
+
+	map = kitty_image_map_select(ks, cmd);
+	if (map == NULL)
+		return ("ENOENT");
+	im = image_find(map->image_id);
+	count = image_get_frame_count(im);
+
+	if (cmd->rows != 0 && cmd->rows <= count && cmd->zindex != 0) {
+		image_set_frame_gap(im, cmd->rows - 1,
+		    cmd->zindex > 0 ? cmd->zindex : 0);
+	}
+	if (cmd->cols != 0 && cmd->cols <= count)
+		image_set_frame(im, cmd->cols - 1);
+	switch (cmd->pixel_width) {
+	case 1:
+		image_set_animation(im, IMAGE_ANIMATION_STOPPED);
+		break;
+	case 2:
+		image_set_animation(im, IMAGE_ANIMATION_LOADING);
+		break;
+	case 3:
+		image_set_animation(im, IMAGE_ANIMATION_LOOPING);
+		break;
+	}
+	if (cmd->pixel_height != 0)
+		image_set_animation_loops(im, cmd->pixel_height - 1);
+	return ("OK");
+}
+
+/* Copy or blend a rectangle from one frame to another. */
+static const char *
+kitty_handle_compose(struct kitty_state *ks)
+{
+	struct kitty_command	*cmd = &ks->cmd;
+	struct kitty_image_map	*map;
+	struct image		*im;
+	struct image_geom	*ig;
+	u_char			*src, *dst;
+	u_int			 count, w, h, y;
+	u_int			 sx = cmd->cell_xoff, sy = cmd->cell_yoff;
+	u_int			 dx = cmd->src_x, dy = cmd->src_y;
+	size_t			 stride;
+
+	map = kitty_image_map_select(ks, cmd);
+	if (map == NULL)
+		return ("ENOENT");
+	cmd->image_id = map->kitty_id;
+	im = image_find(map->image_id);
+	ig = image_get_geometry(im);
+
+	/* The source is frame r and the destination frame c. */
+	count = image_get_frame_count(im);
+	if (cmd->rows == 0 || cmd->rows > count)
+		return ("ENOENT");
+	if (cmd->cols == 0 || cmd->cols > count)
+		return ("ENOENT");
+
+	/* Rectangles are not clipped. */
+	w = (cmd->src_w != 0 ? cmd->src_w : ig->src_w);
+	h = (cmd->src_h != 0 ? cmd->src_h : ig->src_h);
+	if ((uint64_t)dx + w > ig->src_w || (uint64_t)dy + h > ig->src_h)
+		return ("EINVAL");
+	if ((uint64_t)sx + w > ig->src_w || (uint64_t)sy + h > ig->src_h)
+		return ("EINVAL");
+	if (cmd->rows == cmd->cols &&
+	    (sx > dx ? sx : dx) < (sx < dx ? sx : dx) + w &&
+	    (sy > dy ? sy : dy) < (sy < dy ? sy : dy) + h)
+		return ("EINVAL");
+
+	src = image_get_frame_pixels(im, cmd->rows - 1);
+	dst = image_get_frame_pixels(im, cmd->cols - 1);
+	stride = (size_t)ig->src_w * 4;
+	for (y = 0; y < h; y++) {
+		kitty_compose_row(dst + (dy + y) * stride + (size_t)dx * 4,
+		    src + (sy + y) * stride + (size_t)sx * 4, w,
+		    cmd->cursor_no_move);
+	}
+	image_frame_changed(im, cmd->cols - 1);
+	return ("OK");
+}
+
 /* Parse and reply to a Kitty graphics sequence. */
 void
 kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
@@ -1572,6 +1966,7 @@ kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
 	const u_char		*found;
 	const char		*m;
 	size_t			 csize, psize;
+	int			 first;
 
 	buf++;
 	len--;
@@ -1602,7 +1997,8 @@ kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
 	}
 
 	/* Continuation chunks keep the controls from the first chunk. */
-	if (!cmd->more)
+	first = !cmd->more;
+	if (first)
 		kitty_command_reset(cmd);
 	cmd->more = 0;
 
@@ -1610,9 +2006,20 @@ kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
 		goto out;
 	if ((m = kitty_check_command(cmd)) != NULL)
 		goto out;
-	if (cmd->action == KITTY_ACTION_DELETE) {
+	switch (cmd->action) {
+	case KITTY_ACTION_DELETE:
 		m = kitty_handle_delete(ks, ctx);
 		goto out;
+	case KITTY_ACTION_CONTROL_ANIMATION:
+		m = kitty_handle_animation(ks);
+		goto out;
+	case KITTY_ACTION_COMPOSE_FRAME:
+		m = kitty_handle_compose(ks);
+		goto out;
+	case KITTY_ACTION_TRANSMIT_FRAME:
+		if (first && (m = kitty_start_frame(ks)) != NULL)
+			goto out;
+		break;
 	}
 
 	/* Collect the payload until the last chunk arrives. */
@@ -1624,6 +2031,8 @@ kitty_parse_input(struct input_ctx *ictx, struct window_pane *wp,
 
 	if (cmd->action == KITTY_ACTION_PLACE)
 		m = kitty_handle_place(ks, wp, ctx, bg);
+	else if (cmd->action == KITTY_ACTION_TRANSMIT_FRAME)
+		m = kitty_handle_frame(ks);
 	else
 		m = kitty_handle_transmit(ks, wp, ctx, bg);
 
