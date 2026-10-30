@@ -338,7 +338,7 @@ input_key_kitty(struct screen *s, struct bufferevent *bev, key_code key,
 		number = ikk->number;
 		final = ikk->final;
 		if ((kk == NULL || kk->number == 0) && ikk->text != '\0' &&
-		    (modifiers & ~KITTY_MOD_SHIFT) == 0)
+		    modifiers == 0)
 			text[ntext++] = ikk->text;
 	} else {
 		final = 'u';

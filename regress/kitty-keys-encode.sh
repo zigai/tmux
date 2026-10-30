@@ -57,7 +57,7 @@ encode 9 '\033[97;5u\033[9u\033[13u\033[97;2u' C-a Tab Enter A
 # its legacy form, which looks like a cursor position report.
 encode 1 '\033[97;6u\033[97;9u\033[13;2u\r\033[13;2~' C-S-a Super-a S-Enter \
     Enter S-F3
-encode 1 '1+.\033[57414u' KP1 KP+ KP. KPEnter
+encode 1 '1+.\033[57414u\033[57400;2u' KP1 KP+ KP. KPEnter S-KP1
 encode 8 '\033[97u' a
 
 # Event types: a press of a special key gets an explicit event, plain text,
