@@ -104,6 +104,19 @@ query "palette answer out of order" \
     '\033]21;201=?;200=?;foreground=?\033\\' \
     '^[]21;201=;200=rgb:c8/40/a0;foreground=rgb:ee/ee/ee^[\'
 
+# A palette index asked twice in one sequence is asked of the outer terminal
+# once.
+asked()
+{
+	cat "$DIR/plain" "$CAP" | grep -aoF "$(printf '\033]4;200;?')" | wc -l
+}
+capture twice
+before=$(asked)
+query "palette index asked twice" '\033]21;200=?;200=?\033\\' \
+    '^[]21;200=rgb:c8/40/a0;200=rgb:c8/40/a0^[\'
+[ $(($(asked) - before)) -eq 1 ] ||
+    fail "palette 200 asked $(($(asked) - before)) times"
+
 # An OSC 21 reply from the outer terminal is not passed to the pane.
 $INNER respawn-pane -k -t inner:0.0 "stty raw -echo; cat -v >$DIR/typed" ||
     exit 1
