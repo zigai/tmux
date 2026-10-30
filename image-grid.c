@@ -136,6 +136,7 @@ struct image_backend {
 	void		(*free)(struct tty *, int);
 	void		(*remove_image)(struct image *);
 	void			 (*update_frames)(struct tty *);
+	void			 (*discarded)(struct tty *);
 };
 
 /* Backend definitions. */
@@ -145,6 +146,7 @@ static struct image_backend image_backend_fallback = {
 	fallback_select,
 	fallback_map_cell,
 	fallback_map_placeholder,
+	NULL,
 	NULL,
 	NULL,
 	NULL,
@@ -167,6 +169,7 @@ static struct image_backend image_backend_sixel = {
 	NULL,
 	sixel_free_pending,
 	NULL,
+	NULL,
 	NULL
 };
 static struct image_backend image_backend_kitty = {
@@ -182,7 +185,8 @@ static struct image_backend image_backend_kitty = {
 	kitty_scroll,
 	kitty_free_output_state,
 	kitty_remove_image,
-	kitty_update_frames
+	kitty_update_frames,
+	kitty_discard_output
 };
 
 /* Backends in order of preference. */
@@ -464,6 +468,15 @@ image_tty_free(struct tty *tty, int send)
 		tty->image_backend = NULL;
 		tty->image_data = NULL;
 	}
+}
+
+/* Forget image output after the terminal's output was discarded. */
+void
+image_tty_discarded(struct tty *tty)
+{
+	if (tty->image_backend != NULL &&
+	    tty->image_backend->discarded != NULL)
+		tty->image_backend->discarded(tty);
 }
 
 /*

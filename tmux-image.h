@@ -237,6 +237,7 @@ int		 image_tty_update(struct tty *);
 int		 image_backend_get_flags(struct tty *);
 void		 image_tty_size_changed(struct tty *);
 void		 image_tty_free(struct tty *, int);
+void			 image_tty_discarded(struct tty *);
 int			 image_show_frame(struct image *, int);
 
 /* image-fallback.c */
@@ -269,6 +270,7 @@ void		 kitty_redraw_finish(struct tty *);
 void		 kitty_scroll(struct tty *, u_int, u_int, u_int, u_int, int);
 void			 kitty_update_frames(struct tty *);
 void		 kitty_free_output_state(struct tty *, int);
+void			 kitty_discard_output(struct tty *);
 void		 kitty_parse_input(struct input_ctx *, struct window_pane *,
 		     struct screen_write_ctx *, u_int, void **, const u_char *,
 		     size_t);
