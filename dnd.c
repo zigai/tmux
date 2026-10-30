@@ -640,13 +640,23 @@ dnd_tty_input(struct tty *tty, const char *s)
 	struct dnd_msg		 raw, msg;
 	int			 continued;
 
-	if (c->session == NULL || c->session->curw == NULL)
-		return;
 	if (dnd_parse(s, &raw) != 0) {
 		log_debug("%s: %s: invalid: %s", __func__, c->name, s);
 		return;
 	}
 	log_debug("%s: %s: %s", __func__, c->name, s);
+
+	/* A query reply means the terminal supports the protocol. */
+	if (raw.type == 'q') {
+		if (~tty->flags & TTY_HAVEDND) {
+			tty_parse_client_features(c, "dnd", ",");
+			tty_update_features(tty);
+			tty->flags |= TTY_HAVEDND;
+		}
+		return;
+	}
+	if (c->session == NULL || c->session->curw == NULL)
+		return;
 	dt = dnd_get_tty(tty);
 	continued = dt->chunked;
 	dnd_chunk(&dt->chunked, &dt->first, &raw, &msg);

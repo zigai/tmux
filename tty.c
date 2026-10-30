@@ -452,6 +452,9 @@ tty_send_requests(struct tty *tty)
 	tty->flags |= TTY_HAVEKITTYGRAPHICS;
 #endif
 
+	if (~flags & TTY_HAVEDND)
+		tty_puts(tty, "\033]72;t=q\033\\");
+
 	tty_puts(tty, "\033]10;?\033\\\033]11;?\033\\");
 	tty->flags |= (TTY_WAITBG|TTY_WAITFG);
 

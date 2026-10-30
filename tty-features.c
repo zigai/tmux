@@ -695,7 +695,6 @@ tty_default_features(struct client *c, const char *name, u_int version)
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
 			      "ccolour,"
 			      "cstyle,"
-			      "dnd,"
 			      "extkeys,"
 			      "focus,"
 			      "hyperlinks,"

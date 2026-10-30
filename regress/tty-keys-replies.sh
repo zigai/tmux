@@ -49,7 +49,7 @@ def matches(name, value):
         required = {
             "256", "RGB", "bpaste", "clipboard", "mouse",
             "strikethrough", "title", "ccolour", "cstyle", "extkeys",
-            "focus", "hyperlinks", "osc7", "usstyle", "kittygraphics", "dnd"}
+            "focus", "hyperlinks", "osc7", "usstyle", "kittygraphics"}
         if name == "XDA-kitty":
             required.add("sync")
         elif "sync" in features:
@@ -64,6 +64,8 @@ def matches(name, value):
             "margins" not in features
     if name == "sync":
         return "sync" in features
+    if name == "dnd":
+        return "dnd" in features
     if name.startswith("kitty-graphics"):
         return "kittygraphics" in features
     if name == "characters":
@@ -80,6 +82,7 @@ reports = [
     ("XDA-ghostty", b"\033P>|ghostty 1.2.0\033\\"),
     ("XDA-WezTerm", b"\033P>|WezTerm 20240203-110809-5046fc22\033\\"),
     ("sync", b"\033[?2026;2$y"),
+    ("dnd", b"\033]72;t=q\033\\"),
     ("kitty-graphics", b"\033_Gi=31;OK\033\\"),
     ("kitty-graphics-disabled", b"\033_Gi=31;OK\033\\"),
     ("kitty-graphics-error", b"\033_Gi=31;EINVAL:invalid image data\033\\"),
