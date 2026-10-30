@@ -1186,6 +1186,7 @@ struct pane_range {
 	char			*name;
 	char			*group;
 	char			*text;
+	char			*style;
 	u_int			 cells;
 
 	enum pane_range_anchor	 anchor;
@@ -1196,6 +1197,8 @@ struct pane_range {
 	int			 has_last;
 	uint64_t		 last_line;
 	u_int			 last_x;
+	struct grid_cell	 style_cell;
+	u_int			 style_generation;
 
 	enum pane_range_state	 state;
 	int			 positioned;
@@ -1890,6 +1893,7 @@ struct tty_style_ctx {
 	u_int			 dim;
 	struct hyperlinks	*hyperlinks;
 	struct window_pane	*wp;
+	struct pane_ranges	*ranges;
 };
 
 /* Maximum reported terminal size. */
@@ -3671,7 +3675,7 @@ int			  pane_range_parse(struct window_pane *, const char *,
 struct pane_range	 *pane_range_create(struct window_pane *,
     const struct pane_range_span *, const char *,
     enum pane_range_anchor, const char *, const char *,
-    const char *, const char *, char **);
+    const char *, const char *, const char *, char **);
 int			  pane_range_move(struct window_pane *,
     struct pane_range *,
     const struct pane_range_span *, char **);
@@ -3683,6 +3687,19 @@ void			  pane_ranges_kill_group(struct window_pane *,
     const char *);
 void			  pane_range_formats(struct format_tree *,
     struct pane_range *);
+void			  pane_range_set_name(struct window_pane *,
+    struct pane_range *, const char *);
+void			  pane_range_set_style(struct window_pane *,
+    struct pane_range *, const char *);
+void			  pane_ranges_style_changed(struct window_pane *);
+struct pane_ranges	 *pane_ranges_drawing(struct window_pane *,
+    struct screen *);
+void			  pane_ranges_draw_cell(struct pane_ranges *,
+    struct grid_cell *);
+void			  pane_ranges_copy_cell(struct window_mode_entry *,
+    struct grid_cell *);
+int			  pane_ranges_redraw_cells(struct tty *,
+    const struct tty_ctx *, u_int);
 
 /* grid.c */
 extern const struct grid_cell grid_default_cell;
@@ -4215,6 +4232,8 @@ extern const struct window_mode window_client_mode;
 /* window-copy.c */
 int				 window_copy_get_selection_span(
     struct window_pane *, struct window_copy_selection *);
+struct grid			*window_copy_get_backing(struct window_pane *,
+    uint64_t *, int *);
 extern const struct window_mode window_copy_mode;
 extern const struct window_mode window_view_mode;
 void printflike(3, 4) window_copy_add(struct window_pane *, int, const char *,

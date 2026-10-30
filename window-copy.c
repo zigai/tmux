@@ -5758,6 +5758,8 @@ window_copy_write_one(struct window_mode_entry *wme,
 	screen_write_cursormove(ctx, px, py, 0);
 	for (fx = 0; fx < nx; fx++) {
 		grid_get_cell(gd, fx, fy, &gc);
+		if (gc.range != 0)
+			pane_ranges_copy_cell(wme, &gc);
 		if (fx + gc.data.width <= nx) {
 #ifdef ENABLE_IMAGES
 			if (image_grid_area_has_images(gd, fx, fy,
@@ -6696,6 +6698,28 @@ window_copy_get_grid_range(struct window_mode_entry *wme, u_int sx, u_int sy,
 	}
 	*len = off;
 	return (buf);
+}
+
+/* Get the copy of the pane grid and whether it matches the pane. */
+struct grid *
+window_copy_get_backing(struct window_pane *wp, uint64_t *collected,
+    int *current)
+{
+	struct window_mode_entry	*wme = TAILQ_FIRST(&wp->modes);
+	struct window_copy_mode_data	*data;
+	struct grid			*gd = wp->base.grid, *back;
+
+	if (wme == NULL || wme->mode != &window_copy_mode ||
+	    wme->swp != wp)
+		return (NULL);
+	data = wme->data;
+	if (data == NULL || data->viewmode)
+		return (NULL);
+	back = data->backing->grid;
+	*collected = data->sync_collected;
+	*current = gd->sx == back->sx &&
+	    gd->scroll_generation == data->sync_generation;
+	return (back);
 }
 
 static void *

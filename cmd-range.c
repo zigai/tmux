@@ -37,9 +37,9 @@ const struct cmd_entry cmd_new_range_entry = {
 	.name = "new-range",
 	.alias = NULL,
 
-	.args = { "a:b:e:PF:t:n:g:m:Sr:", 0, 0, NULL },
+	.args = { "a:b:e:PF:t:n:g:m:s:Sr:", 0, 0, NULL },
 	.usage = "[-P] [-a anchor] [-b before] [-e after] [-F format] "
-		"[-t target-pane] [-n name] [-g group] "
+		"[-t target-pane] [-n name] [-g group] [-s style] "
 		"(-S | -r range | -m text)",
 
 	.target = { 't', CMD_FIND_PANE, 0 },
@@ -52,9 +52,9 @@ const struct cmd_entry cmd_set_range_entry = {
 	.name = "set-range",
 	.alias = NULL,
 
-	.args = { "b:e:t:n:r:", 1, 1, NULL },
+	.args = { "b:e:t:n:s:r:", 1, 1, NULL },
 	.usage = "[-b before] [-e after] [-t target-pane] [-n name] "
-		"[-r range] range-id",
+		"[-s style] [-r range] range-id",
 
 	.target = { 't', CMD_FIND_PANE, 0 },
 
@@ -103,6 +103,22 @@ cmd_range_find(struct cmdq_item *item, struct window_pane *wp,
 	if (r == NULL)
 		cmdq_error(item, "no such range: %s", value);
 	return (r);
+}
+
+/* Check a range style unless it is a format. */
+static int
+cmd_range_check_style(struct cmdq_item *item, const char *style)
+{
+	struct style	sy;
+
+	if (style == NULL || strstr(style, "#{") != NULL)
+		return (1);
+	style_set(&sy, &grid_default_cell);
+	if (style_parse(&sy, &grid_default_cell, style) != 0) {
+		cmdq_error(item, "invalid style: %s", style);
+		return (0);
+	}
+	return (1);
 }
 
 /* Get the span of the copy mode selection if the pane still shows it. */
@@ -157,7 +173,7 @@ cmd_new_range_exec(struct cmd *self, struct cmdq_item *item)
 	struct pane_range	*r;
 	struct format_tree	*ft;
 	enum pane_range_anchor	 anchor;
-	const char		*template, *name, *group, *value, *text;
+	const char		*template, *name, *group, *value, *text, *style;
 	char			*cause = NULL, *expanded;
 
 	if (args_has(args, 'S') + args_has(args, 'r') +
@@ -184,6 +200,10 @@ cmd_new_range_exec(struct cmd *self, struct cmdq_item *item)
 		return (CMD_RETURN_ERROR);
 	}
 
+	style = args_get(args, 's');
+	if (!cmd_range_check_style(item, style))
+		return (CMD_RETURN_ERROR);
+
 	pane_ranges_update(wp);
 	text = args_get(args, 'm');
 	if (args_has(args, 'S')) {
@@ -198,7 +218,7 @@ cmd_new_range_exec(struct cmd *self, struct cmdq_item *item)
 	group = args_get(args, 'g');
 	r = pane_range_create(wp, text == NULL ? &span : NULL, text, anchor,
 	    name == NULL ? "" : name, group == NULL ? "" : group,
-	    args_get(args, 'b'), args_get(args, 'e'), &cause);
+	    args_get(args, 'b'), args_get(args, 'e'), style, &cause);
 	if (r == NULL)
 		goto fail;
 
@@ -236,6 +256,8 @@ cmd_set_range_exec(struct cmd *self, struct cmdq_item *item)
 
 	if ((r = cmd_range_find(item, wp, args_string(args, 0))) == NULL)
 		return (CMD_RETURN_ERROR);
+	if (!cmd_range_check_style(item, args_get(args, 's')))
+		return (CMD_RETURN_ERROR);
 
 	if ((args_has(args, 'b') || args_has(args, 'e')) &&
 	    r->anchor != PANE_RANGE_TEXT) {
@@ -251,10 +273,10 @@ cmd_set_range_exec(struct cmd *self, struct cmdq_item *item)
 		pane_range_set_text_context(wp, r, args_get(args, 'b'),
 		    args_get(args, 'e'));
 	}
-	if (args_has(args, 'n')) {
-		free(r->name);
-		r->name = xstrdup(args_get(args, 'n'));
-	}
+	if (args_has(args, 'n'))
+		pane_range_set_name(wp, r, args_get(args, 'n'));
+	if (args_has(args, 's'))
+		pane_range_set_style(wp, r, args_get(args, 's'));
 	return (CMD_RETURN_NORMAL);
 
 fail:

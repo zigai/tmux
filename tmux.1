@@ -4440,6 +4440,7 @@ destroyed.
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
 .Op Fl g Ar group
+.Op Fl s Ar style
 .Pq Fl S | Fl r Ar range | Fl m Ar text
 .Xc
 Create a range over text in a pane.
@@ -4561,16 +4562,39 @@ The other screen is shown.
 .Pp
 The position of a text range is that of the text found, and is empty if it is
 ambiguous or hidden.
+.Pp
+.Fl s
+sets the style used to draw the cells of the range; without it, the
+.Ic pane\-range\-style
+option is used.
+The style is a format expanded with the range formats, so it can depend on
+the range, for example:
+.Bd -literal -offset indent
+new-range -r 0:0-0:9 -s '#{?#{==:#{range_state},live},bg=colour237,dim}'
+.Ed
+.Pp
+The style is applied when the pane is drawn and is never part of the pane
+contents, so it does not appear in
+.Ic capture\-pane
+output or copied text.
+Where ranges overlap, their styles are combined and the newest range wins
+where they conflict.
+In copy mode, the selection, search matches and the current line style are
+drawn over range styles; copy mode showing another pane does not draw its
+range styles.
+.Ic pane\-ranges
+hides all range styles.
 .Tg set-range
 .It Xo Ic set\-range
 .Op Fl b Ar before
 .Op Fl e Ar after
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
+.Op Fl s Ar style
 .Op Fl r Ar range
 .Ar range-id
 .Xc
-Change the name of a range or, with
+Change the name or style of a range or, with
 .Fl r ,
 move it to different cells and capture its text again.
 .Fl b
@@ -4578,6 +4602,10 @@ and
 .Fl e
 change the text that must be before and after a text range; an empty string
 removes it.
+An empty
+.Ar style
+makes the range use
+.Ic pane\-range\-style .
 .Tg kill-range
 .It Xo Ic kill\-range
 .Op Fl t Ar target-pane
@@ -6499,6 +6527,21 @@ see the
 section.
 Attributes are ignored.
 .Pp
+.It Ic pane\-range\-style Ar style
+Set the style of pane ranges that do not have their own; see
+.Ic new\-range .
+The style is expanded as a format for each range.
+For how to specify
+.Ar style ,
+see the
+.Sx STYLES
+section.
+.Pp
+.It Xo Ic pane\-ranges
+.Op Ic on | off
+.Xc
+If off, pane ranges are drawn without their styles.
+.Pp
 .It Xo Ic pane\-scrollbars
 .Op Cm off | modal | on | auto\-hide
 .Xc
@@ -7974,6 +8017,7 @@ The following variables are available, where appropriate:
 .It Li "range_start_line" Ta "" Ta "History line of first cell, or empty if gone, ambiguous or hidden"
 .It Li "range_start_x" Ta "" Ta "Column of first cell, or empty if gone, ambiguous or hidden"
 .It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone, clipped, ambiguous, hidden"
+.It Li "range_style" Ta "" Ta "Style of range, or empty to use pane-range-style"
 .It Li "range_text" Ta "" Ta "Text captured when range was created or moved"
 .It Li "range_visible_y" Ta "" Ta "First visible row with a cell of range, or empty"
 .It Li "rectangle_toggle" Ta "" Ta "1 if rectangle selection is activated"

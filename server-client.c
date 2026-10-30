@@ -2092,6 +2092,7 @@ server_client_loop(void)
 	RB_FOREACH(w, windows, &windows) {
 		TAILQ_FOREACH(wp, &w->panes, entry) {
 			if (wp->flags & PANE_STYLECHANGED) {
+				pane_ranges_style_changed(wp);
 				wme = TAILQ_FIRST(&wp->modes);
 				if (wme != NULL &&
 				    wme->mode->style_changed != NULL)

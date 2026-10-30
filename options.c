@@ -1433,7 +1433,9 @@ options_push_changes(const char *name)
 	if (strcmp(name, "monitor-silence") == 0)
 		alerts_reset_all();
 	if (strcmp(name, "window-style") == 0 ||
-	    strcmp(name, "window-active-style") == 0) {
+	    strcmp(name, "window-active-style") == 0 ||
+	    strcmp(name, "pane-ranges") == 0 ||
+	    strcmp(name, "pane-range-style") == 0) {
 		RB_FOREACH(wp, window_pane_tree, &all_window_panes)
 			wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
 	}

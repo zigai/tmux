@@ -1330,6 +1330,7 @@ redraw_draw_pane_span(struct redraw_draw_ctx *dctx,
 	style_ctx.palette = &wp->palette;
 	style_ctx.hyperlinks = s->hyperlinks;
 	style_ctx.wp = wp;
+	style_ctx.ranges = pane_ranges_drawing(wp, s);
 
 	px = span->data.p.px + (x - dctx->side_left - span->x);
 	py = span->data.p.py;
