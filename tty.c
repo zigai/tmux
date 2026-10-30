@@ -635,10 +635,16 @@ tty_update_features(struct tty *tty)
 	if (tty_use_margin(tty))
 		tty_putcode(tty, TTYC_ENMG);
 	if (options_get_number(global_options, "extended-keys") == 0 ||
-	    (tty->term->flags & TERM_KITTYKEYS))
+	    (tty->term->flags & TERM_KITTYKEYS)) {
 		tty_puts(tty, tty_term_string(tty->term, TTYC_DSEKS));
-	else
+		tty->flags &= ~TTY_EXTKEYS;
+	} else {
 		tty_puts(tty, tty_term_string(tty->term, TTYC_ENEKS));
+		if (tty_term_has(tty->term, TTYC_ENEKS))
+			tty->flags |= TTY_EXTKEYS;
+		else
+			tty->flags &= ~TTY_EXTKEYS;
+	}
 	tty_update_kitty(tty, NULL);
 	if (options_get_number(global_options, "focus-events"))
 		tty_puts(tty, tty_term_string(tty->term, TTYC_ENFCS));

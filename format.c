@@ -1642,7 +1642,6 @@ format_cb_client_key_mode(struct format_tree *ft)
 	struct client	*c = ft->c;
 	const char	*mode;
 	char		*s;
-	int		 kitty, eks;
 
 	if (c == NULL || (~c->tty.flags & TTY_STARTED))
 		return (NULL);
@@ -1651,19 +1650,13 @@ format_cb_client_key_mode(struct format_tree *ft)
 		xasprintf(&s, "Kitty %u", c->tty.kitty_keys);
 		return (s);
 	}
-
-	/* This mirrors the choice made in tty_update_features(). */
-	kitty = ((c->tty.term->flags & TERM_KITTYKEYS) != 0);
-	eks = (options_get_number(global_options, "extended-keys") != 0);
-	if (kitty)
-		eks = 0;
-	if (eks && tty_term_has(c->tty.term, TTYC_ENEKS))
+	if (c->tty.flags & TTY_EXTKEYS)
 		mode = "Ext";
 	else
 		mode = "VT10x";
 
 	/* The terminal supports Kitty keys but they are not in use. */
-	if (kitty) {
+	if (c->tty.term->flags & TERM_KITTYKEYS) {
 		xasprintf(&s, "%s (Kitty)", mode);
 		return (s);
 	}
