@@ -50,7 +50,15 @@ $TMUX set -g extended-keys on || exit 1
 # Associated text, alternate keys and all keys as escapes.
 encode 31 '\033[97:65;2;65u' A
 encode 24 '\033[97;;97u' a
-encode 9 '\033[97;5u\033[9u\033[13u' C-a Tab Enter
+encode 9 '\033[97;5u\033[9u\033[13u\033[97;2u' C-a Tab Enter A
+
+# With only disambiguation, modified keys and Super are escapes, unmodified
+# Enter and keypad text keys stay as they are, and a modified F3 does not use
+# its legacy form, which looks like a cursor position report.
+encode 1 '\033[97;6u\033[97;9u\033[13;2u\r\033[13;2~' C-S-a Super-a S-Enter \
+    Enter S-F3
+encode 1 '1+.\033[57414u' KP1 KP+ KP. KPEnter
+encode 8 '\033[97u' a
 
 # Event types: a press of a special key gets an explicit event, plain text,
 # Enter, Tab and Backspace stay as they are.

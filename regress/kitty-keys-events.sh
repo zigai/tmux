@@ -97,4 +97,14 @@ send '\033[120;1:3u\033[121;;121u\033[121;1:3u'
 check "$A" '\033[120;1:3u'
 check "$B" 'y\033[121;1:3u'
 
+# A release is not given to the pane once it is in a mode, where it would act
+# as a key press.
+$TMUX bind -n F12 set -g @released 1 || exit 1
+send '\033[113;;113u'
+check "$B" 'q'
+$TMUX choose-tree -t:.1 || exit 1
+send '\033[113;1:3u\033[24~'
+wait_for_output 1 $TMUX show -gv @released || exit 1
+[ "$($TMUX display -p -t:.1 '#{pane_mode}')" = tree-mode ] || exit 1
+
 exit 0

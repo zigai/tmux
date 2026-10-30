@@ -56,6 +56,14 @@ replies '\033[>1u\033[?1049h\033[?u\033[>8u\033[?u\033[?1049l\033[?u\033[?1049h\
 replies '\033[>5u\033[?1049h\033[>6u\033c\033[?u\033[?1049l\033[?u' \
     '\033[?0u\033[?0u'
 
+# modifyOtherKeys does not change the flags, and extended-keys always forces
+# modifyOtherKeys, not this protocol.
+replies '\033[>4;2m\033[?u' '\033[?0u'
+$TMUX set -g extended-keys always || exit 1
+replies '\033[>0u\033[?u' '\033[?0u'
+wait_for_output 'Ext 1' $TMUX display -p '#{pane_key_mode}' || exit 1
+$TMUX set -g extended-keys on || exit 1
+
 $TMUX respawn-pane -k "printf '\033[>5u'; exec sleep 100" || exit 1
 wait_for_output 'Kitty 5' $TMUX display -p '#{pane_key_mode}' || exit 1
 

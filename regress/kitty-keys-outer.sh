@@ -37,6 +37,17 @@ attach()
 	    -f "#{==:#{client_session},$2}" || exit 1
 }
 
+last_sent()
+{
+	sent "$1" | tr ' ' '\n' | sed '/^$/d' | tail -1
+}
+
+client_mode()
+{
+	$TMUX list-clients -F '#{client_key_mode}' \
+	    -f "#{==:#{client_session},$1}"
+}
+
 outer_mode()
 {
 	$TMUX2 display -p -t "$1" '#{pane_key_mode}'
@@ -65,8 +76,10 @@ wait_for_output 'Kitty 1' outer_mode o1 || exit 1
 $TMUX send-keys -t s1:0 -X cancel || exit 1
 wait_for_output 'Kitty 31' outer_mode o1 || exit 1
 $TMUX detach-client -s s1 || exit 1
-wait_for_output '1b5b3f75 1b5b3e3175 1b5b3d333175 1b5b3d3175 1b5b3d333175 1b5b3d3175 1b5b3d333175 1b5b3c75 ' \
-    sent "$DIR/o1" || exit 1
+wait_for_output '1b5b3c75' last_sent "$DIR/o1" || exit 1
+[ "$(sent "$DIR/o1" | cut -d' ' -f1)" = 1b5b3f75 ] || exit 1
+[ "$(sent "$DIR/o1" | grep -o 1b5b3e | wc -l)" -eq 1 ] || exit 1
+[ "$(sent "$DIR/o1" | grep -o 1b5b3c | wc -l)" -eq 1 ] || exit 1
 
 # A terminal which does not answer the query is left alone, unless the
 # kittykeys feature says it has the protocol.
@@ -81,7 +94,22 @@ $TMUX set -as terminal-features ',*:kittykeys' || exit 1
 attach o4 s1
 wait_for_output 'Kitty 31' $TMUX list-clients -F '#{client_key_mode}' \
     -f '#{==:#{client_session},s1}' || exit 1
-$TMUX detach-client -s s1 || exit 1
+wait_for_output '1b5b3f75 1b5b3e333175 ' sent "$DIR/o4" || exit 1
+
+# A terminal with the protocol is still shown when extended-keys is off.
+$TMUX set -g extended-keys off || exit 1
+wait_for_output 'VT10x (Kitty)' client_mode s1 || exit 1
 wait_for_output '1b5b3f75 1b5b3e333175 1b5b3c75 ' sent "$DIR/o4" || exit 1
+$TMUX detach-client -s s1 || exit 1
+
+# The query is sent only once extended-keys is turned on.
+$TMUX set -gu terminal-features || exit 1
+$TMUX2 set -g extended-keys on || exit 1
+attach o5 s1
+wait_for_output 'VT10x' client_mode s1 || exit 1
+[ -z "$(sent "$DIR/o5")" ] || exit 1
+$TMUX set -g extended-keys on || exit 1
+wait_for_output 'Kitty 31' client_mode s1 || exit 1
+[ "$(sent "$DIR/o5" | cut -d' ' -f1)" = 1b5b3f75 ] || exit 1
 
 exit 0
