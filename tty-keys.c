@@ -81,6 +81,8 @@ static int	tty_keys_colours1(struct tty *, const char *, size_t, size_t *,
 		    int);
 static int	tty_keys_palette(struct tty *, const char *, size_t, size_t *,
 		    int);
+static int	tty_keys_kitty_colours(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_winsz(struct tty *, const char *, size_t, size_t *,
 		    int);
 static int	tty_keys_next1(struct tty *, const char *, size_t,
@@ -98,6 +100,7 @@ static const struct {
 	{ KEYC_REPORT_XDA, tty_keys_extended_device_attributes },
 	{ KEYC_REPORT_COLOURS, tty_keys_colours1 },
 	{ KEYC_REPORT_PALETTE, tty_keys_palette },
+	{ KEYC_REPORT_KITTY_COLOURS, tty_keys_kitty_colours },
 	{ KEYC_REPORT_WINSZ, tty_keys_winsz },
 #ifdef ENABLE_IMAGES
 	{ KEYC_REPORT_KITTY_GRAPHICS, tty_keys_kitty_graphics }
@@ -1850,6 +1853,35 @@ tty_keys_colours1(struct tty *tty, const char *buf, size_t len, size_t *size,
 		session_theme_changed(c->session);
 	}
 	return (n);
+}
+
+/*
+ * Discard OSC 21 colour control responses. tmux does not query the terminal
+ * with OSC 21, but terminals may reply to keys they do not know.
+ */
+static int
+tty_keys_kitty_colours(__unused struct tty *tty, const char *buf, size_t len,
+    size_t *size, __unused int apply)
+{
+	const char	*prefix = "\033]21;";
+	size_t		 i;
+
+	*size = 0;
+
+	for (i = 0; i < 5; i++) {
+		if (i == len)
+			return (1);
+		if (buf[i] != prefix[i])
+			return (-1);
+	}
+	for (; i < len; i++) {
+		if (buf[i] == '\007' ||
+		    (buf[i - 1] == '\033' && buf[i] == '\\')) {
+			*size = i + 1;
+			return (0);
+		}
+	}
+	return (1);
 }
 
 /* Handle OSC 4 palette colour responses. */
