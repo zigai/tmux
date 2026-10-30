@@ -36,7 +36,7 @@
  * names the pane so that replies from the terminal can be returned to it.
  */
 
-/* Notifications kept for replies, as kitty does. */
+/* Notifications and alive queries kept for replies, as kitty does. */
 #define NOTIFICATION_ENTRIES 128
 
 /* Icons kept for later notifications with the same key. */
@@ -44,6 +44,12 @@
 
 /* Largest chunk of payload before encoding allowed by the protocol. */
 #define NOTIFICATION_CHUNK 2048
+
+/* Largest payload kept, as kitty does; more is dropped. */
+#define NOTIFICATION_PAYLOAD (4 * 1024 * 1024)
+
+/* Most icon names or types kept for one notification. */
+#define NOTIFICATION_NAMES 32
 
 enum notification_type {
 	NOTIFICATION_TITLE,
@@ -121,6 +127,7 @@ struct notifications {
 	u_int				 nicons;
 
 	struct notification_queries	 queries;
+	u_int				 nqueries;
 };
 
 /* Numbers for notifications without an identifier, never reused. */
@@ -372,15 +379,19 @@ static void
 notification_set_key(struct notification *n, char key, const char *value)
 {
 	struct notification_key	*nk, *nk1;
+	u_int			 count = 0;
 
-	if (key != 'n' && key != 't') {
-		TAILQ_FOREACH_SAFE(nk, &n->keys, entry, nk1) {
-			if (nk->key == key) {
-				TAILQ_REMOVE(&n->keys, nk, entry);
-				free(nk->value);
-				free(nk);
-			}
+	TAILQ_FOREACH_SAFE(nk, &n->keys, entry, nk1) {
+		if (nk->key != key)
+			continue;
+		if (key == 'n' || key == 't') {
+			if (++count == NOTIFICATION_NAMES)
+				return;
+			continue;
 		}
+		TAILQ_REMOVE(&n->keys, nk, entry);
+		free(nk->value);
+		free(nk);
 	}
 	nk = xmalloc(sizeof *nk);
 	nk->key = key;
@@ -392,6 +403,10 @@ static void
 notification_append(struct notification_payload *np, const void *buf,
     size_t len)
 {
+	if (np->size + len > NOTIFICATION_PAYLOAD) {
+		log_debug("%s: payload too long", __func__);
+		return;
+	}
 	np->data = xrealloc(np->data, np->size + len);
 	memcpy(np->data + np->size, buf, len);
 	np->size += len;
@@ -450,6 +465,10 @@ notification_add_payload(struct notification_payload *np, const char *payload,
 	if (!encoded) {
 		notification_decode(np, 1);
 		notification_append(np, payload, len);
+		return;
+	}
+	if (np->encodedlen + len > NOTIFICATION_PAYLOAD) {
+		log_debug("%s: payload too long", __func__);
 		return;
 	}
 	np->encoded = xrealloc(np->encoded, np->encodedlen + len);
@@ -719,6 +738,13 @@ notification_alive(struct window_pane *wp, const char *id)
 		if (strcmp(nq->id, id) == 0)
 			return;
 	}
+	if (ns->nqueries == NOTIFICATION_ENTRIES) {
+		nq = TAILQ_FIRST(&ns->queries);
+		TAILQ_REMOVE(&ns->queries, nq, entry);
+		free(nq->id);
+		free(nq);
+	} else
+		ns->nqueries++;
 	nq = xmalloc(sizeof *nq);
 	nq->id = xstrdup(id);
 	TAILQ_INSERT_TAIL(&ns->queries, nq, entry);
@@ -1017,6 +1043,7 @@ notification_alive_reply(struct window_pane *wp, const char *rest,
 	free(ids);
 
 	TAILQ_REMOVE(&ns->queries, nq, entry);
+	ns->nqueries--;
 	free(nq->id);
 	free(nq);
 }
