@@ -3536,6 +3536,8 @@ void	 recalculate_sizes_now(int);
 void	 dnd_tty_input(struct tty *, const char *);
 void	 dnd_pane_input(struct window_pane *, struct input_ctx *,
 	     const char *);
+void	 dnd_pane_reset(struct window_pane *);
+void	 dnd_pane_moved(struct window_pane *);
 void	 dnd_pane_free(struct window_pane *);
 void	 dnd_tty_update(struct client *);
 void	 dnd_tty_stop(struct tty *);

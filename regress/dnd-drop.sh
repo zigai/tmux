@@ -2,95 +2,17 @@
 
 # Kitty drag and drop (OSC 72) drops from the outer terminal go to the pane
 # under the pointer with pane coordinates, and replies go back to the client
-# with the drop. Outer tmux panes run the clients and capture their output.
+# with the drop.
 
-. ./regress-common.inc
+. ./dnd-common.inc
 
-PATH=/bin:/usr/bin
-TERM=screen
-
-[ -z "$TEST_TMUX" ] && TEST_TMUX=$(readlink -f ../tmux)
-INNER="$TEST_TMUX -LtestI$$ -f/dev/null"
-OUTER="$TEST_TMUX -LtestO$$ -f/dev/null"
-DIR=$(test_tmpdir)
-
-fail()
-{
-	echo "$*" >&2
-	exit 1
-}
-
-cleanup()
-{
-	stop_server $OUTER
-	stop_server $INNER
-	rm -rf "$DIR"
-}
-trap cleanup 0
-trap 'exit 1' 1 2 15
-
-osc72()
-{
-	tr '\033\007' '\n\n' <"$1" | sed -n 's/^]72;//p'
-}
-
-expect()
-{
-	wait_for_output "$2" osc72 "$1" || fail "$3: got '$(osc72 "$1")'"
-	: >"$1"
-}
-
-expect_none()
-{
-	sleep 0.5
-	[ -z "$(osc72 "$1")" ] || fail "$2: got '$(osc72 "$1")'"
-}
-
-pane()
-{
-	printf '\033]72;%s\033\\' "$2" >"$($INNER display -p -t "$1" \
-	    '#{pane_tty}')"
-}
-
-# Ask for a status report, so all earlier output from the pane is handled.
-pane_sync()
-{
-	printf '\033[5n' >"$($INNER display -p -t "$1" '#{pane_tty}')"
-	wait_for_text '[0n' cat -v "$2" || fail "no status report"
-	: >"$2"
-}
-
-terminal()
-{
-	$OUTER send-keys -t "$1" -l "$(printf '\033]72;%s\033\\' "$2")"
-}
-
-logger()
-{
-	echo "stty raw -echo; printf '\\033]2;ready\\007'; exec cat >>$DIR/$1"
-}
-
-$INNER new -d -s inner -x80 -y24 "$(logger left)" || exit 1
-$INNER set -g status off || exit 1
+start
 $INNER set -as terminal-features ',screen*:dnd' || exit 1
-$INNER splitw -h -t inner "$(logger right)" || exit 1
-wait_for_output ready $INNER display -p -t inner:0.0 '#{pane_title}' ||
-    exit 1
-wait_for_output ready $INNER display -p -t inner:0.1 '#{pane_title}' ||
-    exit 1
-LEFT=$($INNER display -p -t inner:0.0 '#{pane_id}')
-RIGHT=$($INNER display -p -t inner:0.1 '#{pane_id}')
 OFF=$($INNER display -p -t $RIGHT '#{pane_left}')
 pane $RIGHT 't=a:i=7;text/plain'
 pane_sync $RIGHT $DIR/right
-
-$OUTER new -d -s outer -x80 -y24 'sleep 100' || exit 1
-$OUTER set -g status off || exit 1
-$OUTER set -g default-terminal screen || exit 1
-$OUTER pipe-pane -O -t outer:0 "cat >>$DIR/out1" || exit 1
-$OUTER respawn-pane -k -t outer:0 "$INNER attach -t inner" || exit 1
-wait_for_clients 1 $INNER || fail "client did not attach"
-expect $DIR/out1 't=a;text/plain' "registered"
+attach outer:0 $DIR/out1
+expect $DIR/out1 "$(printf '%s\n' 't=q' 't=a;text/plain')" "registered"
 CW=$($INNER display -p '#{client_cell_width}')
 CH=$($INNER display -p '#{client_cell_height}')
 
@@ -147,7 +69,7 @@ expect $DIR/out1 't=r:x=1' "request"
 terminal outer:0 't=r:x=1:m=1;aGVs'
 terminal outer:0 'm=0;bG8='
 terminal outer:0 't=r:x=1:m=0;'
-terminal outer:0 't=R:x=2;ENOENT'
+$OUTER send-keys -t outer:0 -l "$(printf '\033]72;t=R:x=2;ENOENT\007')"
 expect $DIR/right "$(printf '%s\n' 't=r:x=1:i=7:m=1;aGVs' 'i=7:m=0;bG8=' \
     't=r:x=1:i=7:m=0;' 't=R:x=2:i=7;ENOENT')" "data"
 pane $RIGHT 't=r:o=1'
@@ -155,19 +77,37 @@ expect $DIR/out1 't=r:o=1' "finish"
 pane $RIGHT 't=r:x=1'
 expect $DIR/right 't=R:x=1:i=7;EPERM' "request after finish"
 
+# A long chunked MIME list is kept, and given again in chunks when the drag
+# comes back to the pane.
+long1=a/$(printf '%03000d' 0)
+long2=b/$(printf '%03000d' 0)
+list="$long1 $long2 text/plain"
+terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3:m=1;$long1 "
+terminal outer:0 "m=1;$long2 "
+terminal outer:0 'm=0;text/plain'
+expect $DIR/right "$(printf '%s\n' "t=m:$IN:o=3:i=7:m=1;$long1 " \
+    "i=7:m=1;$long2 " 'i=7:m=0;text/plain')" "long list"
+expect $DIR/out1 't=m:o=0' "long list refused until the pane answers"
+terminal outer:0 "t=m:$(at 3 3):o=3"
+expect $DIR/right 't=m:x=-1:y=-1:i=7' "long list leave"
+expect $DIR/out1 't=m:o=0' "long list refused over other pane"
+terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3"
+expect $DIR/right "$(printf 't=m:%s:o=3:i=7:m=1;%s\ni=7:m=0;%s' "$IN" \
+    "$(printf %s "$list" | cut -c1-4096)" \
+    "$(printf %s "$list" | cut -c4097-)")" "long list again"
+expect $DIR/out1 't=m:o=0' "long list refused again"
+
 # A drag leaving the window is passed on.
 terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3;text/plain"
 expect $DIR/right "t=m:$IN:o=3:i=7;text/plain" "new drag"
-expect $DIR/out1 't=m:o=0' "new drag refused until the pane answers"
 terminal outer:0 't=m:x=-1:y=-1'
 expect $DIR/right 't=m:x=-1:y=-1:i=7' "left window"
 
 # A second client is registered too and has its own drag.
 $OUTER neww -d -t outer:1 'sleep 100' || exit 1
-$OUTER pipe-pane -O -t outer:1 "cat >>$DIR/out2" || exit 1
-$OUTER respawn-pane -k -t outer:1 "$INNER attach -t inner" || exit 1
-wait_for_clients 2 $INNER || fail "second client did not attach"
-expect $DIR/out2 't=a;text/plain' "second client registered"
+attach outer:1 $DIR/out2
+expect $DIR/out2 "$(printf '%s\n' 't=q' 't=a;text/plain')" \
+    "second client registered"
 terminal outer:1 "t=m:$(at $((OFF + 4)) 3):o=1;text/plain"
 expect $DIR/out2 't=m:o=0' "second client refused until the pane answers"
 expect $DIR/right "t=m:$IN:o=1:i=7;text/plain" "second client move"
@@ -183,6 +123,22 @@ expect $DIR/out2 't=A' "window changed, second client"
 $INNER selectw -t inner:0 || exit 1
 expect $DIR/out1 't=a;text/plain' "window back"
 expect $DIR/out2 't=a;text/plain' "window back, second client"
+
+# Moving a pane that accepts drops into or out of the window changes the
+# registration.
+$INNER neww -d -t inner:2 "$(logger third)" || exit 1
+wait_for_output ready $INNER display -p -t inner:2.0 '#{pane_title}' ||
+    exit 1
+THIRD=$($INNER display -p -t inner:2.0 '#{pane_id}')
+pane $THIRD 't=a;text/x-moved'
+pane_sync $THIRD $DIR/third
+expect_none $DIR/out1 "registered for another window"
+$INNER join-pane -v -s $THIRD -t $LEFT || exit 1
+expect $DIR/out1 't=a;text/x-moved text/plain' "pane joined"
+expect $DIR/out2 't=a;text/x-moved text/plain' "pane joined, second client"
+$INNER break-pane -d -s $THIRD || exit 1
+expect $DIR/out1 't=a;text/plain' "pane broken out"
+expect $DIR/out2 't=a;text/plain' "pane broken out, second client"
 
 # A pane that goes away cancels its drop.
 terminal outer:0 "t=M:$(at $((OFF + 4)) 3):o=1;text/plain"

@@ -43,6 +43,10 @@
 #define DND_HAS_O 0x10
 #define DND_HAS_M 0x20
 
+/* Longest payload in one sequence, and longest stored list, as kitty. */
+#define DND_CHUNK_SIZE 4096
+#define DND_LIST_SIZE (1024 * 1024)
+
 enum dnd_role {
 	DND_HOVER,
 	DND_DROP,
@@ -66,6 +70,7 @@ struct dnd_pane {
 	int		 accept;
 	u_int		 accept_id;
 	char		*accept_mimes;
+	char		*accept_pending;
 	char		*accept_machine;
 
 	int		 offer;
@@ -238,32 +243,95 @@ dnd_chunk(int *chunked, struct dnd_msg *first, const struct dnd_msg *msg,
 	}
 }
 
-static void
+/* Set or append to a list. A chunk making it too long is dropped. */
+static int
 dnd_set_string(char **s, const char *payload, int append)
 {
 	char	*new;
+	size_t	 size = 0;
 
 	if (payload == NULL)
 		payload = "";
+	if (append && *s != NULL)
+		size = strlen(*s);
+	if (size + strlen(payload) > DND_LIST_SIZE)
+		return (-1);
 	if (append && *s != NULL) {
 		xasprintf(&new, "%s%s", *s, payload);
 		free(*s);
 		*s = new;
-		return;
+		return (0);
 	}
 	free(*s);
 	*s = xstrdup(payload);
+	return (0);
+}
+
+/* Check a payload from a pane is safe to give to the terminal. */
+static int
+dnd_payload_safe(char type, const char *s)
+{
+	const u_char	*p;
+
+	if (s == NULL)
+		return (1);
+	for (p = s; *p != '\0'; p++) {
+		if (*p < 0x20 || *p == 0x7f)
+			return (0);
+		if (*p > 0x7e && type != 'E')
+			return (0);
+		if (p[0] == 0xc2 && p[1] >= 0x80 && p[1] <= 0x9f)
+			return (0);
+	}
+	return (type != 'E' || utf8_isvalid(s));
+}
+
+/*
+ * Format a message, splitting a long payload into chunks. Later chunks have
+ * only the m and i keys.
+ */
+static void
+dnd_output(const struct dnd_msg *msg, u_int id,
+    void (*cb)(const char *, void *), void *arg)
+{
+	struct dnd_msg	 part;
+	const char	*payload = msg->payload;
+	char		*s;
+	size_t		 left, size;
+
+	if (payload == NULL || strlen(payload) <= DND_CHUNK_SIZE) {
+		s = dnd_format(msg, id);
+		cb(s, arg);
+		free(s);
+		return;
+	}
+	part = *msg;
+	left = strlen(payload);
+	while (left != 0) {
+		size = left > DND_CHUNK_SIZE ? DND_CHUNK_SIZE : left;
+		part.flags |= DND_HAS_M;
+		if (size != left)
+			part.m = 1;
+		else
+			part.m = (msg->flags & DND_HAS_M) ? msg->m : 0;
+		part.payload = xstrndup(payload, size);
+		s = dnd_format(&part, id);
+		cb(s, arg);
+		free(s);
+		free((void *)part.payload);
+
+		payload += size;
+		left -= size;
+		memset(&part, 0, sizeof part);
+	}
 }
 
 static void
-dnd_send(struct tty *tty, const struct dnd_msg *msg)
+dnd_send_cb(const char *s, void *arg)
 {
-	char	*s;
-	int	 flags;
+	struct tty	*tty = arg;
+	int		 flags;
 
-	if (!tty_term_has(tty->term, TTYC_DND))
-		return;
-	s = dnd_format(msg, 0);
 	log_debug("%s: %s: %s", __func__, tty->client->name, s);
 
 	/* Dropping any part of a transfer would break it, so never block. */
@@ -271,7 +339,13 @@ dnd_send(struct tty *tty, const struct dnd_msg *msg)
 	tty->flags &= ~TTY_BLOCK;
 	tty_putcode_s(tty, TTYC_DND, s);
 	tty->flags |= flags;
-	free(s);
+}
+
+static void
+dnd_send(struct tty *tty, const struct dnd_msg *msg)
+{
+	if (tty_term_has(tty->term, TTYC_DND))
+		dnd_output(msg, 0, dnd_send_cb, tty);
 }
 
 static void
@@ -298,18 +372,21 @@ dnd_send_refuse(struct tty *tty, char type)
 }
 
 static void
-dnd_write(struct window_pane *wp, const struct dnd_msg *msg, u_int id)
+dnd_write_cb(const char *s, void *arg)
 {
-	char	*s;
+	struct window_pane	*wp = arg;
 
-	if (wp->event == NULL)
-		return;
-	s = dnd_format(msg, id);
 	log_debug("%s: %%%u: %s", __func__, wp->id, s);
 	bufferevent_write(wp->event, "\033]72;", 5);
 	bufferevent_write(wp->event, s, strlen(s));
 	bufferevent_write(wp->event, "\033\\", 2);
-	free(s);
+}
+
+static void
+dnd_write(struct window_pane *wp, const struct dnd_msg *msg, u_int id)
+{
+	if (wp->event != NULL)
+		dnd_output(msg, id, dnd_write_cb, wp);
 }
 
 static void
@@ -664,7 +741,8 @@ dnd_tty_input(struct tty *tty, const char *s)
 	if (continued) {
 		if (msg.type == 'm' || msg.type == 'M') {
 			if (msg.payload != NULL)
-				dnd_set_string(&dt->hover_mimes, msg.payload, 1);
+				dnd_set_string(&dt->hover_mimes, msg.payload,
+				    1);
 		}
 		if (dt->chunk_pane == -1)
 			return;
@@ -734,9 +812,13 @@ dnd_pane_drop(struct window_pane *wp, struct input_ctx *ictx,
 			return;
 		}
 		dp->accept_id = msg->id;
-		dnd_set_string(&dp->accept_mimes, msg->payload, continued);
-		if (msg->m == 0)
-			dnd_set_registered(dp, 1, dp->offer);
+		if (dnd_set_string(&dp->accept_pending, msg->payload,
+		    continued) != 0 || msg->m != 0)
+			return;
+		free(dp->accept_mimes);
+		dp->accept_mimes = dp->accept_pending;
+		dp->accept_pending = NULL;
+		dnd_set_registered(dp, 1, dp->offer);
 		return;
 	case 'A':
 		dnd_cancel(wp, NULL, 1, 0);
@@ -779,8 +861,9 @@ dnd_pane_drag(struct window_pane *wp, struct input_ctx *ictx,
 	if (msg->type == 'o' && msg->x == 1) {
 		if (msg->id != 0)
 			dp->offer_id = msg->id;
-		dnd_set_string(&dp->offer_machine, msg->payload, continued);
-		dnd_set_registered(dp, dp->accept, 1);
+		if (dnd_set_string(&dp->offer_machine, msg->payload,
+		    continued) == 0 && msg->m == 0)
+			dnd_set_registered(dp, dp->accept, 1);
 		return;
 	}
 	if (msg->type == 'o' && msg->x == 2) {
@@ -820,18 +903,26 @@ dnd_pane_input(struct window_pane *wp, struct input_ctx *ictx, const char *s)
 		return;
 	}
 	log_debug("%s: %%%u: %s", __func__, wp->id, s);
+
+	/* Queries may come between chunks and are not part of them. */
+	if (raw.type == 'q') {
+		if (dnd_supported(wp)) {
+			memset(&msg, 0, sizeof msg);
+			msg.type = 'q';
+			dnd_reply(ictx, &msg, raw.id);
+		}
+		return;
+	}
+
 	dp = dnd_get_pane(wp);
 	continued = dp->chunked;
 	dnd_chunk(&dp->chunked, &dp->first, &raw, &msg);
+	if (!dnd_payload_safe(msg.type, msg.payload)) {
+		log_debug("%s: %%%u: unsafe payload", __func__, wp->id);
+		return;
+	}
 
 	switch (msg.type) {
-	case 'q':
-		if (dnd_supported(wp)) {
-			memset(&raw, 0, sizeof raw);
-			raw.type = 'q';
-			dnd_reply(ictx, &raw, msg.id);
-		}
-		break;
 	case 'a':
 	case 'A':
 	case 'm':
@@ -849,6 +940,27 @@ dnd_pane_input(struct window_pane *wp, struct input_ctx *ictx, const char *s)
 	}
 }
 
+/* Stop a chunked transfer on reset, but keep the registration. */
+void
+dnd_pane_reset(struct window_pane *wp)
+{
+	struct dnd_pane	*dp = wp->dnd;
+
+	if (dp != NULL) {
+		dp->chunked = 0;
+		free(dp->accept_pending);
+		dp->accept_pending = NULL;
+	}
+}
+
+/* A pane changed window, so the clients' registrations may change. */
+void
+dnd_pane_moved(struct window_pane *wp)
+{
+	if (wp->dnd != NULL)
+		dnd_generation++;
+}
+
 /* Forget a pane's state, when it exits or is destroyed. */
 void
 dnd_pane_free(struct window_pane *wp)
@@ -860,6 +972,7 @@ dnd_pane_free(struct window_pane *wp)
 	dnd_cancel(wp, NULL, 1, 1);
 	dnd_set_registered(dp, 0, 0);
 	free(dp->accept_mimes);
+	free(dp->accept_pending);
 	free(dp->accept_machine);
 	free(dp->offer_machine);
 	free(dp);

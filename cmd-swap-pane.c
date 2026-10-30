@@ -149,9 +149,11 @@ cmd_swap_pane_exec(struct cmd *self, struct cmdq_item *item)
 	src_wp->layout_cell = dst_lc;
 
 	src_wp->window = dst_w;
+	dnd_pane_moved(src_wp);
 	options_set_parent(src_wp->options, dst_w->options);
 	src_wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
 	dst_wp->window = src_w;
+	dnd_pane_moved(dst_wp);
 	options_set_parent(dst_wp->options, src_w->options);
 	dst_wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
 

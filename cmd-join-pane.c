@@ -519,6 +519,7 @@ cmd_join_pane_exec(struct cmd *self, struct cmdq_item *item)
 	TAILQ_REMOVE(&src_w->z_index, src_wp, zentry);
 
 	src_wp->window = dst_w;
+	dnd_pane_moved(src_wp);
 	options_set_parent(src_wp->options, dst_w->options);
 	src_wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
 	if (flags & SPAWN_BEFORE) {
