@@ -174,6 +174,19 @@ with image_test(sys.argv[1]) as test:
     assert len(seen) >= 5 and second.uploads == 1, (seen, second.uploads)
 
 with image_test(sys.argv[1]) as test:
+    # Frames too large for one terminal write are not discarded.
+    client = test.attach(kitty_graphics=True)
+    terminal = KittyTerminal()
+    emit(test, animation(1, [red, green, blue], 100) + b'\033[H' +
+        kitty('a=p,i=1,C=1,c=40,r=15'), terminal)
+    seen = watch(test, client, terminal, 1.0, kitty_colour)
+    cycle(seen, [red, green, blue])
+    assert len(seen) >= 6 and terminal.frame_uploads == 2, (seen,
+        terminal.frame_uploads)
+    assert test.run('display-message', '-p', '#{client_discarded}') == \
+        '0'
+
+with image_test(sys.argv[1]) as test:
     # Placeholder cells play the animation through the virtual placement,
     # and relative placements of an animated parent play with it.
     client = test.attach(kitty_graphics=True)

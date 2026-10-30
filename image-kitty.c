@@ -684,7 +684,11 @@ kitty_send_frame(struct tty *tty, struct kitty_image_cache *entry,
 		memcpy(p + (h - 1) * stride, p + (h - 2) * stride, stride);
 	}
 
-	/* Encode and send the pixels in base64 chunks. */
+	/*
+	 * Encode and send the pixels in base64 chunks. The terminal must get
+	 * every frame recorded as sent, so the output may not be discarded.
+	 */
+	tty->flags |= TTY_NOBLOCK;
 	for (offset = 0; offset < total; offset += size) {
 		size = total - offset;
 		if (size > KITTY_CHUNK_SIZE)
