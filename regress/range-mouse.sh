@@ -258,8 +258,9 @@ wait_got 'copy-pane:' 'copy mode click off range'
 $TMUX send -t "$pane" -X line-numbers-on || fail 'line numbers'
 click 0 1 3
 wait_got 'copy-pane:' 'copy mode click on line number'
-# 42 lines need two digits, so the numbers take the minimum of four columns.
-click 0 5 3
+# 42 lines need two digits, so the numbers take the minimum of four columns:
+# column 9 is x 8 on the screen and x 4 in the line, which is inside a.
+click 0 9 3
 wait_got "copy:$a:2" 'copy mode click with line numbers'
 $TMUX send -t "$pane" -X line-numbers-off || fail 'line numbers off'
 $TMUX unbind -T copy-mode MouseDown1Range || fail unbind
