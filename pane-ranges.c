@@ -862,17 +862,50 @@ pane_ranges_tag(struct pane_ranges *prs, const struct pane_range_span *span,
 	return (n);
 }
 
-/* Tag the cells of a span in another grid holding copies of the pane cells. */
+/* Check that another grid holds the same cells as the pane for a span. */
+static int
+pane_ranges_copy_matches(struct grid *gd, struct grid *copy,
+    uint64_t collected, const struct pane_range_span *span)
+{
+	struct grid_cell	 gc1, gc2;
+	u_int			 y, cy, y0, y1, x, limit;
+
+	y0 = span->start_line - gd->scroll_collected;
+	y1 = span->end_line - gd->scroll_collected;
+	for (y = y0; y <= y1; y++) {
+		cy = y + gd->scroll_collected - collected;
+		limit = pane_range_limit(gd, y);
+		if (y != y1 && limit != pane_range_limit(copy, cy))
+			return (0);
+		for (x = (y == y0 ? span->start_x : 0); x < limit; x++) {
+			if (y == y1 && x > span->end_x)
+				break;
+			grid_get_cell(gd, x, y, &gc1);
+			grid_get_cell(copy, x, cy, &gc2);
+			if (!grid_cells_equal(&gc1, &gc2))
+				return (0);
+		}
+	}
+	return (1);
+}
+
+/*
+ * Tag the cells of a span in another grid holding copies of the pane cells, if
+ * it still holds the same text there.
+ */
 static void
 pane_ranges_tag_copy(struct pane_ranges *prs, struct grid *gd,
     uint64_t collected, const struct pane_range_span *span, u_int id)
 {
+	struct grid		*live = prs->wp->base.grid;
 	struct grid_line	*gl;
 	u_int			 y, y0, y1, x, limit, old, new = 0, last = 0;
 	int			 cached = 0;
 
 	if (span->start_line < collected ||
 	    span->end_line - collected >= gd->hsize + gd->sy)
+		return;
+	if (!pane_ranges_copy_matches(live, gd, collected, span))
 		return;
 	y0 = span->start_line - collected;
 	y1 = span->end_line - collected;

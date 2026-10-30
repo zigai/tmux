@@ -235,6 +235,17 @@ assert_line 1 "${E}[45mhe${E}[41mllo${E}[49m world" 'selection precedence'
 $TMUX send -t "$pane" -X cancel || fail cancel
 assert_line 1 "${E}[41mhello${E}[49m world" 'style after copy mode'
 
+# A range made after the text changed under copy mode is not drawn on the old
+# text copy mode still shows.
+fresh changed
+$TMUX copy-mode -t "$pane" || fail 'copy mode'
+output '\033[1;1HXXXXX'
+a=$(new -s 'bg=red' -r 0:0-0:4)
+$TMUX send -t "$pane" -X cursor-up || fail up
+assert_line 1 'hello world' 'range drawn on old text in copy mode'
+$TMUX send -t "$pane" -X cancel || fail cancel
+assert_line 1 "${E}[41mXXXXX${E}[49m world" 'style after copy mode'
+
 # Copy mode of another pane does not draw that pane's ranges and survives the
 # pane being killed.
 fresh source
