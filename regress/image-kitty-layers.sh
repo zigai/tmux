@@ -116,14 +116,19 @@ with image_test(sys.argv[1]) as test:
         test.emit(kitty('a=d,d=I,i=501'))
         terminal = check(test, client, terminal, rectangle(colour))
 
-    # Rejected layers cannot replace stored pixels or remove placements.
-    test.emit(b'\033[2J\033[H' + upload(600, red) + put(600))
+    # Layers order placements before source creation order.
+    test.emit(b'\033[2J\033[H' + upload(600, red) + upload(601, green) +
+        put(601, ',z=-1') + put(600))
     terminal = check(test, client, Terminal(), rectangle(red))
-    for action in ('t', 'T', 'p', 'q', 'd'):
-        test.emit(kitty('a=%s,i=600,p=9,f=32,s=1,v=1,C=1,d=I,z=1' %
-            action, bytes((*green, 255))))
-        terminal = check(test, client, terminal, rectangle(red))
-    test.emit(kitty('a=p,i=600,p=9,C=1,c=2,r=1,z=0'))
+    test.emit(b'\033[2J\033[H' + put(600, ',z=1') + put(601))
+    terminal = check(test, client, Terminal(), rectangle(red))
+    term = Terminal()
+    term.feed(fallback.data)
+    assert term.cells[0, 0][1:3] == (196, 196), term.cells[0, 0]
+    # Deleting a layer reveals the placement beneath it.
+    test.emit(kitty('a=d,d=z,z=1'))
+    terminal = check(test, client, terminal, rectangle(green))
+    test.emit(kitty('a=p,i=600,p=9,C=1,c=2,r=1,z=1'))
     terminal = check(test, client, terminal, rectangle(red))
 
     # Images at the default layer cover text and explicit backgrounds.

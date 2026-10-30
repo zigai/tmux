@@ -51,6 +51,7 @@ struct image {
 	struct image		*parent;
 	struct image_list	 children;
 	u_int			 order_id;
+	int32_t			 zindex;
 
 	/*
 	 * RGBA pixels use four bytes each. Stride is the number of bytes
@@ -132,6 +133,20 @@ void
 image_set_order_id(struct image *im, u_int id)
 {
 	im->order_id = id;
+}
+
+/* Get the z-index of an image. */
+int32_t
+image_get_zindex(struct image *im)
+{
+	return (im->zindex);
+}
+
+/* Set the z-index of an image. */
+void
+image_set_zindex(struct image *im, int32_t zindex)
+{
+	im->zindex = zindex;
 }
 
 /* Get the type of an image. */

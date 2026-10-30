@@ -386,12 +386,17 @@ image_placement_free(struct image_placement *plmt)
 	free(plmt);
 }
 
-/* Draw images in source order, then placement order. */
+/* Draw images in layer order, source order, then placement order. */
 static int
 image_compare_placements(struct image_placement *a, struct image_placement *b)
 {
 	u_int		aorder, border;
+	int32_t		az, bz;
 
+	az = image_get_zindex(a->image);
+	bz = image_get_zindex(b->image);
+	if (az != bz)
+		return (az < bz ? -1 : 1);
 	aorder = image_get_order_id(a->image);
 	border = image_get_order_id(b->image);
 	if (aorder != border)
@@ -558,26 +563,6 @@ image_grid_overwrite(struct grid *gd, u_int x, u_int y, u_int sx, u_int sy)
 	image_store_prune(gd->images);
 }
 
-/* Check whether a placement has any spans in the visible cells. */
-static int
-image_placement_visible(struct grid *gd, struct image_placement *plmt)
-{
-	struct image_line	*line;
-	struct image_span	*span;
-	u_int			 row;
-
-	for (row = gd->hsize; row < gd->hsize + gd->sy; row++) {
-		line = gd->linedata[row].images;
-		if (line == NULL)
-			continue;
-		TAILQ_FOREACH(span, &line->spans, line_entry) {
-			if (span->placement == plmt && span->x < gd->sx)
-				return (1);
-		}
-	}
-	return (0);
-}
-
 /* Remove a placement and all of its spans. */
 static void
 image_remove_placement(struct image_placement *plmt)
@@ -622,22 +607,42 @@ image_grid_clear(struct grid *gd, u_int id)
 	return (removed);
 }
 
-/* Remove whole placements of a type which have visible spans. */
+/* Remove whole placements of a type with spans in an area. */
 u_int
-image_grid_clear_visible(struct grid *gd, enum image_type type)
+image_grid_clear_area(struct grid *gd, enum image_type type, u_int x, u_int y,
+    u_int sx, u_int sy, int (*match)(struct image *, void *), void *arg)
 {
-	struct image_placement	*plmt, *plmt1;
+	struct image_line	*line;
+	struct image_span	*span;
+	struct image_placement	*plmt;
+	u_int			 rows = gd->hsize + gd->sy, row, end;
 	u_int			 removed = 0;
 
-	if (gd->images == NULL)
+	if (gd->images == NULL || sx == 0 || sy == 0 || y >= rows)
 		return (0);
-	TAILQ_FOREACH_SAFE(plmt, &gd->images->placements, entry, plmt1) {
-		if (image_get_type(plmt->image) != type)
+	if (sy > rows - y)
+		sy = rows - y;
+	end = x + sx;
+	if (end < x)
+		end = UINT_MAX;
+
+again:
+	for (row = y; row < y + sy; row++) {
+		line = gd->linedata[row].images;
+		if (line == NULL)
 			continue;
-		if (!image_placement_visible(gd, plmt))
-			continue;
-		image_remove_placement(plmt);
-		removed++;
+		TAILQ_FOREACH(span, &line->spans, line_entry) {
+			if (span->x >= end || span->x + span->sx <= x)
+				continue;
+			plmt = span->placement;
+			if (image_get_type(plmt->image) != type)
+				continue;
+			if (match != NULL && !match(plmt->image, arg))
+				continue;
+			image_remove_placement(plmt);
+			removed++;
+			goto again;
+		}
 	}
 	return (removed);
 }

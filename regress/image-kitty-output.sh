@@ -132,4 +132,21 @@ with image_test(sys.argv[1]) as test:
     term2.feed(other.data)
     term2.check(rectangle(green, x=5, y=8, w=19, h=40))
     assert term2.uploads > uploads[1]
+
+# Placement layers are sent to the terminal, which draws them in layer order.
+with image_test(sys.argv[1]) as test:
+    client = test.attach(kitty_graphics=True)
+    terminal = KittyTerminal()
+    test.emit(upload(1, red) + upload(2, green) + put(2, ',z=-1') + put(1))
+    terminal.feed(client.data)
+    terminal.check(rectangle(red))
+    layers = [fields.get(b'z', b'0') for fields in terminal.commands
+        if fields.get(b'a') == b'p']
+    assert sorted(layers) == [b'-1', b'0'], layers
+    test.emit(kitty('a=d,d=z,z=0'))
+    terminal.feed(client.data)
+    terminal.check(rectangle(green))
+    test.redraw()
+    terminal.feed(client.data)
+    terminal.check(rectangle(green))
 PY

@@ -59,12 +59,27 @@ cases = [
         ['second', 'other', 'anonymous', 'sixel']),
     ('selector resets', kitty('a=d,d=i,i=7') + kitty('a=d'), ['sixel']),
 ]
-for selector in 'cCpPqQrRxXyYzZ':
-    cases.append(('unsupported selector ' + selector,
-        kitty('a=d,d=%s,i=7,p=1,x=1,y=2,z=0' % selector), list(pictures)))
+# The cursor is in the second placement and x=1,y=2 is in the first.
+for selectors, retained in [
+        ('cC', ['first', 'other', 'anonymous', 'sixel']),
+        ('pPqQxX', ['second', 'other', 'anonymous', 'sixel']),
+        ('yYzZ', ['sixel'])]:
+    for selector in selectors:
+        cases.append(('selector ' + selector,
+            kitty('a=d,d=%s,i=7,p=1,x=1,y=2,z=0' % selector), retained))
+for selector in 'rR':
+    cases.append(('id range ' + selector, kitty('a=d,d=%s,x=7,y=8' % selector),
+        ['anonymous', 'sixel']))
+    cases.append(('empty id range ' + selector,
+        kitty('a=d,d=%s,x=1,y=2' % selector), list(pictures)))
 for z in (-2147483648, -1, 1, 2147483647):
-    cases.append(('unsupported layer ' + str(z),
-        kitty('a=d,d=I,i=7,p=1,z=%d' % z), list(pictures)))
+    cases.append(('other layer ' + str(z), kitty('a=d,d=Z,z=%d' % z),
+        list(pictures)))
+    cases.append(('other layer at cell ' + str(z),
+        kitty('a=d,d=Q,x=1,y=2,z=%d' % z), list(pictures)))
+for selector in 'fF':
+    cases.append(('unsupported selector ' + selector,
+        kitty('a=d,d=%s,i=7,p=1' % selector), list(pictures)))
 with image_test(sys.argv[1]) as test:
     test.run('set-option', '-g', 'scroll-on-clear', 'off')
     client = test.attach()

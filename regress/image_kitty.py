@@ -47,7 +47,6 @@ class KittyTerminal(Terminal):
         elif action == b'p':
             assert fields[b'q'] == b'2' and fields[b'C'] == b'1', fields
             assert placement and image in self.images, fields
-            assert int(fields.get(b'z', 0)) == 0, fields
             width, height, _ = self.images[image]
             x, y, w, h = [int(fields[key]) for key in (b'x', b'y', b'w', b'h')]
             assert 0 <= x < x + w <= width and 0 <= y < y + h <= height
@@ -74,9 +73,10 @@ class KittyTerminal(Terminal):
                     fields['dst_y'] -= n
 
     def render(self):
-        """Blend visible placements in terminal image ID order."""
+        """Blend visible placements in layer, then terminal image ID order."""
         pixels = {}
-        for key in sorted(self.placements):
+        for key in sorted(self.placements, key=lambda key:
+                (int(self.placements[key].get(b'z', 0)), key)):
             fields = self.placements[key]
             width, height, data = self.images[key[0]]
             sx, sy, w, h = [int(fields[k]) for k in (b'x', b'y', b'w', b'h')]

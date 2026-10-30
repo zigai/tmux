@@ -186,11 +186,56 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         for action in ['f', 'a', 'c']:
             check('unsupported-action-' + action,
                   graphics('a=%s,i=7' % action), graphics('i=7', 'ENOTSUP'))
-        for medium in ['f', 't', 's']:
-            check('unsupported-medium-' + medium,
-                  graphics('a=t,i=7,t=' + medium), graphics('i=7', 'ENOTSUP'))
-        check('unsupported-number', graphics('a=t,I=7,f=32,s=1,v=1', pixel),
-              graphics('I=7', 'ENOTSUP'))
+        check('unsupported-medium-s', graphics('a=t,i=7,t=s'),
+              graphics('i=7', 'ENOTSUP'))
+        check('invalid-medium', graphics('a=t,i=7,t=x', pixel), invalid)
+
+        # File transfers read the named file; temporary files are removed.
+        def path(name, data=b'\xff\0\0\xff'):
+            file = directory / name
+            file.write_bytes(data)
+            return base64.b64encode(str(file).encode()).decode()
+        bad = graphics('i=7', 'EBADF')
+        check('file', graphics(transmit + ',t=f', path('pixel')), ok)
+        check('file-place', graphics('a=T,i=7,f=32,s=1,v=1,C=1,t=f',
+              path('pixel')), ok)
+        check('file-range', graphics(transmit + ',t=f,O=2,S=4',
+              path('range', b'..\xff\0\0\xff..')), ok)
+        check('file-short-range', graphics(transmit + ',t=f,O=6,S=4',
+              path('short', b'..\xff\0\0\xff..')), bad)
+        check('file-missing', graphics(transmit + ',t=f',
+              base64.b64encode(str(directory / 'missing').encode()).decode()),
+              bad)
+        check('file-directory', graphics(transmit + ',t=f',
+              base64.b64encode(str(directory).encode()).decode()), bad)
+        check('file-no-path', graphics(transmit + ',t=f'), bad)
+        check('file-kept', graphics(transmit + ',t=f',
+              path('tty-graphics-protocol-file')), ok)
+        assert (directory / 'tty-graphics-protocol-file').exists()
+        check('temporary-unmarked', graphics(transmit + ',t=t',
+              path('pixel-temp')), ok)
+        assert (directory / 'pixel-temp').exists()
+        with tempfile.TemporaryDirectory(dir='/tmp') as temporary:
+            file = Path(temporary) / 'tty-graphics-protocol-temp'
+            file.write_bytes(b'\xff\0\0\xff')
+            name = base64.b64encode(str(file).encode()).decode()
+            check('temporary-marked', graphics(transmit + ',t=t', name), ok)
+            assert not file.exists(), 'temporary file was not removed'
+
+        # Image numbers are given a free image ID, then select the newest.
+        check('number', graphics('a=t,I=7,f=32,s=1,v=1', pixel),
+              graphics('i=1,I=7', 'OK'))
+        check('number-place', graphics('a=t,I=7,f=32,s=1,v=1,q=2', pixel) +
+              graphics('a=p,I=7,C=1'), graphics('i=1,I=7', 'OK'))
+        check('number-newest', graphics(transmit + ',q=2', pixel) +
+              graphics('a=t,I=3,f=32,s=1,v=1,q=2', pixel) +
+              graphics('a=t,I=3,f=32,s=1,v=1,q=2', pixel) +
+              graphics('a=p,I=3,C=1'), graphics('i=9,I=3', 'OK'))
+        check('number-missing', graphics('a=p,I=7,C=1'),
+              graphics('I=7', 'ENOENT'))
+        check('number-delete', graphics('a=t,I=7,f=32,s=1,v=1,q=2', pixel) +
+              graphics('a=p,I=7,q=2,C=1') + graphics('a=d,d=N,I=7') +
+              graphics('a=p,I=7,C=1'), graphics('I=7', 'ENOENT'))
         check('id-and-number', graphics('a=t,i=7,I=8,f=32,s=1,v=1', pixel),
               graphics('i=7,I=8', 'EINVAL'))
         check('unknown-extension', graphics(transmit + ',k=9', pixel), ok)
@@ -201,35 +246,29 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
               graphics('a=t,i=4294967295,p=4294967295,f=32,s=1,v=1', pixel),
               graphics('i=4294967295,p=4294967295', 'OK'))
         unsupported = graphics('i=7', 'ENOTSUP')
-        check('default-layer', graphics(transmit + ',z=0', pixel), ok)
-        for z in [-2147483648, -1073741824, -1, 1, 2147483647]:
-            check('unsupported-layer-' + str(z),
-                  graphics(transmit + ',z=' + str(z), pixel), unsupported)
-        for action in ['t', 'T', 'p', 'q', 'd']:
-            check('unsupported-action-layer-' + action,
+        named = graphics('i=7,p=9', 'OK')
+        for z in [-2147483648, -1073741824, -1, 0, 1, 2147483647]:
+            check('layer-' + str(z),
+                  graphics(transmit + ',z=' + str(z), pixel), ok)
+        for action, reply, cursor in [('t', named, '5,2'),
+                                      ('T', named, '6,2'),
+                                      ('p', graphics('i=7,p=9', 'ENOENT'),
+                                       '5,2'),
+                                      ('q', named, '5,2'),
+                                      ('d', '', '5,2')]:
+            check('action-layer-' + action,
                   graphics('a=%s,i=7,p=9,f=32,s=1,v=1,z=-1' % action,
-                           pixel), graphics('i=7,p=9', 'ENOTSUP'))
-        for quiet in [1, 2]:
-            check('unsupported-layer-quiet-' + str(quiet),
-                  graphics(transmit + ',q=%d,z=1' % quiet, pixel),
-                  unsupported if quiet == 1 else '')
-        check('zero-layer-chunks', graphics(transmit + ',z=0,m=1', '/wAA') +
-              graphics('m=0,z=0', '/w=='), ok)
-        check('unsupported-layer-aborts-chunks',
-              graphics(transmit + ',m=1', '/wAA') +
-              graphics('m=0,z=1', '/w==') + graphics(transmit, pixel),
-              unsupported + ok)
-        check('unsupported-layer-does-not-start-chunks',
-              graphics(transmit + ',m=1,z=1', '/wAA') +
-              graphics('m=0', '/w==') + graphics(transmit, pixel),
-              unsupported + ok)
+                           pixel), reply, cursor=cursor)
+        check('layer-chunks', graphics(transmit + ',z=-1,m=1', '/wAA') +
+              graphics('m=0', '/w==') + graphics('a=p,i=7,C=1,z=1'),
+              ok + ok)
         # Reply controls must be read even after an unsupported field.
-        check('quiet-after-layer',
-              graphics(transmit + ',z=1,q=2', pixel), '')
-        check('id-after-layer',
-              graphics('a=q,z=1,i=7,f=32,s=1,v=1', pixel), unsupported)
-        check('placement-after-layer',
-              graphics('z=-1,a=q,i=7,p=9,q=1', pixel),
+        check('quiet-after-unsupported',
+              graphics(transmit + ',U=1,q=2', pixel), '')
+        check('id-after-unsupported',
+              graphics('a=q,U=1,i=7,f=32,s=1,v=1', pixel), unsupported)
+        check('placement-after-unsupported',
+              graphics('U=1,a=q,i=7,p=9,q=1', pixel),
               graphics('i=7,p=9', 'ENOTSUP'))
         check('quiet-after-invalid-control',
               graphics('a=t,i=7,s=bad,q=2', pixel), '')
@@ -245,7 +284,7 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
               graphics('s=bad,z=1,a=q,i=7,p=9', pixel),
               graphics('i=7,p=9', 'EINVAL'))
         check('first-error-unsupported',
-              graphics('z=1,s=bad,a=q,i=7,p=9', pixel),
+              graphics('U=1,s=bad,a=q,i=7,p=9', pixel),
               graphics('i=7,p=9', 'ENOTSUP'))
         for control in ['U=1', 'P=99', 'Q=9', 'H=1', 'H=-1', 'V=1', 'V=-1']:
             check('unsupported-placement-' + control,
@@ -326,41 +365,51 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
               graphics('i=7', 'ENOTSUP'))
         check('malformed-delete', stored + graphics('a=d,i=7,d=ii'), invalid)
 
-        # Unsupported selectors leave uploaded data and placements intact.
+        # Position, layer and range selectors remove the placement at the
+        # cursor; uppercase selectors also free the unplaced upload.
         for selector in 'cCpPqQrRxXyYzZ':
             control = 'a=d,d=%s,i=7,x=6,y=3,z=0' % selector
-            check('unsupported-delete-' + selector, stored + first +
+            if selector in 'rR':
+                control = 'a=d,d=%s,x=1,y=9' % selector
+            check('delete-selector-' + selector, stored + first +
                   graphics(control) + graphics('a=p,i=7,C=1'),
-                  unsupported + ok)
+                  missing if selector.isupper() else ok)
+        for selector, control in [('P', 'x=7,y=3'), ('P', 'x=6,y=4'),
+                                  ('Q', 'x=6,y=3,z=1'), ('X', 'x=7'),
+                                  ('Y', 'y=4'), ('Z', 'z=-1'),
+                                  ('R', 'x=8,y=9')]:
+            check('delete-selector-miss-' + selector + '-' + control,
+                  stored + first + graphics('a=d,d=%s,%s' %
+                  (selector, control)) + graphics('a=p,i=7,C=1'), ok)
         for quiet in [1, 2]:
             check('unsupported-delete-quiet-' + str(quiet), stored + first +
-                  graphics('a=d,d=P,i=7,q=%d,x=6,y=3' % quiet) +
+                  graphics('a=d,d=F,i=7,q=%d' % quiet) +
                   graphics('a=p,i=7,C=1'),
                   (unsupported if quiet == 1 else '') + ok)
         check('unsupported-delete-named', stored + first +
-              graphics('a=d,d=Z,i=7,p=1') + graphics('a=p,i=7,C=1'),
+              graphics('a=d,d=F,i=7,p=1') + graphics('a=p,i=7,C=1'),
               graphics('i=7,p=1', 'ENOTSUP') + ok)
         check('unsupported-delete-aborts-upload', stored +
               graphics(transmit + ',q=2,m=1', '/wAA') +
-              graphics('a=d,d=P,i=7') + graphics('a=p,i=7,C=1'),
+              graphics('a=d,d=F,i=7') + graphics('a=p,i=7,C=1'),
               unsupported + ok)
         check('unsupported-delete-does-not-inherit-id', stored +
-              graphics(transmit + ',m=1', '/wAA') + graphics('a=d,d=P') +
+              graphics(transmit + ',m=1', '/wAA') + graphics('a=d,d=F') +
               graphics('a=p,i=7,C=1'), ok)
-        check('unsupported-layer-delete-aborts-upload', stored +
+        check('layer-delete-aborts-upload', stored +
               graphics(transmit + ',q=2,m=1', '/wAA') +
               graphics('a=d,d=I,i=7,z=1') + graphics('a=p,i=7,C=1'),
-              unsupported + ok)
-        check('unsupported-layer-delete-does-not-inherit-id', stored +
+              missing)
+        check('layer-delete-does-not-inherit-id', stored +
               graphics(transmit + ',m=1', '/wAA') +
               graphics('a=d,d=I,z=-1') + graphics('a=p,i=7,C=1'), ok)
-        for action in ['t', 'T', 'q']:
-            check('unsupported-layer-keeps-source-' + action, stored +
+        for action, cursor in [('t', '5,2'), ('T', '6,2'), ('q', '5,2')]:
+            check('layer-keeps-source-' + action, stored +
                   graphics('a=%s,i=7,f=32,s=1,v=1,z=1' % action, pixel) +
-                  graphics('a=p,i=7,C=1'), unsupported + ok)
-        check('unsupported-layer-query-does-not-store',
+                  graphics('a=p,i=7,C=1'), ok + ok, cursor=cursor)
+        check('layer-query-does-not-store',
               graphics('a=q,i=7,f=32,s=1,v=1,z=1', pixel) +
-              graphics('a=p,i=7,C=1'), unsupported + missing)
+              graphics('a=p,i=7,C=1'), ok + missing)
 
         # Abort immediately when chunked data exceeds the limit, then recover.
         block = base64.b64encode(b'\0' * 4096).decode()
