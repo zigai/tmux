@@ -398,6 +398,17 @@ static const struct tty_feature tty_feature_progressbar = {
 	0
 };
 
+/* Terminal supports the Kitty drag and drop protocol. */
+static const char *const tty_feature_dnd_capabilities[] = {
+	"Dnd=\\E]72;%p1%s\\E\\\\",
+	NULL
+};
+static const struct tty_feature tty_feature_dnd = {
+	"dnd",
+	tty_feature_dnd_capabilities,
+	0
+};
+
 /* Terminal supports UTF-8. */
 static const struct tty_feature tty_feature_utf8 = {
 	"utf8",
@@ -414,6 +425,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_clipboard,
 	&tty_feature_hyperlinks,
 	&tty_feature_cstyle,
+	&tty_feature_dnd,
 	&tty_feature_extkeys,
 	&tty_feature_focus,
 	&tty_feature_ignorefkeys,
@@ -683,6 +695,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
 			      "ccolour,"
 			      "cstyle,"
+			      "dnd,"
 			      "extkeys,"
 			      "focus,"
 			      "hyperlinks,"

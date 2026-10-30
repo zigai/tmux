@@ -51,6 +51,8 @@ struct cmdq_list;
 struct cmdq_state;
 struct cmds;
 struct control_state;
+struct dnd_pane;
+struct dnd_tty;
 struct environ;
 struct event_payload;
 struct event_payload_item;
@@ -457,6 +459,7 @@ enum {
 
 	/* Terminal replies, handled in tty-keys.c and never fired. */
 	KEYC_REPORT_CLIPBOARD,
+	KEYC_REPORT_DND,
 	KEYC_REPORT_SYNC,
 	KEYC_REPORT_KITTY_GRAPHICS,
 	KEYC_REPORT_DA,
@@ -518,6 +521,7 @@ enum tty_code_code {
 	TTYC_DIM,
 	TTYC_DL,
 	TTYC_DL1,
+	TTYC_DND,
 	TTYC_DSBP,
 	TTYC_DSEKS,
 	TTYC_DSESC,
@@ -1431,6 +1435,7 @@ struct window_pane {
 	struct event	 sync_timer;
 
 	struct input_ctx *ictx;
+	struct dnd_pane	*dnd;
 
 	struct grid_cell cached_gc;
 	struct grid_cell cached_active_gc;
@@ -1925,6 +1930,8 @@ struct tty {
 	struct window	*scroll_window;
 	uint64_t	 scroll_generation;
 	int		 scroll_failed;
+
+	struct dnd_tty	*dnd;
 
 #ifdef ENABLE_IMAGES
 	struct image_backend	*image_backend;
@@ -3522,6 +3529,15 @@ void	 default_window_size(struct client *, struct session *, struct window *,
 void	 recalculate_size(struct window *, int);
 void	 recalculate_sizes(void);
 void	 recalculate_sizes_now(int);
+
+/* dnd.c */
+void	 dnd_tty_input(struct tty *, const char *);
+void	 dnd_pane_input(struct window_pane *, struct input_ctx *,
+	     const char *);
+void	 dnd_pane_free(struct window_pane *);
+void	 dnd_tty_update(struct client *);
+void	 dnd_tty_stop(struct tty *);
+void	 dnd_tty_free(struct tty *);
 
 /* input.c */
 #define INPUT_BUF_DEFAULT_SIZE 1048576

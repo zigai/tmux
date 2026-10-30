@@ -541,6 +541,7 @@ tty_stop_tty(struct tty *tty)
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSESC));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSFCS));
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSEKS));
+	dnd_tty_stop(tty);
 
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 1);
@@ -586,6 +587,7 @@ void
 tty_free(struct tty *tty)
 {
 	tty_close(tty);
+	dnd_tty_free(tty);
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 0);
 #endif

@@ -2773,6 +2773,10 @@ input_exit_osc(struct input_ctx *ictx)
 	case 52:
 		input_osc_52(ictx, p);
 		break;
+	case 72:
+		if (wp != NULL)
+			dnd_pane_input(wp, ictx, p);
+		break;
 	case 104:
 		input_osc_104(ictx, p);
 		break;

@@ -2382,6 +2382,7 @@ server_client_reset_state(struct client *c)
 	/* Set the terminal mode and reset attributes. */
 	tty_update_mode(tty, mode, s);
 	tty_reset(tty);
+	dnd_tty_update(c);
 
 	/* All writing must be done, send a sync end (if it was started). */
 	tty_sync_end(tty);

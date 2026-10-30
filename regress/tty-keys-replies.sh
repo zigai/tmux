@@ -49,7 +49,7 @@ def matches(name, value):
         required = {
             "256", "RGB", "bpaste", "clipboard", "mouse",
             "strikethrough", "title", "ccolour", "cstyle", "extkeys",
-            "focus", "hyperlinks", "osc7", "usstyle", "kittygraphics"}
+            "focus", "hyperlinks", "osc7", "usstyle", "kittygraphics", "dnd"}
         if name == "XDA-kitty":
             required.add("sync")
         elif "sync" in features:
