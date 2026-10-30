@@ -2794,6 +2794,48 @@ test_cursor_right_edge(void)
 	return (0);
 }
 
+/*
+ * Moving the cursor after a placement scrolls a scroll region only at its
+ * bottom, and only an image wholly inside the region moves with it.
+ */
+static int
+test_cursor_scroll_region(void)
+{
+	struct screen	*s;
+
+	test_pane_new();
+	s = &test_wp->base;
+	test_input("\033[5;10r");
+	test_cursor(0, 8);
+	test_graphics("a=T,i=1,q=2,f=32,s=1,v=1,c=2,r=3", TEST_PIXEL);
+	TEST_ASSERT("scroll_region: stops at bottom", s->cx == 2 && s->cy == 9);
+	TEST_ASSERT("scroll_region: crossing image stays",
+	    test_placed_at(0, 8) && test_placed_at(0, 10));
+
+	test_input("\033[2J");
+	test_cursor(0, 8);
+	test_graphics("a=T,i=2,q=2,f=32,s=1,v=1,c=80,r=2", TEST_PIXEL);
+	TEST_ASSERT("scroll_region: wrap scrolls", s->cx == 0 && s->cy == 9);
+	TEST_ASSERT("scroll_region: inside image moves",
+	    test_placed_at(0, 7) && test_placed_at(0, 8) &&
+	    !test_placed_at(0, 9));
+
+	test_input("\033[2J");
+	test_cursor(0, 23);
+	test_graphics("a=T,i=3,q=2,f=32,s=1,v=1,c=2,r=3", TEST_PIXEL);
+	TEST_ASSERT("scroll_region: below region",
+	    s->cx == 2 && s->cy == 23 && test_placed_at(0, 23));
+
+	test_input("\033[2J");
+	test_cursor(0, 2);
+	test_graphics("a=T,i=4,q=2,f=32,s=1,v=1,c=2,r=10", TEST_PIXEL);
+	TEST_ASSERT("scroll_region: above region",
+	    s->cx == 2 && s->cy == 9 && test_placed_at(0, 2) &&
+	    test_placed_at(0, 11));
+	TEST_PASS("scroll_region");
+	return (0);
+}
+
 /* Scaling to columns rounds the height before finding the rows. */
 static int
 test_scaled_rows_rounded(void)
@@ -3066,6 +3108,7 @@ main(void)
 		test_alternate_screen_images,
 		test_reset_frees_images,
 		test_cursor_right_edge,
+		test_cursor_scroll_region,
 		test_scaled_rows_rounded,
 		test_file_path_rules,
 	};
