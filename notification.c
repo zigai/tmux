@@ -113,7 +113,6 @@ TAILQ_HEAD(notification_queries, notification_query);
 
 struct notifications {
 	struct notification		*pending;
-	u_int				 next;
 
 	struct notification_entries	 entries;
 	u_int				 nentries;
@@ -123,6 +122,9 @@ struct notifications {
 
 	struct notification_queries	 queries;
 };
+
+/* Numbers for notifications without an identifier, never reused. */
+static u_int	notification_next;
 
 static struct notifications *
 notification_get(struct window_pane *wp)
@@ -636,7 +638,7 @@ notification_send(struct window_pane *wp, struct notification *n)
 		if (n->id != NULL)
 			ne->id = xstrdup(n->id);
 		else
-			ne->number = ns->next++;
+			ne->number = notification_next++;
 		ns->nentries++;
 	} else
 		TAILQ_REMOVE(&ns->entries, ne, entry);

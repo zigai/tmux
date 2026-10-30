@@ -55,7 +55,7 @@ has()
 
 read_file()
 {
-	cat "$DIR/$1"
+	cat "$DIR/$1" 2>/dev/null
 }
 
 # Check what a pane has read, waiting for it to arrive and then for anything
@@ -152,6 +152,17 @@ ids="$(oid $A ik2),$(oid $B ix),$(oid $A n9),tmux-1-0-iy,$(oid $A iu)"
 reply c1 "\033]99;i=$(oid $A ilive):p=alive;$ids\033\\\\"
 reply c2 "\033]99;i=$(oid $A ilive):p=alive;$ids\033\\\\"
 check live '^[]99;i=live:p=alive;k2,u^[\' "alive"
+
+# Replies for a process replaced by respawn-pane are not given to the new one.
+listen "$B" '\033]99;i=old:a=report,-focus;Old\033\\' old
+wait_until has c1 "i=$(oid $B iold):a=-focus,report" ||
+    fail "notification not sent"
+listen "$B" '\033]99;i=n2:a=report,-focus;New\033\\' new
+wait_until has c1 "i=$(oid $B in2):a=-focus,report" ||
+    fail "notification not sent"
+reply c1 "\033]99;i=$(oid $B iold);\033\\\\"
+reply c1 "\033]99;i=$(oid $B in2);\033\\\\"
+check new '^[]99;i=n2;^[\' "reply after respawn"
 
 # Replies for other servers or unknown notifications are ignored.
 listen "$A" '\033]99;i=z:a=report,-focus;Z\033\\' z

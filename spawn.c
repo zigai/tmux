@@ -333,6 +333,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 			input_free(sc->wp0->ictx);
 			sc->wp0->ictx = NULL;
 		}
+		notification_free(sc->wp0);
 
 		/*
 		 * The old buffer is gone and the new one starts empty, so
