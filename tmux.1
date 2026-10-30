@@ -5150,6 +5150,20 @@ is the same as
 .Cm request
 but also creates a paste buffer.
 .Pp
+This also applies to the Kitty clipboard protocol (OSC 5522), except that
+.Cm off
+refuses the request and
+.Cm request
+or
+.Cm both
+only request the clipboard from a client with the
+.Ic kittyclipboard
+feature, otherwise the newest paste buffer is used.
+Paste events (mode 5522) are passed to applications only with
+.Cm request
+or
+.Cm both .
+.Pp
 See also the
 .Ic set\-clipboard
 option.
@@ -5202,6 +5216,13 @@ If
 .Nm
 will neither accept the clipboard escape sequence nor attempt to set the
 clipboard.
+.Pp
+Applications may set the clipboard with the Kitty clipboard protocol (OSC 5522)
+only if this is
+.Cm on .
+The data is sent to clients with the
+.Ic kittyclipboard
+feature and the text to other clients.
 .Pp
 Note that this feature needs to be enabled in
 .Xr xterm 1
@@ -6759,7 +6780,7 @@ Run when a pane is resized.
 .It pane\-set\-clipboard
 Run when the terminal clipboard is set using the
 .Xr xterm 1
-escape sequence.
+escape sequence or the Kitty clipboard protocol.
 .It pane\-shell\-prompt
 Run when an OSC 133 shell prompt starts in a pane.
 .It pane\-title\-changed
