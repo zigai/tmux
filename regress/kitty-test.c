@@ -2743,6 +2743,40 @@ test_frame_memory_limit(void)
 	return (0);
 }
 
+/* Frames make room by removing unused images first, and free their memory. */
+static int
+test_frame_eviction(void)
+{
+	const char	*reply;
+
+	test_pane_new();
+	options_set_number(global_options, "image-total-size-limit", 64);
+	test_store_2x2(170, test_red);
+	test_place(0, 0, "i=170");
+	test_store_2x2(171, test_red);
+	test_store_2x2(172, test_red);
+	test_graphics("a=f,q=2,i=172,f=32,s=1,v=1", TEST_GREEN);
+	reply = test_graphics("a=f,i=172,f=32,s=1,v=1", TEST_GREEN);
+	TEST_ASSERT("frame_eviction: unused image removed first",
+	    test_replied(reply, "i=172,r=3;OK") && test_map(171) == NULL &&
+	    test_map(170) != NULL && test_placed_at(0, 0));
+
+	/* An unused animation is removed as a whole, with its frames. */
+	test_graphics("a=d,d=A", NULL);
+	test_store_2x2(173, test_red);
+	reply = test_graphics("a=t,i=174,f=32,s=2,v=2",
+	    test_fill(2, 2, test_red));
+	TEST_ASSERT("frame_eviction: animation removed",
+	    test_replied(reply, "i=174;OK") && test_map(172) == NULL &&
+	    test_map(173) != NULL);
+	test_store_2x2(175, test_red);
+	TEST_ASSERT("frame_eviction: frame memory released",
+	    test_map(173) != NULL && test_map(174) != NULL &&
+	    test_map(175) != NULL);
+	TEST_PASS("frame_eviction");
+	return (0);
+}
+
 /* Chunked frames use the controls of the first chunk. */
 static int
 test_frame_chunked(void)
@@ -3496,6 +3530,7 @@ main(void)
 		test_frame_compose,
 		test_frame_delete,
 		test_frame_memory_limit,
+		test_frame_eviction,
 		test_frame_chunked,
 		test_unknown_actions_rejected,
 		test_image_id_number_conflict,
