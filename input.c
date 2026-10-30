@@ -95,6 +95,9 @@ struct input_saved_colours {
 };
 #define INPUT_COLOUR_STACK_SIZE 10
 
+/* Most keys in one OSC 21, each colour set and queried once. */
+#define INPUT_COLOURS_MAX_KEYS (2 * (256 + 3 + SCREEN_COLOURS))
+
 /* Input parser cell. */
 struct input_cell {
 	struct grid_cell	cell;
@@ -3408,15 +3411,24 @@ static void
 input_send_colours_reply(struct input_ctx *ictx,
     struct input_colours_reply *icr, int add, enum input_end_type end_type)
 {
-	char	*reply, *tmp;
+	char	*reply, *cp;
+	size_t	 size, len;
 	u_int	 i;
 
-	reply = xstrdup("\033]21");
+	size = sizeof "\033]21";
+	for (i = 0; i < icr->n; i++)
+		size += 1 + strlen(icr->items[i].text);
+	cp = reply = xmalloc(size);
+	memcpy(cp, "\033]21", 4);
+	cp += 4;
 	for (i = 0; i < icr->n; i++) {
-		tmp = reply;
-		xasprintf(&reply, "%s;%s", tmp, icr->items[i].text);
-		free(tmp);
+		len = strlen(icr->items[i].text);
+		*cp++ = ';';
+		memcpy(cp, icr->items[i].text, len);
+		cp += len;
 	}
+	*cp = '\0';
+
 	if (end_type == INPUT_END_BEL)
 		input_reply(ictx, add, "%s\007", reply);
 	else
@@ -3425,9 +3437,9 @@ input_send_colours_reply(struct input_ctx *ictx,
 }
 
 /*
- * Fill in the next palette colour an OSC 21 reply is waiting for. Returns -1
- * if the reply is not waiting for this colour, 0 if it is waiting for more and
- * 1 if it is complete.
+ * Fill in a palette colour an OSC 21 reply is waiting for. Returns -1 if the
+ * reply is not waiting for this colour, 0 if it is waiting for more and 1 if
+ * it is complete.
  */
 static int
 input_fill_colours_reply(struct input_colours_reply *icr,
@@ -3436,25 +3448,25 @@ input_fill_colours_reply(struct input_colours_reply *icr,
 	struct input_colours_item	*item;
 	char				 tmp[32];
 	u_int				 i;
-
-	for (i = 0; i < icr->n; i++) {
-		if (icr->items[i].idx != -1)
-			break;
-	}
-	if (i == icr->n || icr->items[i].idx != pd->idx)
-		return (-1);
-	item = &icr->items[i];
+	int				 found = 0, pending = 0;
 
 	input_format_colour(pd->c, tmp, sizeof tmp);
-	free(item->text);
-	xasprintf(&item->text, "%d=%s", item->idx, tmp);
-	item->idx = -1;
-
-	for (i++; i < icr->n; i++) {
-		if (icr->items[i].idx != -1)
-			return (0);
+	for (i = 0; i < icr->n; i++) {
+		item = &icr->items[i];
+		if (item->idx == -1)
+			continue;
+		if (item->idx != pd->idx) {
+			pending = 1;
+			continue;
+		}
+		free(item->text);
+		xasprintf(&item->text, "%d=%s", item->idx, tmp);
+		item->idx = -1;
+		found = 1;
 	}
-	return (1);
+	if (!found)
+		return (-1);
+	return (pending ? 0 : 1);
 }
 
 /* Parse a colour for OSC 21. An empty value is the default colour, -1. */
@@ -3515,6 +3527,16 @@ input_osc_21(struct input_ctx *ictx, const char *p)
 	const char			*errstr;
 	size_t				 len;
 	int				 c, idx, query, redraw = 0, pending = 0;
+	u_int				 keys = 1;
+
+	for (len = 0; p[len] != '\0'; len++) {
+		if (p[len] == ';')
+			keys++;
+	}
+	if (keys > INPUT_COLOURS_MAX_KEYS) {
+		log_debug("%s: too many keys (%u)", __func__, keys);
+		return;
+	}
 
 	icr = xcalloc(1, sizeof *icr);
 	copy = next = xstrdup(p);
@@ -4169,7 +4191,7 @@ input_add_request(struct input_ctx *ictx, enum input_request_type type, int idx,
 	struct input_request		*ir;
 	struct input_colours_reply	*icr = data;
 	char				 s[64];
-	u_int				 i;
+	u_int				 i, j;
 
 	if (wp == NULL)
 		return (-1);
@@ -4208,6 +4230,12 @@ input_add_request(struct input_ctx *ictx, enum input_request_type type, int idx,
 	case INPUT_REQUEST_COLOURS:
 		for (i = 0; i < icr->n; i++) {
 			if (icr->items[i].idx == -1)
+				continue;
+			for (j = 0; j < i; j++) {
+				if (icr->items[j].idx == icr->items[i].idx)
+					break;
+			}
+			if (j != i)
 				continue;
 			xsnprintf(s, sizeof s, "\033]4;%d;?\033\\",
 			    icr->items[i].idx);
@@ -4264,11 +4292,11 @@ input_request_reply(struct client *c, enum input_request_type type, void *data)
 	int					 complete = 0;
 
 	TAILQ_FOREACH_SAFE(ir, &c->input_requests, centry, ir1) {
-		if (type == INPUT_REQUEST_PALETTE &&
-		    ir->type == INPUT_REQUEST_COLOURS) {
+		if (ir->type == INPUT_REQUEST_COLOURS) {
+			if (type != INPUT_REQUEST_PALETTE)
+				continue;
 			switch (input_fill_colours_reply(ir->data, pd)) {
 			case -1:
-				input_free_request(ir);
 				continue;
 			case 0:
 				return;
@@ -4301,17 +4329,17 @@ input_request_reply(struct client *c, enum input_request_type type, void *data)
 			break;
 		if (ir->type == INPUT_REQUEST_QUEUE)
 			input_send_reply(ir->ictx, ir->data);
-		else if (ir == found) {
+		else if (ir->type == INPUT_REQUEST_COLOURS) {
+			input_send_colours_reply(ir->ictx, ir->data, 0,
+			    ir->end);
+		} else if (ir == found) {
 			if (ir->type == INPUT_REQUEST_PALETTE)
 				input_request_palette_reply(ir, data);
 			else if (ir->type == INPUT_REQUEST_CLIPBOARD)
 				input_request_clipboard_reply(ir, data);
-			else if (ir->type == INPUT_REQUEST_COLOURS) {
-				input_send_colours_reply(ir->ictx, ir->data, 0,
-				    ir->end);
-			}
-			complete = 1;
 		}
+		if (ir == found)
+			complete = 1;
 		input_free_request(ir);
 	}
 }

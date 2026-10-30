@@ -63,4 +63,24 @@ query reset 0 \
     '\033]21;foreground=;background;cursor=;5;selection_background=;transparent_background_color2\033\\\033]21;foreground=?;background=?;cursor=?;5=?;selection_background=?;transparent_background_color2=?\033\\' \
     '^[]21;foreground=;background=;cursor=;5=;selection_background=;transparent_background_color2=^[\'
 
+query ris 0 \
+    '\033]21;5=red;selection_background=red\033\\\033c\033]21;5=?;selection_background=?\033\\' \
+    '^[]21;5=;selection_background=^[\'
+
+$TMUX respawn-pane -k -t osc21:0.0 \
+    "printf '\033]21;5=red;selection_background=red\033\\\\'" || exit 1
+wait_for_output 1 $TMUX display -p -t osc21:0.0 '#{pane_dead}' || exit 1
+$TMUX send-keys -R -t osc21:0.0 || exit 1
+query send-keys-reset 0 '\033]21;5=?;selection_background=?\033\\' \
+    '^[]21;5=;selection_background=^[\'
+
+# A sequence with too many keys is ignored.
+seq=
+i=0
+while [ $i -lt 600 ]; do
+	seq="$seq;a"
+	i=$((i + 1))
+done
+query too-many 0 "\\033]21$seq;foreground=?\\033\\\\" ''
+
 exit $exit_status

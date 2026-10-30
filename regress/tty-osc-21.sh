@@ -85,14 +85,33 @@ $INNER respawn-pane -k -t inner:0.0 "printf '\033]21;selection_background=;trans
 expect '\033]21;selection_background=;transparent_background_color2\033\\' \
     "reset in active pane"
 
-$INNER respawn-pane -k -t inner:0.0 \
-    "stty raw -echo min 0 time 10; printf '\033]21;200=?;201=?;foreground=?;background=?\033\\\\'; dd bs=1 count=1024 2>/dev/null | cat -v >$DIR/reply" ||
+query()
+{
+	$INNER respawn-pane -k -t inner:0.0 \
+	    "stty raw -echo min 0 time 10; printf '$2'; dd bs=1 count=1024 2>/dev/null | cat -v >$DIR/reply" ||
+	    exit 1
+	wait_for_output 1 $INNER display -p -t inner:0.0 '#{pane_dead}' ||
+	    fail "$1: reply reader did not exit"
+	[ "$(cat "$DIR/reply")" = "$3" ] ||
+	    fail "$1: $(cat "$DIR/reply")"
+}
+
+# Palette 200 is answered by the outer terminal, 201 is not.
+query "palette from outer terminal" \
+    '\033]21;200=?;201=?;foreground=?;background=?\033\\' \
+    '^[]21;200=rgb:c8/40/a0;201=;foreground=rgb:ee/ee/ee;background=rgb:11/11/11^[\'
+query "palette answer out of order" \
+    '\033]21;201=?;200=?;foreground=?\033\\' \
+    '^[]21;201=;200=rgb:c8/40/a0;foreground=rgb:ee/ee/ee^[\'
+
+# An OSC 21 reply from the outer terminal is not passed to the pane.
+$INNER respawn-pane -k -t inner:0.0 "stty raw -echo; cat -v >$DIR/typed" ||
     exit 1
-wait_for_output 1 $INNER display -p -t inner:0.0 '#{pane_dead}' ||
-    fail "reply reader did not exit"
-[ "$(cat "$DIR/reply")" = \
-    '^[]21;200=rgb:c8/40/a0;201=;foreground=rgb:ee/ee/ee;background=rgb:11/11/11^[\' ] ||
-    fail "palette from outer terminal: $(cat "$DIR/reply")"
+$OUTER send-keys -t outer:1 -l "$(printf '\033]21;unknown=eA\033\\')" ||
+    exit 1
+$OUTER send-keys -t outer:1 Z || exit 1
+wait_for_output Z cat "$DIR/typed" ||
+    fail "OSC 21 reply passed to pane: $(cat "$DIR/typed")"
 
 capture detach
 $INNER respawn-pane -k -t inner:0.0 "printf '\033]21;visual_bell=blue\033\\\\'; exec sleep 100" ||
