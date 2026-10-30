@@ -1173,7 +1173,7 @@ colour_byname(const char *name)
 
 /*
  * Parse one component of an X11 colour: one to four hex digits, or an
- * intensity from 0 to 1. Hex digits after # are the most significant bits,
+ * intensity clipped to between 0 and 1. Hex digits after # are the most significant bits,
  * other values are scaled to 16 bits as XParseColor does. The top eight bits
  * are returned.
  */
@@ -1193,8 +1193,12 @@ colour_parseX11_component(const char *p, size_t len, int intensity, int msb,
 
 	if (intensity) {
 		d = strtod(tmp, &end);
-		if (*end != '\0' || !(d >= 0 && d <= 1))
+		if (*end != '\0' || isnan(d))
 			return (-1);
+		if (d < 0)
+			d = 0;
+		else if (d > 1)
+			d = 1;
 		*v = (u_int)(d * 65535) >> 8;
 		return (0);
 	}
