@@ -118,6 +118,7 @@ static const struct tty_term_code_entry tty_term_codes[] = {
 	[TTYC_INVIS] = { TTYCODE_STRING, "invis" },
 	[TTYC_ISCRL] = { TTYCODE_FLAG, "Iscrl" },
 	[TTYC_KCBT] = { TTYCODE_STRING, "kcbt" },
+	[TTYC_KCOL] = { TTYCODE_STRING, "Kcol" },
 	[TTYC_KCUB1] = { TTYCODE_STRING, "kcub1" },
 	[TTYC_KCUD1] = { TTYCODE_STRING, "kcud1" },
 	[TTYC_KCUF1] = { TTYCODE_STRING, "kcuf1" },

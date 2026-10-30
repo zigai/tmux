@@ -24,6 +24,22 @@
 
 #include "tmux.h"
 
+/* Names of colours passed to the outer terminal, as used by OSC 21. */
+static const char *screen_colour_names[SCREEN_COLOURS] = {
+	"cursor_text",
+	"selection_foreground",
+	"selection_background",
+	"visual_bell",
+	"transparent_background_color1",
+	"transparent_background_color2",
+	"transparent_background_color3",
+	"transparent_background_color4",
+	"transparent_background_color5",
+	"transparent_background_color6",
+	"transparent_background_color7",
+	"transparent_background_color8"
+};
+
 /* Selected area in screen. */
 struct screen_sel {
 	int		 hidden;
@@ -90,6 +106,7 @@ screen_init(struct screen *s, u_int sx, u_int sy, u_int hlimit)
 	s->default_mode = 0;
 	s->ccolour = -1;
 	s->default_ccolour = -1;
+	s->colours = NULL;
 	s->tabs = NULL;
 	s->sel = NULL;
 
@@ -158,7 +175,7 @@ screen_free(struct screen *s)
 	if (s->hyperlinks != NULL)
 		hyperlinks_free(s->hyperlinks);
 	screen_free_titles(s);
-
+	screen_clear_colours(s);
 }
 
 /* Reset tabs to default, eight spaces apart. */
@@ -231,6 +248,56 @@ void
 screen_set_cursor_colour(struct screen *s, int colour)
 {
 	s->ccolour = colour;
+}
+
+/* Find a colour passed to the outer terminal by name. */
+int
+screen_find_colour(const char *name)
+{
+	u_int	i;
+
+	for (i = 0; i < SCREEN_COLOURS; i++) {
+		if (strcmp(screen_colour_names[i], name) == 0)
+			return (i);
+	}
+	return (-1);
+}
+
+/* Get the name of a colour passed to the outer terminal. */
+const char *
+screen_colour_name(u_int idx)
+{
+	return (screen_colour_names[idx]);
+}
+
+/*
+ * Set a colour passed to the outer terminal. NULL is the terminal default and
+ * an empty string is the dynamic colour.
+ */
+void
+screen_set_colour(struct screen *s, u_int idx, const char *value)
+{
+	if (s->colours == NULL) {
+		if (value == NULL)
+			return;
+		s->colours = xcalloc(SCREEN_COLOURS, sizeof *s->colours);
+	}
+	free(s->colours[idx]);
+	s->colours[idx] = (value == NULL ? NULL : xstrdup(value));
+}
+
+/* Reset all colours passed to the outer terminal. */
+void
+screen_clear_colours(struct screen *s)
+{
+	u_int	i;
+
+	if (s->colours == NULL)
+		return;
+	for (i = 0; i < SCREEN_COLOURS; i++)
+		free(s->colours[i]);
+	free(s->colours);
+	s->colours = NULL;
 }
 
 /* Set screen title. */

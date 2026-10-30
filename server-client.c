@@ -2381,6 +2381,8 @@ server_client_reset_state(struct client *c)
 
 	/* Set the terminal mode and reset attributes. */
 	tty_update_mode(tty, mode, s);
+	if (wp != NULL)
+		tty_update_colours(tty, &wp->base);
 	tty_reset(tty);
 
 	/* All writing must be done, send a sync end (if it was started). */

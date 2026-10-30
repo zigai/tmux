@@ -225,6 +225,17 @@ static const struct tty_feature tty_feature_ccolour = {
 	0
 };
 
+/* Terminal supports the Kitty colour control protocol. */
+static const char *const tty_feature_kittycolours_capabilities[] = {
+	"Kcol=\\E]21;%p1%s\\E\\\\",
+	NULL
+};
+static const struct tty_feature tty_feature_kittycolours = {
+	"kittycolours",
+	tty_feature_kittycolours_capabilities,
+	0
+};
+
 /* Terminal supports strikethrough. */
 static const char *const tty_feature_strikethrough_capabilities[] = {
 	"smxx=\\E[9m",
@@ -418,6 +429,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_focus,
 	&tty_feature_ignorefkeys,
 	&tty_feature_imagescroll,
+	&tty_feature_kittycolours,
 	&tty_feature_kittygraphics,
 	&tty_feature_margins,
 	&tty_feature_mouse,
@@ -690,6 +702,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "osc7,"
 			      "sync,"
 			      "usstyle,"
+			      "kittycolours,"
 			      "kittygraphics"
 		},
 		{ .name = "Rio",
