@@ -1329,6 +1329,7 @@ redraw_draw_pane_span(struct redraw_draw_ctx *dctx,
 	style_ctx.defaults = &defaults;
 	style_ctx.palette = &wp->palette;
 	style_ctx.hyperlinks = s->hyperlinks;
+	style_ctx.wp = wp;
 
 	px = span->data.p.px + (x - dctx->side_left - span->x);
 	py = span->data.p.py;
@@ -1608,7 +1609,7 @@ redraw_draw_span(struct redraw_draw_ctx *dctx, struct redraw_span *span,
 			redraw_draw_pane_span(dctx, span, x, y, width);
 #ifdef ENABLE_IMAGES
 		else {
-			image_draw_line(&dctx->scene->c->tty, data->p.wp->screen,
+			image_draw_line(&dctx->scene->c->tty, data->p.wp,
 			    data->p.px, data->p.py, width, x, y);
 		}
 #endif

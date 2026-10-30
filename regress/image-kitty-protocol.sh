@@ -262,14 +262,7 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('layer-chunks', graphics(transmit + ',z=-1,m=1', '/wAA') +
               graphics('m=0', '/w==') + graphics('a=p,i=7,C=1,z=1'),
               ok + ok)
-        # Reply controls must be read even after an unsupported field.
-        check('quiet-after-unsupported',
-              graphics(transmit + ',U=1,q=2', pixel), '')
-        check('id-after-unsupported',
-              graphics('a=q,U=1,i=7,f=32,s=1,v=1', pixel), unsupported)
-        check('placement-after-unsupported',
-              graphics('U=1,a=q,i=7,p=9,q=1', pixel),
-              graphics('i=7,p=9', 'ENOTSUP'))
+        # Reply controls must be read even after an invalid field.
         check('quiet-after-invalid-control',
               graphics('a=t,i=7,s=bad,q=2', pixel), '')
         check('id-after-invalid-control',
@@ -283,14 +276,19 @@ with tempfile.TemporaryDirectory(prefix='tmux-kitty-protocol-') as tmp:
         check('first-error-invalid',
               graphics('s=bad,z=1,a=q,i=7,p=9', pixel),
               graphics('i=7,p=9', 'EINVAL'))
-        check('first-error-unsupported',
-              graphics('U=1,s=bad,a=q,i=7,p=9', pixel),
-              graphics('i=7,p=9', 'ENOTSUP'))
-        for control in ['U=1', 'P=99', 'Q=9', 'H=1', 'H=-1', 'V=1', 'V=-1']:
-            check('unsupported-placement-' + control,
+        # Virtual placements and relative placements never move the
+        # cursor; offsets without a parent are ignored.
+        for control, reply, cursor in [
+                ('U=1', ok, '5,2'),
+                ('P=99', graphics('i=7', 'ENOPARENT'), '5,2'),
+                ('U=1,P=99', invalid, '5,2'),
+                ('Q=9', ok, '6,2'), ('H=1', ok, '6,2'),
+                ('H=-1', ok, '6,2'), ('V=1', ok, '6,2'),
+                ('V=-1', ok, '6,2')]:
+            check('placement-' + control,
                   graphics('a=T,i=7,f=32,s=1,v=1,' + control, pixel),
-                  unsupported)
-            check('quiet-unsupported-placement-' + control,
+                  reply, cursor=cursor)
+            check('quiet-placement-' + control,
                   graphics('a=T,i=7,' + control + ',q=2', pixel), '')
         check('zero-placement-extensions', graphics(transmit +
               ',U=0,P=0,Q=0,H=0,V=0', pixel), ok)

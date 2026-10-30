@@ -83,7 +83,7 @@ static void	tty_draw_pane(struct tty *, const struct tty_ctx *, u_int);
 #define TTY_REQUEST_LIMIT 30
 
 static struct tty_style_ctx tty_default_style_ctx = {
-	&grid_default_cell, NULL, 0, NULL
+	&grid_default_cell, NULL, 0, NULL, NULL
 };
 
 void
@@ -1959,6 +1959,11 @@ tty_cmd_alignmenttest(struct tty *tty, const struct tty_ctx *ctx)
 void
 tty_cmd_cell(struct tty *tty, const struct tty_ctx *ctx)
 {
+	const struct grid_cell	*gcp = ctx->cell;
+#ifdef ENABLE_IMAGES
+	struct grid_cell	 gc;
+#endif
+
 	if (!tty_is_visible(tty, ctx, ctx->ocx, ctx->ocy, 1, 1))
 		return;
 
@@ -1972,7 +1977,11 @@ tty_cmd_cell(struct tty *tty, const struct tty_ctx *ctx)
 		tty_invalidate(tty);
 	tty_cursor_pane_unless_wrap(tty, ctx, ctx->ocx, ctx->ocy);
 
-	tty_cell(tty, ctx->cell, &ctx->style_ctx);
+#ifdef ENABLE_IMAGES
+	/* Placeholder cells are drawn when the line is redrawn. */
+	gcp = image_hide_placeholder(gcp, &gc);
+#endif
+	tty_cell(tty, gcp, &ctx->style_ctx);
 
 	if (ctx->flags & TTY_CTX_CELL_INVALIDATE)
 		tty_invalidate(tty);
@@ -2501,6 +2510,11 @@ tty_attributes(struct tty *tty, const struct grid_cell *gc,
 		gc2.fg = tty_dim_default_colour(tty, gc2.fg, 1);
 		gc2.bg = tty_dim_default_colour(tty, gc2.bg, 0);
 		changed = colour_dim(gc2.fg, style_ctx->dim);
+#ifdef ENABLE_IMAGES
+		/* The colour of a placeholder cell is an image ID. */
+		if (kitty_is_placeholder(&gc->data))
+			changed = -1;
+#endif
 		if (changed != -1)
 			gc2.fg = changed;
 		changed = colour_dim(gc2.bg, style_ctx->dim);

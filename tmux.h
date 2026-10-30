@@ -876,6 +876,7 @@ struct colour_palette {
 #define GRID_LINE_START_OUTPUT 0x40
 #define GRID_LINE_END_OUTPUT 0x80
 #define GRID_LINE_HYPERLINK 0x100
+#define GRID_LINE_PLACEHOLDER 0x200
 
 /* All OSC 133 flags. */
 #define GRID_LINE_OSC133_FLAGS \
@@ -1822,6 +1823,7 @@ struct tty_style_ctx {
 	struct colour_palette	*palette;
 	u_int			 dim;
 	struct hyperlinks	*hyperlinks;
+	struct window_pane	*wp;
 };
 
 /* Maximum reported terminal size. */

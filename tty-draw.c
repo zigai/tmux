@@ -133,6 +133,7 @@ tty_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py, u_int nx,
 	const struct grid_cell	*defaults;
 #ifdef ENABLE_IMAGES
 	struct image		*im;
+	struct kitty_run	 run = { 0 };
 	u_int			 x, y;
 #endif
 
@@ -264,8 +265,9 @@ tty_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py, u_int nx,
 
 #ifdef ENABLE_IMAGES
 				/* Map an image cell if needed. */
-				gcp = image_map_cell(tty, gd, px + i,
-				    gd->hsize + py, gcp, &gc, &empty);
+				gcp = image_map_cell(tty, style_ctx->wp, &run,
+				    gd, px + i, gd->hsize + py, gcp, &gc,
+				    &empty);
 #endif
 
 				/* Flush the background before clearing. */
@@ -278,8 +280,9 @@ tty_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py, u_int nx,
 
 #ifdef ENABLE_IMAGES
 				/* Map an image cell if needed. */
-				gcp = image_map_cell(tty, gd, px + i,
-				    gd->hsize + py, gcp, &gc, NULL);
+				gcp = image_map_cell(tty, style_ctx->wp, &run,
+				    gd, px + i, gd->hsize + py, gcp, &gc,
+				    NULL);
 #endif
 
 				/* Work out empty cells. */

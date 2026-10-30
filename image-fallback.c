@@ -179,3 +179,12 @@ fallback_map_cell(struct tty *tty, struct grid *gd, u_int x, u_int y,
 		*empty = 1;
 	return (gc);
 }
+
+/* Get a text cell for a placeholder cell showing part of an image. */
+const struct grid_cell *
+fallback_map_placeholder(struct tty *tty, struct image *im, u_int col,
+    u_int row, const struct grid_cell *gc, struct grid_cell *out)
+{
+	fallback_get_cell(tty, im, col, row, gc, out);
+	return (out);
+}

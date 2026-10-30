@@ -125,6 +125,15 @@ with image_test(sys.argv[1]) as test:
     check(graphics('a=T,f=32,s=16,v=32,X=4,Y=8,C=1', raw),
         pattern(xoff=4, yoff=8))
 
+    # Relative placements start at their parent's origin plus H and V, never
+    # move the cursor and are removed with their parent.
+    parent = upload + b'\033[2;3H' + graphics(put + ',p=1') + \
+        graphics('a=t,i=8,f=32,s=1,v=1', b'\0\0\xff\xff')
+    child = b'\033[H' + graphics('a=p,i=8,p=1,P=7,Q=1,H=3,V=1,c=1,r=1')
+    check(parent + child,
+        pattern(xoff=16, yoff=16) | solid(8, 16, colours[2], 40, 32))
+    check(parent + child + graphics('a=d,d=i,i=7,p=1'), {})
+
 # Clients sample the original crop independently, including partial spans.
 with image_test(sys.argv[1]) as test:
     client = test.attach()

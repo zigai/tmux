@@ -128,6 +128,10 @@ grid_extended_cell(struct grid_line *gl, struct grid_cell_entry *gce,
 	gl->flags |= GRID_LINE_EXTENDED;
 	if (gc->link != 0)
 		gl->flags |= GRID_LINE_HYPERLINK;
+#ifdef ENABLE_IMAGES
+	if (kitty_is_placeholder(&gc->data))
+		gl->flags |= GRID_LINE_PLACEHOLDER;
+#endif
 
 	if (gc->flags & GRID_FLAG_TAB)
 		uc = gc->data.width;
@@ -1821,6 +1825,8 @@ grid_line_flags_string(int flags)
 		strlcat(s, "END_OUTPUT,", sizeof s);
 	if (flags & GRID_LINE_HYPERLINK)
 		strlcat(s, "HYPERLINK,", sizeof s);
+	if (flags & GRID_LINE_PLACEHOLDER)
+		strlcat(s, "PLACEHOLDER,", sizeof s);
 	if (*s == '\0')
 		return ("NONE");
 	s[strlen(s) - 1] = '\0';

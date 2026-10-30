@@ -20,6 +20,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "tmux.h"
 
@@ -124,6 +125,9 @@ struct image_backend {
 	const struct grid_cell *(*map_cell)(struct tty *, struct grid *, u_int,
 			    u_int, const struct grid_cell *, struct grid_cell *,
 			    int *);
+	const struct grid_cell	*(*map_placeholder)(struct tty *,
+	    struct image *, u_int, u_int, const struct grid_cell *,
+	    struct grid_cell *);
 	void		(*draw_rect)(struct tty *, struct image_rect *);
 	void		(*start_draw)(struct tty *, u_int, u_int, u_int, u_int);
 	void		(*flush)(struct tty *);
@@ -139,6 +143,7 @@ static struct image_backend image_backend_fallback = {
 	fallback_get_flags,
 	fallback_select,
 	fallback_map_cell,
+	fallback_map_placeholder,
 	NULL,
 	NULL,
 	NULL,
@@ -151,6 +156,7 @@ static struct image_backend image_backend_sixel = {
 	"sixel",
 	sixel_get_flags,
 	sixel_select,
+	NULL,
 	NULL,
 	sixel_draw_rect,
 	sixel_start_draw,
@@ -165,6 +171,7 @@ static struct image_backend image_backend_kitty = {
 	kitty_get_flags,
 	kitty_select,
 	NULL,
+	kitty_map_placeholder,
 	kitty_draw_rect,
 	kitty_redraw_start,
 	NULL,
@@ -211,15 +218,52 @@ image_backend_get_flags(struct tty *tty)
 	return (tty->image_backend->get_flags(tty));
 }
 
-/* Map an image grid cell to text for the selected backend. */
+/* Replace a Kitty placeholder cell with a blank cell. */
 const struct grid_cell *
-image_map_cell(struct tty *tty, struct grid *gd, u_int x, u_int y,
-    const struct grid_cell *gc, struct grid_cell *out, int *empty)
+image_hide_placeholder(const struct grid_cell *gc, struct grid_cell *out)
 {
-	image_tty_update(tty);
-	if (tty->image_backend->map_cell == NULL)
+	if (!kitty_is_placeholder(&gc->data))
 		return (gc);
-	return (tty->image_backend->map_cell(tty, gd, x, y, gc, out, empty));
+	if (out != gc)
+		memcpy(out, gc, sizeof *out);
+	out->attr = 0;
+	out->link = 0;
+	out->us = grid_default_cell.us;
+	utf8_set(&out->data, ' ');
+	return (out);
+}
+
+/*
+ * Map an image grid cell to text for the selected backend. Kitty placeholder
+ * cells are resolved using the pane's images; without a pane or an image they
+ * are blank.
+ */
+const struct grid_cell *
+image_map_cell(struct tty *tty, struct window_pane *wp, struct kitty_run *run,
+    struct grid *gd, u_int x, u_int y, const struct grid_cell *gc,
+    struct grid_cell *out, int *empty)
+{
+	struct image_backend	*backend;
+	const struct grid_cell	*gcp = NULL;
+	struct image		*im;
+	u_int			 col, row;
+
+	image_tty_update(tty);
+	backend = tty->image_backend;
+	if (kitty_is_placeholder(&gc->data)) {
+		if (wp != NULL &&
+		    backend->map_placeholder != NULL &&
+		    kitty_placeholder_get(wp, run, gd, x, y, gc, &im, &col,
+		    &row))
+			gcp = backend->map_placeholder(tty, im, col, row, gc,
+			    out);
+		if (gcp == NULL)
+			gcp = image_hide_placeholder(gc, out);
+		return (gcp);
+	}
+	if (backend->map_cell == NULL)
+		return (gc);
+	return (backend->map_cell(tty, gd, x, y, gc, out, empty));
 }
 
 /* Draw a clipped part of one image span. */
@@ -243,11 +287,76 @@ image_draw_span(struct image_backend *backend, struct tty *tty,
 	backend->draw_rect(tty, &rect);
 }
 
-/* Draw images after text on one screen line. */
+/* Draw part of an image shown by placeholder cells. */
+static void
+image_draw_placeholder_rect(struct image_backend *backend, struct tty *tty,
+    struct image_rect *rect)
+{
+	if (rect->image == NULL)
+		return;
+	image_touch(rect->image);
+	backend->draw_rect(tty, rect);
+	rect->image = NULL;
+}
+
+/*
+ * Draw images shown by Kitty placeholder cells on one screen line, for
+ * backends which do not draw them as text.
+ */
+static void
+image_draw_placeholders(struct image_backend *backend, struct tty *tty,
+    struct window_pane *wp, u_int px, u_int py, u_int nx, u_int atx,
+    u_int aty)
+{
+	struct grid		*gd = wp->screen->grid;
+	struct grid_line	*gl;
+	struct grid_cell	 gc;
+	struct kitty_run	 run;
+	struct image_rect	 rect;
+	struct image		*im;
+	u_int			 x, end, col, row, gy = gd->hsize + py;
+
+	gl = grid_get_line(gd, gy);
+	if (~gl->flags & GRID_LINE_EXTENDED)
+		return;
+	end = px + nx;
+	if (end > gl->cellsize)
+		end = gl->cellsize;
+
+	memset(&run, 0, sizeof run);
+	memset(&rect, 0, sizeof rect);
+	for (x = px; x < end; x++) {
+		grid_get_cell(gd, x, gy, &gc);
+		if (!kitty_is_placeholder(&gc.data) ||
+		    !kitty_placeholder_get(wp, &run, gd, x, gy, &gc, &im, &col,
+		    &row)) {
+			image_draw_placeholder_rect(backend, tty, &rect);
+			continue;
+		}
+		if (rect.image == im &&
+		    rect.src_y == row &&
+		    rect.src_x + rect.sx == col) {
+			rect.sx++;
+			continue;
+		}
+		image_draw_placeholder_rect(backend, tty, &rect);
+		rect.image = im;
+		rect.src_x = col;
+		rect.src_y = row;
+		rect.sx = 1;
+		rect.sy = 1;
+		rect.dst_x = atx + x - px;
+		rect.dst_y = aty;
+	}
+	image_draw_placeholder_rect(backend, tty, &rect);
+}
+
+/* Draw images after text on one pane line. */
 void
-image_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py,
+image_draw_line(struct tty *tty, struct window_pane *wp, u_int px, u_int py,
     u_int nx, u_int atx, u_int aty)
 {
+	struct screen		*s = wp->screen;
 	struct image_backend	*backend;
 	struct image_line	*line;
 	struct image_span	*span;
@@ -259,6 +368,8 @@ image_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py,
 		return;
 	if (py >= s->grid->sy)
 		return;
+	if (backend->map_placeholder == NULL)
+		image_draw_placeholders(backend, tty, wp, px, py, nx, atx, aty);
 	gy = s->grid->hsize + py;
 	line = s->grid->linedata[gy].images;
 	if (line == NULL)
@@ -1044,7 +1155,7 @@ image_grid_line_has_images(struct grid_line *gl)
 	return (gl->images != NULL && !TAILQ_EMPTY(&gl->images->spans));
 }
 
-/* Check whether a grid area has any image spans. */
+/* Check whether a grid area has any image spans or placeholder cells. */
 int
 image_grid_area_has_images(struct grid *gd, u_int x, u_int y, u_int sx,
     u_int sy)
@@ -1053,8 +1164,6 @@ image_grid_area_has_images(struct grid *gd, u_int x, u_int y, u_int sx,
 	struct image_span	*span;
 	u_int			 row, end;
 
-	if (gd->images == NULL)
-		return (0);
 	if (sx == 0 || sy == 0 || y >= gd->hsize + gd->sy)
 		return (0);
 
@@ -1065,6 +1174,8 @@ image_grid_area_has_images(struct grid *gd, u_int x, u_int y, u_int sx,
 		sy = gd->hsize + gd->sy - y;
 
 	for (row = y; row < y + sy; row++) {
+		if (gd->linedata[row].flags & GRID_LINE_PLACEHOLDER)
+			return (1);
 		line = gd->linedata[row].images;
 		if (line == NULL)
 			continue;
@@ -1404,6 +1515,46 @@ image_write(struct screen_write_ctx *ctx, struct image *im, u_int bg,
 			cursor_x = cx + sx;
 		screen_write_cursormove(ctx, cursor_x, cy + cursor_rows, 0);
 	}
+}
+
+/* Find the top-left cell of an image's placement, which may be off the grid. */
+int
+image_grid_get_origin(struct grid *gd, struct image *im, int *x, int *y)
+{
+	struct image_placement	*plmt;
+	struct image_span	*span;
+	u_int			 row;
+
+	if (gd->images == NULL)
+		return (0);
+	TAILQ_FOREACH(plmt, &gd->images->placements, entry) {
+		if (plmt->image != im)
+			continue;
+		span = TAILQ_FIRST(&plmt->spans);
+		if (span == NULL)
+			continue;
+		for (row = 0; row < gd->hsize + gd->sy; row++) {
+			if (gd->linedata[row].images != span->line)
+				continue;
+			*x = (int)span->x - (int)span->source_x;
+			*y = (int)row - (int)span->source_y;
+			return (1);
+		}
+	}
+	return (0);
+}
+
+/* Redraw the rest of a line when a Kitty placeholder cell is written. */
+void
+image_damage_placeholder(struct screen_write_ctx *ctx,
+    const struct grid_cell *gc, u_int x, u_int y)
+{
+	struct window_pane	*wp = ctx->wp;
+	u_int			 sx = screen_size_x(ctx->s);
+
+	if (wp == NULL || x >= sx || !kitty_is_placeholder(&gc->data))
+		return;
+	redraw_damage_window(wp->window, wp->xoff + x, wp->yoff + y, sx - x, 1);
 }
 
 /* Find the cell within an image at a grid position. */

@@ -198,6 +198,14 @@ class Terminal:
                 if len(rest) < n:
                     break
                 char = rest[:n].decode()
+                if unicodedata.combining(char):
+                    # Combining marks join the character to their left.
+                    left = min(self.x, self.sx) - 1, self.y
+                    assert left in self.cells, ('combining at', left)
+                    cell = self.cells[left]
+                    self.cells[left] = (cell[0] + char, *cell[1:])
+                    pos += n
+                    continue
                 width = 2 if unicodedata.east_asian_width(char) in 'WF' else 1
                 if self.x >= self.sx:
                     self.x = 0

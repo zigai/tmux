@@ -35,6 +35,7 @@ struct screen;
 struct screen_write_ctx;
 struct sixel_image;
 struct tty;
+struct utf8_data;
 struct window_pane;
 
 /* Backend draws images as graphics. */
@@ -72,6 +73,21 @@ struct image_geom {
 	/* Actual image size in cells, including padding. */
 	u_int	 sx;
 	u_int	 sy;
+};
+
+/* A run of Kitty placeholder cells on one grid line. */
+struct kitty_run {
+	struct grid	*gd;
+	u_int		 x;
+	u_int		 y;
+	int		 active;
+
+	u_int		 low;
+	u_int		 high;
+	u_int		 placement;
+	u_int		 row;
+	u_int		 col;
+	u_int		 width;
 };
 
 /* Bounds within a source image, in pixels. */
@@ -170,10 +186,17 @@ void		 image_write(struct screen_write_ctx *, struct image *, u_int,
 void		 image_clear(struct screen_write_ctx *, u_int);
 int		 image_grid_get_at(struct grid *, u_int, u_int, struct image **,
 		     u_int *, u_int *);
-const struct grid_cell *image_map_cell(struct tty *, struct grid *, u_int,
-		     u_int, const struct grid_cell *, struct grid_cell *, int *);
-void		 image_draw_line(struct tty *, struct screen *, u_int, u_int,
-		     u_int, u_int, u_int);
+int			 image_grid_get_origin(struct grid *, struct image *,
+    int *, int *);
+const struct grid_cell	*image_map_cell(struct tty *,
+    struct window_pane *, struct kitty_run *, struct grid *, u_int, u_int,
+    const struct grid_cell *, struct grid_cell *, int *);
+const struct grid_cell	*image_hide_placeholder(const struct grid_cell *,
+    struct grid_cell *);
+void			 image_damage_placeholder(struct screen_write_ctx *,
+    const struct grid_cell *, u_int, u_int);
+void			 image_draw_line(struct tty *, struct window_pane *,
+    u_int, u_int, u_int, u_int, u_int);
 void		 image_redraw_start(struct tty *, u_int, u_int, u_int, u_int);
 void		 image_draw_flush(struct tty *);
 void		 image_redraw_finish(struct tty *);
@@ -188,6 +211,9 @@ int		 fallback_select(struct tty *);
 int		 fallback_get_flags(struct tty *);
 const struct grid_cell *fallback_map_cell(struct tty *, struct grid *, u_int,
 		     u_int, const struct grid_cell *, struct grid_cell *, int *);
+const struct grid_cell	*fallback_map_placeholder(struct tty *,
+    struct image *, u_int, u_int, const struct grid_cell *,
+    struct grid_cell *);
 
 /* image-sixel.c */
 #define SIXEL_COLOUR_REGISTERS 1024
@@ -214,6 +240,15 @@ void		 kitty_parse_input(struct input_ctx *, struct window_pane *,
 		     size_t);
 void		 kitty_free_state(void *);
 void		 kitty_remove_image(struct image *);
+void			 kitty_update_placements(void *,
+    struct window_pane *);
+int			 kitty_is_placeholder(const struct utf8_data *);
+int			 kitty_placeholder_get(struct window_pane *,
+    struct kitty_run *, struct grid *, u_int, u_int,
+    const struct grid_cell *, struct image **, u_int *, u_int *);
+const struct grid_cell	*kitty_map_placeholder(struct tty *,
+    struct image *, u_int, u_int, const struct grid_cell *,
+    struct grid_cell *);
 
 #endif /* ENABLE_IMAGES */
 

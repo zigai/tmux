@@ -13,6 +13,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
+#include <locale.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -440,6 +442,78 @@ test_fill(u_int w, u_int h, const u_char *rgba)
 	return (test_base64(data, w * h * 4));
 }
 
+/* Find a virtual placement of a Kitty image. */
+static struct kitty_placement_map *
+test_virtual(u_int id, u_int placement_id)
+{
+	struct kitty_image_map		*map = test_map(id);
+	struct kitty_placement_map	*kpl;
+
+	if (map == NULL)
+		return (NULL);
+	TAILQ_FOREACH(kpl, &map->placements, entry) {
+		if ((kpl->flags & KITTY_PLACEMENT_VIRTUAL) &&
+		    kpl->kitty_id == placement_id)
+			return (kpl);
+	}
+	return (NULL);
+}
+
+/* Build a placeholder character with row, column and high diacritics. */
+static const char *
+test_placeholder(char *s, size_t size, int row, int col, int high)
+{
+	struct utf8_data	ud;
+	int			values[] = { row, col, high };
+	u_int			i;
+
+	memcpy(ud.data, KITTY_PLACEHOLDER, 4);
+	ud.size = 4;
+	for (i = 0; i < nitems(values) && values[i] != -1; i++)
+		kitty_append_utf8(&ud, kitty_diacritics[values[i]]);
+	if ((size_t)ud.size >= size)
+		abort();
+	memcpy(s, ud.data, ud.size);
+	s[ud.size] = '\0';
+	return (s);
+}
+
+/* Check whether a visible cell shows any image through a placeholder. */
+static int
+test_resolves_any(u_int x, u_int y)
+{
+	struct grid		*gd = test_wp->base.grid;
+	struct grid_cell	 gc;
+	struct image		*im;
+	u_int			 col, row;
+
+	grid_view_get_cell(gd, x, y, &gc);
+	if (!kitty_is_placeholder(&gc.data))
+		return (0);
+	return (kitty_placeholder_get(test_wp, NULL, gd, x, gd->hsize + y, &gc,
+	    &im, &col, &row));
+}
+
+/* Check the image, placement and cell shown by a placeholder cell. */
+static int
+test_resolves(u_int x, u_int y, u_int id, u_int placement_id, u_int col,
+    u_int row)
+{
+	struct grid			*gd = test_wp->base.grid;
+	struct kitty_placement_map	*kpl = test_virtual(id, placement_id);
+	struct grid_cell		 gc;
+	struct image			*im;
+	u_int				 c, r;
+
+	if (kpl == NULL)
+		return (0);
+	grid_view_get_cell(gd, x, y, &gc);
+	if (!kitty_placeholder_get(test_wp, NULL, gd, x, gd->hsize + y, &gc,
+	    &im, &c, &r))
+		return (0);
+	return (image_get_id(im) == kpl->image_id && c == col && r == row);
+}
+
 /* Parse a query action. */
 static int
 test_parse_query(void)
@@ -674,22 +748,23 @@ test_parse_source_rect(void)
 	return (0);
 }
 
-/* Relative placement keys are not supported unless zero. */
+/* Parse relative placement keys, with signed offsets. */
 static int
 test_parse_relative_placement(void)
 {
 	struct kitty_command	 cmd;
 	const char		*m;
 
-	TEST_ASSERT("parse_relative: ret == -1",
-	    test_parse(&cmd, "a=p,i=1,P=2,Q=3,H=-1,V=4", &m) == -1);
-	TEST_ASSERT("parse_relative: ENOTSUP", strcmp(m, "ENOTSUP") == 0);
-	TEST_ASSERT("parse_relative: keeps parsing",
-	    cmd.action == KITTY_ACTION_PLACE && cmd.image_id == 1);
-	TEST_ASSERT("parse_relative: negative offset",
-	    test_parse(&cmd, "H=-1", &m) == -1 && strcmp(m, "ENOTSUP") == 0);
-	TEST_ASSERT("parse_relative: zero accepted",
-	    test_parse(&cmd, "a=p,i=1,P=0,Q=0,H=0,V=0", &m) == 0);
+	TEST_ASSERT("parse_relative: ret == 0",
+	    test_parse(&cmd, "a=p,i=1,P=2,Q=3,H=-1,V=4", &m) == 0);
+	TEST_ASSERT("parse_relative: values",
+	    cmd.parent_image == 2 && cmd.parent_placement == 3 &&
+	    cmd.parent_xoff == -1 && cmd.parent_yoff == 4);
+	TEST_ASSERT("parse_relative: offset range",
+	    test_parse(&cmd, "H=2147483648", &m) == -1 &&
+	    strcmp(m, "EINVAL") == 0);
+	TEST_ASSERT("parse_relative: negative parent",
+	    test_parse(&cmd, "P=-1", &m) == -1 && strcmp(m, "EINVAL") == 0);
 	TEST_PASS("parse_relative");
 	return (0);
 }
@@ -712,18 +787,19 @@ test_parse_file_range(void)
 	return (0);
 }
 
-/* Virtual placements are not supported. */
+/* Any non-zero U key asks for a virtual placement. */
 static int
 test_parse_virtual(void)
 {
 	struct kitty_command	 cmd;
 	const char		*m;
 
-	TEST_ASSERT("parse_virtual: ret == -1",
-	    test_parse(&cmd, "a=T,i=1,U=1", &m) == -1);
-	TEST_ASSERT("parse_virtual: ENOTSUP", strcmp(m, "ENOTSUP") == 0);
-	TEST_ASSERT("parse_virtual: zero accepted",
-	    test_parse(&cmd, "a=T,i=1,U=0", &m) == 0);
+	TEST_ASSERT("parse_virtual: U=1",
+	    test_parse(&cmd, "a=T,i=1,U=1", &m) == 0 && cmd.unicode);
+	TEST_ASSERT("parse_virtual: U=2",
+	    test_parse(&cmd, "a=T,i=1,U=2", &m) == 0 && cmd.unicode);
+	TEST_ASSERT("parse_virtual: U=0",
+	    test_parse(&cmd, "a=T,i=1,U=0", &m) == 0 && !cmd.unicode);
 	TEST_PASS("parse_virtual");
 	return (0);
 }
@@ -2179,18 +2255,24 @@ test_handle_transmit_cursor_stay(void)
 	return (0);
 }
 
-/* A virtual transmit-and-display is not supported. */
+/* A virtual transmit-and-display stores the image without placing it. */
 static int
 test_handle_transmit_virtual(void)
 {
 	const char	*reply;
 
 	test_pane_new();
+	test_cursor(3, 2);
 	reply = test_graphics("a=T,i=1,f=32,s=1,v=1,U=1", TEST_PIXEL);
-	TEST_ASSERT("transmit_virtual: ENOTSUP",
-	    test_replied(reply, "i=1;ENOTSUP"));
-	TEST_ASSERT("transmit_virtual: no placement", !test_placed_at(0, 0));
-	TEST_ASSERT("transmit_virtual: not stored", test_count_images() == 0);
+	TEST_ASSERT("transmit_virtual: OK", test_replied(reply, "i=1;OK"));
+	TEST_ASSERT("transmit_virtual: stored", test_image(1) != NULL);
+	TEST_ASSERT("transmit_virtual: virtual", test_virtual(1, 0) != NULL);
+	TEST_ASSERT("transmit_virtual: no cells", !test_placed_at(3, 2));
+	TEST_ASSERT("transmit_virtual: cursor unchanged",
+	    test_wp->base.cx == 3 && test_wp->base.cy == 2);
+	reply = test_graphics("a=T,i=2,f=32,s=1,v=1,U=1,P=1", TEST_PIXEL);
+	TEST_ASSERT("transmit_virtual: parent EINVAL",
+	    test_replied(reply, "i=2;EINVAL") && test_image(2) == NULL);
 	TEST_PASS("transmit_virtual");
 	return (0);
 }
@@ -2231,28 +2313,180 @@ test_handle_place_no_reference(void)
 	return (0);
 }
 
-/* Relative placements are not supported. */
+/* A relative placement starts at its parent's origin plus H and V. */
 static int
-test_relative_placement_unsupported(void)
+test_relative_position(void)
 {
 	const char	*reply;
 
 	test_pane_new();
-	reply = test_graphics("a=t,i=140,f=24,s=1,v=1", TEST_RGB);
-	TEST_ASSERT("relative_unsupported: transmit",
-	    test_replied(reply, "i=140;OK"));
-	reply = test_graphics("a=p,i=140,p=1,P=140,Q=1", NULL);
-	TEST_ASSERT("relative_unsupported: place ENOTSUP",
-	    test_replied(reply, "i=140,p=1;ENOTSUP"));
-	TEST_ASSERT("relative_unsupported: no placement",
-	    test_count_placements(140) == 0 && !test_placed_at(0, 0));
-	reply = test_graphics("a=T,i=141,p=2,f=24,s=1,v=1,c=1,r=1,P=140,Q=1",
-	    TEST_RGB);
-	TEST_ASSERT("relative_unsupported: T ENOTSUP",
-	    test_replied(reply, "i=141,p=2;ENOTSUP"));
-	TEST_ASSERT("relative_unsupported: no new image",
-	    test_map(141) == NULL);
-	TEST_PASS("relative_unsupported");
+	test_store(1);
+	test_store(2);
+	test_place(10, 5, "i=1,p=1,c=2,r=2,q=2");
+	test_cursor(0, 0);
+	reply = test_graphics("a=p,i=2,p=1,P=1,Q=1,H=3,V=-2,c=1,r=1", NULL);
+	TEST_ASSERT("relative_position: OK", test_replied(reply, "i=2,p=1;OK"));
+	TEST_ASSERT("relative_position: placed",
+	    test_placement_at(2, 1, 13, 3) && !test_placed_at(12, 3) &&
+	    !test_placed_at(13, 4));
+	TEST_ASSERT("relative_position: cursor unchanged",
+	    test_wp->base.cx == 0 && test_wp->base.cy == 0);
+
+	/* Without Q, the parent is the placement with the lowest ID. */
+	test_place(30, 10, "i=1,p=7,c=1,r=1,q=2");
+	reply = test_graphics("a=T,i=3,p=2,f=32,s=1,v=1,P=1,H=-1",
+	    TEST_PIXEL);
+	TEST_ASSERT("relative_position: T OK",
+	    test_replied(reply, "i=3,p=2;OK"));
+	TEST_ASSERT("relative_position: lowest parent ID",
+	    test_placement_at(3, 2, 9, 5) && !test_placed_at(29, 10));
+
+	/* A parent placed partly off the grid still has an origin. */
+	reply = test_graphics("a=p,i=2,p=3,P=1,Q=1,H=-12,V=0,c=4,r=1", NULL);
+	TEST_ASSERT("relative_position: clipped",
+	    test_placement_at(2, 3, 0, 5) && test_placement_at(2, 3, 1, 5) &&
+	    !test_placed_at(2, 5));
+	TEST_PASS("relative_position");
+	return (0);
+}
+
+/* Relative placements report missing parents, cycles and deep chains. */
+static int
+test_relative_errors(void)
+{
+	const char	*reply;
+	char		*s;
+	u_int		 i;
+
+	test_pane_new();
+	test_store(1);
+	test_store(2);
+	test_place(0, 0, "i=1,p=1,q=2");
+	reply = test_graphics("a=p,i=2,p=1,P=99", NULL);
+	TEST_ASSERT("relative_errors: no parent image",
+	    test_replied(reply, "i=2,p=1;ENOPARENT"));
+	reply = test_graphics("a=p,i=2,p=1,P=1,Q=9", NULL);
+	TEST_ASSERT("relative_errors: no parent placement",
+	    test_replied(reply, "i=2,p=1;ENOPARENT"));
+	reply = test_graphics("a=p,i=1,p=1,P=1,Q=1", NULL);
+	TEST_ASSERT("relative_errors: self", test_replied(reply,
+	    "i=1,p=1;EINVAL") && test_placement_at(1, 1, 0, 0));
+	reply = test_graphics("a=p,i=2,p=1,P=1,Q=1,U=1", NULL);
+	TEST_ASSERT("relative_errors: virtual",
+	    test_replied(reply, "i=2,p=1;EINVAL"));
+	TEST_ASSERT("relative_errors: nothing placed",
+	    test_count_placements(2) == 0 && test_virtual(2, 1) == NULL);
+
+	/* Making the parent relative to its own child is a cycle. */
+	test_graphics("a=p,i=2,p=1,P=1,Q=1,H=1,q=2", NULL);
+	reply = test_graphics("a=p,i=1,p=1,P=2,Q=1", NULL);
+	TEST_ASSERT("relative_errors: cycle",
+	    test_replied(reply, "i=1,p=1;ECYCLE"));
+	TEST_ASSERT("relative_errors: cycle keeps both",
+	    test_placement_at(1, 1, 0, 0) && test_placement_at(2, 1, 1, 0));
+
+	/* A chain of eight links is allowed, nine is too deep. */
+	test_store(10);
+	test_place(0, 10, "i=10,p=1,q=2");
+	for (i = 11; i <= 19; i++) {
+		test_store(i);
+		xasprintf(&s, "a=p,i=%u,p=1,P=%u,Q=1,H=1", i, i - 1);
+		reply = test_graphics(s, NULL);
+		free(s);
+		if (i < 19) {
+			TEST_ASSERT("relative_errors: chain allowed",
+			    test_placement_at(i, 1, i - 10, 10));
+		}
+	}
+	TEST_ASSERT("relative_errors: too deep",
+	    test_replied(reply, "i=19,p=1;ETOODEEP") &&
+	    test_count_placements(19) == 0);
+	TEST_PASS("relative_errors");
+	return (0);
+}
+
+/* Removing a parent removes its relative placements too. */
+static int
+test_relative_cascade(void)
+{
+	test_pane_new();
+	test_store(1);
+	test_store(2);
+	test_store(3);
+	test_place(5, 5, "i=1,p=1,q=2");
+	test_graphics("a=p,i=2,p=1,P=1,Q=1,H=1,q=2", NULL);
+	test_graphics("a=p,i=3,p=1,P=2,Q=1,V=1,q=2", NULL);
+	TEST_ASSERT("relative_cascade: placed",
+	    test_placement_at(2, 1, 6, 5) && test_placement_at(3, 1, 6, 6));
+
+	/* Deleting by area does not match relative placements. */
+	test_graphics("a=d,d=p,x=7,y=6", NULL);
+	TEST_ASSERT("relative_cascade: area keeps child",
+	    test_placement_at(2, 1, 6, 5));
+
+	test_graphics("a=d,d=i,i=1", NULL);
+	TEST_ASSERT("relative_cascade: all removed",
+	    !test_placed_at(5, 5) && !test_placed_at(6, 5) &&
+	    !test_placed_at(6, 6) && test_count_placements(2) == 0 &&
+	    test_count_placements(3) == 0);
+	TEST_ASSERT("relative_cascade: images kept",
+	    test_image(2) != NULL && test_image(3) != NULL);
+
+	/* An uppercase delete frees the images left without placements. */
+	test_place(5, 5, "i=1,p=1,q=2");
+	test_graphics("a=p,i=2,p=1,P=1,Q=1,H=1,q=2", NULL);
+	test_graphics("a=p,i=3,p=1,P=2,Q=1,V=1,q=2", NULL);
+	test_graphics("a=d,d=I,i=1", NULL);
+	TEST_ASSERT("relative_cascade: images freed",
+	    test_image(1) == NULL && test_image(2) == NULL &&
+	    test_image(3) == NULL && !test_placed_at(6, 6));
+
+	/* Retransmitting the parent's image removes its placements. */
+	test_store(1);
+	test_store(2);
+	test_place(5, 5, "i=1,p=1,q=2");
+	test_graphics("a=p,i=2,p=1,P=1,Q=1,H=1,q=2", NULL);
+	test_store(1);
+	TEST_ASSERT("relative_cascade: retransmit",
+	    !test_placed_at(6, 5) && test_count_placements(2) == 0);
+
+	/* Deleting by z-index matches relative placements. */
+	test_place(5, 5, "i=1,p=1,q=2");
+	test_graphics("a=p,i=2,p=1,P=1,Q=1,H=1,z=3,q=2", NULL);
+	test_graphics("a=d,d=z,z=3", NULL);
+	TEST_ASSERT("relative_cascade: z-index",
+	    !test_placed_at(6, 5) && test_placement_at(1, 1, 5, 5));
+	TEST_PASS("relative_cascade");
+	return (0);
+}
+
+/* Relative placements follow a replaced parent and scroll with it. */
+static int
+test_relative_follow(void)
+{
+	u_int	i;
+
+	test_pane_new();
+	test_history(100);
+	test_store(1);
+	test_store(2);
+	test_store(3);
+	test_place(5, 5, "i=1,p=1,q=2");
+	test_graphics("a=p,i=2,p=1,P=1,Q=1,H=2,q=2", NULL);
+	test_graphics("a=p,i=3,p=1,P=2,Q=1,V=2,q=2", NULL);
+	test_place(20, 10, "i=1,p=1,q=2");
+	TEST_ASSERT("relative_follow: replaced parent",
+	    test_placement_at(2, 1, 22, 10) &&
+	    test_placement_at(3, 1, 22, 12) &&
+	    !test_placed_at(7, 5) && !test_placed_at(7, 7));
+
+	test_cursor(0, 23);
+	for (i = 0; i < 3; i++)
+		test_input("\n");
+	TEST_ASSERT("relative_follow: scrolled",
+	    test_placement_at(1, 1, 20, 7) && test_placement_at(2, 1, 22, 7) &&
+	    test_placement_at(3, 1, 22, 9));
+	TEST_PASS("relative_follow");
 	return (0);
 }
 
@@ -2354,20 +2588,220 @@ test_handle_place_replace(void)
 	return (0);
 }
 
-/* A virtual placement is not supported. */
+/* Check the cells and fit of a virtual placement. */
+static int
+test_virtual_fit(u_int id, u_int p, u_int sx, u_int sy, u_int xoff,
+    u_int yoff, double w, double h)
+{
+	struct kitty_placement_map	*kpl = test_virtual(id, p);
+	struct image_geom		*ig;
+
+	if (kpl == NULL)
+		return (0);
+	ig = image_get_geometry(image_find(kpl->image_id));
+	return (ig->sx == sx && ig->sy == sy && ig->canvas_xoff == xoff &&
+	    ig->canvas_yoff == yoff && fabs(ig->scaled_width - w) < 0.001 &&
+	    fabs(ig->scaled_height - h) < 0.001);
+}
+
+/* A virtual placement fits the whole image to its cells. */
 static int
 test_handle_place_virtual(void)
 {
 	const char	*reply;
 
 	test_pane_new();
-	test_store(1);
-	reply = test_graphics("a=p,i=1,U=1", NULL);
-	TEST_ASSERT("place_virtual: ENOTSUP",
-	    test_replied(reply, "i=1;ENOTSUP"));
-	TEST_ASSERT("place_virtual: no placement",
-	    test_count_placements(1) == 0 && !test_placed_at(0, 0));
+	test_graphics("a=t,i=1,f=32,s=2,v=1,q=2", test_fill(2, 1, test_red));
+	test_cursor(4, 4);
+	reply = test_graphics("a=p,i=1,p=3,U=1,c=2,r=2,x=1,X=3", NULL);
+	TEST_ASSERT("place_virtual: OK", test_replied(reply, "i=1,p=3;OK"));
+	TEST_ASSERT("place_virtual: no cells",
+	    test_count_placements(1) == 0 && !test_placed_at(4, 4));
+	TEST_ASSERT("place_virtual: cursor unchanged",
+	    test_wp->base.cx == 4 && test_wp->base.cy == 4);
+	TEST_ASSERT("place_virtual: wide centred vertically",
+	    test_virtual_fit(1, 3, 2, 2, 0, 12, 16, 8));
+
+	test_graphics("a=t,i=2,f=32,s=1,v=4,q=2", test_fill(1, 4, test_red));
+	test_graphics("a=p,i=2,U=1,c=2,r=1,q=2", NULL);
+	TEST_ASSERT("place_virtual: tall centred horizontally",
+	    test_virtual_fit(2, 0, 2, 1, 6, 0, 4, 16));
+
+	test_graphics("a=t,i=3,f=32,s=12,v=20,q=2",
+	    test_fill(12, 20, test_red));
+	test_graphics("a=p,i=3,U=1,q=2", NULL);
+	TEST_ASSERT("place_virtual: natural size",
+	    test_virtual_fit(3, 0, 2, 2, 0, 3, 16, 80.0 / 3));
+
+	/* Area deletes leave virtual placements; image deletes remove them. */
+	test_graphics("a=d,d=a", NULL);
+	TEST_ASSERT("place_virtual: kept by d=a", test_virtual(1, 3) != NULL);
+	test_graphics("a=d,d=i,i=1,p=3", NULL);
+	TEST_ASSERT("place_virtual: deleted",
+	    test_virtual(1, 3) == NULL && test_image(1) != NULL);
+	test_graphics("a=d,d=I,i=2", NULL);
+	TEST_ASSERT("place_virtual: image freed",
+	    test_virtual(2, 0) == NULL && test_image(2) == NULL);
 	TEST_PASS("place_virtual");
+	return (0);
+}
+
+/* Placeholder cells refer to images by colour and to cells by diacritic. */
+static int
+test_placeholder_cells(void)
+{
+	struct grid_cell	 gc;
+	char			 s[256];
+
+	test_pane_new();
+	test_store(42);
+	test_graphics("a=p,i=42,U=1,c=3,r=2,q=2", NULL);
+
+	/* Each placeholder and its diacritics are one cell of width one. */
+	test_input("\033[38;5;42m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input(test_placeholder(s, sizeof s, 0, 1, -1));
+	test_input(test_placeholder(s, sizeof s, 0, 2, -1));
+	grid_view_get_cell(test_wp->base.grid, 1, 0, &gc);
+	TEST_ASSERT("placeholder_cells: combined",
+	    test_wp->base.cx == 3 && gc.data.width == 1 &&
+	    gc.data.size == 8 && kitty_is_placeholder(&gc.data));
+	TEST_ASSERT("placeholder_cells: explicit",
+	    test_resolves(0, 0, 42, 0, 0, 0) &&
+	    test_resolves(2, 0, 42, 0, 2, 0));
+
+	/* Missing columns continue the run from the left. */
+	test_cursor(0, 1);
+	test_input(test_placeholder(s, sizeof s, 1, -1, -1));
+	test_input(test_placeholder(s, sizeof s, -1, -1, -1));
+	test_input(test_placeholder(s, sizeof s, -1, -1, -1));
+	test_input(test_placeholder(s, sizeof s, -1, -1, -1));
+	TEST_ASSERT("placeholder_cells: inferred",
+	    test_resolves(1, 1, 42, 0, 1, 1) &&
+	    test_resolves(2, 1, 42, 0, 2, 1) && !test_resolves_any(3, 1));
+
+	/* A different colour starts a new run at the first column. */
+	test_cursor(0, 2);
+	test_input(test_placeholder(s, sizeof s, 1, 1, -1));
+	test_input("\033[38;5;43m");
+	test_input(test_placeholder(s, sizeof s, -1, -1, -1));
+	test_input("\033[38;5;42m");
+	test_input(test_placeholder(s, sizeof s, -1, -1, -1));
+	TEST_ASSERT("placeholder_cells: new run",
+	    test_resolves(0, 2, 42, 0, 1, 1) && !test_resolves_any(1, 2) &&
+	    test_resolves(2, 2, 42, 0, 0, 0));
+
+	/* The third diacritic is the high byte of the image ID. */
+	test_store(42 + (3 << 24));
+	test_graphics("a=p,i=50331690,U=1,c=2,r=1,q=2", NULL);
+	test_cursor(0, 3);
+	test_input(test_placeholder(s, sizeof s, 0, 0, 3));
+	test_input(test_placeholder(s, sizeof s, -1, -1, -1));
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("placeholder_cells: high byte",
+	    test_resolves(0, 3, 50331690, 0, 0, 0) &&
+	    test_resolves(1, 3, 50331690, 0, 1, 0) &&
+	    test_resolves(2, 3, 42, 0, 0, 0));
+
+	/* True colour and basic colours give the image ID too. */
+	test_store(0x123456);
+	test_graphics("a=p,i=1193046,U=1,q=2", NULL);
+	test_store(1);
+	test_graphics("a=p,i=1,U=1,q=2", NULL);
+	test_store(9);
+	test_graphics("a=p,i=9,U=1,q=2", NULL);
+	test_cursor(0, 4);
+	test_input("\033[38;2;18;52;86m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input("\033[31m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input("\033[91m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input("\033[39m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("placeholder_cells: colour forms",
+	    test_resolves(0, 4, 0x123456, 0, 0, 0) &&
+	    test_resolves(1, 4, 1, 0, 0, 0) &&
+	    test_resolves(2, 4, 9, 0, 0, 0) && !test_resolves_any(3, 4));
+
+	/* The underline colour selects the placement. */
+	test_store(7);
+	test_graphics("a=p,i=7,p=6,U=1,c=2,r=2,q=2", NULL);
+	test_graphics("a=p,i=7,p=5,U=1,c=1,r=1,q=2", NULL);
+	test_cursor(0, 5);
+	test_input("\033[38;5;7;58:5:6m");
+	test_input(test_placeholder(s, sizeof s, 1, 1, -1));
+	test_input("\033[58:5:5m");
+	test_input(test_placeholder(s, sizeof s, 1, 1, -1));
+	test_input("\033[59m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input("\033[58:5:8m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("placeholder_cells: placement ID",
+	    test_resolves(0, 5, 7, 6, 1, 1) && !test_resolves_any(1, 5) &&
+	    test_resolves(2, 5, 7, 5, 0, 0) && !test_resolves_any(3, 5));
+
+	/* Unknown images and missing virtual placements show nothing. */
+	test_store(8);
+	test_cursor(0, 6);
+	test_input("\033[59;38;5;99m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input("\033[38;5;8m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("placeholder_cells: unknown",
+	    !test_resolves_any(0, 6) && !test_resolves_any(1, 6));
+
+	/* Deleting the virtual placement hides its cells. */
+	test_graphics("a=d,d=i,i=42", NULL);
+	TEST_ASSERT("placeholder_cells: deleted", !test_resolves_any(0, 0));
+	TEST_PASS("placeholder_cells");
+	return (0);
+}
+
+/* Relative placements of a virtual placement follow its placeholders. */
+static int
+test_relative_virtual_parent(void)
+{
+	const char	*reply;
+	char		 s[256];
+
+	test_pane_new();
+	test_store(50);
+	test_store(2);
+	test_graphics("a=p,i=50,p=1,U=1,c=1,r=1,q=2", NULL);
+	reply = test_graphics("a=p,i=2,p=1,P=50,Q=1,H=1", NULL);
+	TEST_ASSERT("relative_virtual: OK", test_replied(reply, "i=2,p=1;OK"));
+	TEST_ASSERT("relative_virtual: waits for placeholders",
+	    test_count_placements(2) == 0);
+
+	test_cursor(5, 3);
+	test_input("\033[38;5;50m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("relative_virtual: anchored",
+	    test_placement_at(2, 1, 6, 3));
+
+	/* The origin is the smallest column and row of all placeholders. */
+	test_input("\033[2J\033[8;5H");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input("\033[10;3H");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("relative_virtual: moved",
+	    test_placement_at(2, 1, 3, 7) && !test_placed_at(6, 3));
+
+	/* Without placeholders the relative placement stays where it was. */
+	test_input("\033[0m\033[8;5H \033[10;3H ");
+	TEST_ASSERT("relative_virtual: kept", test_placement_at(2, 1, 3, 7));
+
+	/* Placeholders printed again after a clear bring it back. */
+	test_input("\033[2J\033[38;5;50m\033[8;3H");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("relative_virtual: restored",
+	    test_placement_at(2, 1, 3, 7));
+
+	test_graphics("a=d,d=i,i=50", NULL);
+	TEST_ASSERT("relative_virtual: removed with parent",
+	    test_count_placements(2) == 0 && !test_placed_at(3, 7));
+	TEST_PASS("relative_virtual");
 	return (0);
 }
 
@@ -2612,7 +3046,12 @@ main(void)
 		test_handle_transmit_virtual,
 		test_handle_place_missing,
 		test_handle_place_no_reference,
-		test_relative_placement_unsupported,
+		test_relative_position,
+		test_relative_errors,
+		test_relative_cascade,
+		test_relative_follow,
+		test_relative_virtual_parent,
+		test_placeholder_cells,
 		test_unsupported_animation_actions,
 		test_unknown_actions_rejected,
 		test_image_id_number_conflict,
@@ -2625,6 +3064,9 @@ main(void)
 	};
 	u_int					 i;
 
+	if (setlocale(LC_CTYPE, "en_US.UTF-8") == NULL &&
+	    setlocale(LC_CTYPE, "C.UTF-8") == NULL)
+		abort();
 	global_environ = environ_create();
 	global_options = options_create(NULL);
 	global_s_options = options_create(NULL);
@@ -2639,6 +3081,7 @@ main(void)
 	}
 	test_base = osdep_event_init();
 	socket_path = xstrdup("dummy");
+	utf8_update_width_cache();
 
 	for (i = 0; i < nitems(tests); i++)
 		tests[i]();

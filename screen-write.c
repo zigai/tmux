@@ -326,6 +326,7 @@ screen_write_initctx(struct screen_write_ctx *ctx, struct tty_ctx *ttyctx,
 			tty_default_colours(&ttyctx->defaults, ctx->wp,
 			    &ttyctx->style_ctx.dim);
 			ttyctx->style_ctx.palette = &ctx->wp->palette;
+			ttyctx->style_ctx.wp = ctx->wp;
 			ttyctx->set_client_cb = screen_write_set_client_cb;
 			ttyctx->arg = ctx->wp;
 		}
@@ -2892,6 +2893,7 @@ screen_write_cell1(struct screen_write_ctx *ctx, const struct grid_cell *gc,
 #ifdef ENABLE_IMAGES
 	/* Mark images as damaged. */
 	image_damage_screen(ctx, s->cx, s->cy, width, 1);
+	image_damage_placeholder(ctx, gc, s->cx, s->cy);
 #endif
 
 	/* Clear tabs and wide characters cut by either end of the write. */
@@ -3155,6 +3157,7 @@ screen_write_combine(struct screen_write_ctx *ctx, const struct grid_cell *gc)
 #ifdef ENABLE_IMAGES
 	/* Mark images as damaged. */
 	image_damage_screen(ctx, cx - n, cy, n, 1);
+	image_damage_placeholder(ctx, &last, cx - n, cy);
 #endif
 
 	/* Set the new cell. */

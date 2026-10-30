@@ -208,7 +208,8 @@ static struct utf8_width_item utf8_default_width_cache[] = {
 	{ .wc = 0x1FAF5, .width = 2 },
 	{ .wc = 0x1FAF6, .width = 2 },
 	{ .wc = 0x1FAF7, .width = 2 },
-	{ .wc = 0x1FAF8, .width = 2 }
+	{ .wc = 0x1FAF8, .width = 2 },
+	{ .wc = 0x10EEEE, .width = 1 }
 };
 
 struct utf8_item {

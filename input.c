@@ -1077,6 +1077,9 @@ input_parse_buffer(struct window_pane *wp, const u_char *buf, size_t len)
 
 	input_parse(ictx, buf, len);
 	screen_write_stop(sctx);
+#ifdef ENABLE_IMAGES
+	kitty_update_placements(ictx->kitty_state, wp);
+#endif
 }
 
 /* Parse given input for screen. */
