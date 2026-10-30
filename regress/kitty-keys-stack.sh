@@ -32,7 +32,7 @@ replies()
 $TMUX new -d -x80 -y24 'exec sleep 100' || exit 1
 
 # Nothing is answered while extended-keys is off.
-replies '\033[?u\033[c' '\033[?1;2c'
+replies '\033[?u\033[5n' '\033[0n'
 
 $TMUX set -g extended-keys on || exit 1
 replies '\033[?u' '\033[?0u'
