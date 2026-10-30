@@ -685,8 +685,11 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "sync,"
 			      "usstyle,"
 			      "progressbar,"
-			      "kittyclipboard,"
 			      "kittygraphics"
+		},
+		{ .name = "ghostty",
+		  .version = 10400,
+		  .features = "kittyclipboard"
 		},
 		{ .name = "kitty",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","
@@ -699,8 +702,11 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "osc7,"
 			      "sync,"
 			      "usstyle,"
-			      "kittyclipboard,"
 			      "kittygraphics"
+		},
+		{ .name = "kitty",
+		  .version = 2700,
+		  .features = "kittyclipboard"
 		},
 		{ .name = "Rio",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","

@@ -58,8 +58,10 @@ def matches(name, value):
         return kind == "kitty(0.43.0)" and required <= features
     if name == "XDA-ghostty":
         return kind == "ghostty 1.2.0" and {
-            "kittyclipboard", "kittygraphics", "margins", "sync", "usstyle",
-            "progressbar"} <= features
+            "kittygraphics", "margins", "sync", "usstyle",
+            "progressbar"} <= features and "kittyclipboard" not in features
+    if name == "XDA-ghostty-1.4":
+        return kind == "ghostty 1.4.0" and "kittyclipboard" in features
     if name == "XDA-WezTerm":
         return kind == "WezTerm 20240203-110809-5046fc22" and {
             "sixel", "overline", "sync", "usstyle"} <= features and \
@@ -80,6 +82,7 @@ reports = [
     ("XDA-kitty", b"\033P>|kitty(0.43.0)\033\\"),
     ("XDA-kitty-nosync", b"\033P>|kitty(0.43.0)\033\\"),
     ("XDA-ghostty", b"\033P>|ghostty 1.2.0\033\\"),
+    ("XDA-ghostty-1.4", b"\033P>|ghostty 1.4.0\033\\"),
     ("XDA-WezTerm", b"\033P>|WezTerm 20240203-110809-5046fc22\033\\"),
     ("sync", b"\033[?2026;2$y"),
     ("kitty-graphics", b"\033_Gi=31;OK\033\\"),

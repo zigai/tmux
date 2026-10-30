@@ -1713,6 +1713,17 @@ tty_keys_device_attributes2(struct tty *tty, const char *buf, size_t len,
 	return (0);
 }
 
+/* Convert a version such as 1.4.0 to a number to compare, 0 if unknown. */
+static u_int
+tty_keys_version(const char *s)
+{
+	u_int	major, minor, patch = 0;
+
+	if (sscanf(s, "%u.%u.%u", &major, &minor, &patch) < 2)
+		return (0);
+	return (major * 10000 + minor * 100 + patch);
+}
+
 /*
  * Handle extended device attributes input. Returns 0 for success, -1 for
  * failure, 1 for partial.
@@ -1774,11 +1785,11 @@ tty_keys_extended_device_attributes(struct tty *tty, const char *buf,
 	else if (strncmp(tmp, "foot(", 5) == 0)
 		tty_default_features(c, "foot", 0);
 	else if (strncmp(tmp, "kitty(", 6) == 0)
-		tty_default_features(c, "kitty", 0);
+		tty_default_features(c, "kitty", tty_keys_version(tmp + 6));
 	else if (strncmp(tmp, "WezTerm ", 7) == 0)
 		tty_default_features(c, "WezTerm", 0);
 	else if (strncmp(tmp, "ghostty ", 8) == 0)
-		tty_default_features(c, "ghostty", 0);
+		tty_default_features(c, "ghostty", tty_keys_version(tmp + 8));
 	else if (strncmp(tmp, "Rio ", 4) == 0)
 		tty_default_features(c, "Rio", 0);
 	log_debug("%s: received extended DA %.*s", c->name, (int)*size, buf);
