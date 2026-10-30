@@ -119,6 +119,13 @@ TAILQ_HEAD(kitty_states, kitty_state);
 /* Kitty input states holding uploaded images. */
 static struct kitty_states kitty_states = TAILQ_HEAD_INITIALIZER(kitty_states);
 
+/* A virtual placement fitted for one cell size. */
+struct kitty_fit {
+	u_int	xpixel;
+	u_int	ypixel;
+	u_int	image_id;
+};
+
 /* Map a Kitty placement ID to an image ID. */
 struct kitty_placement_map {
 	u_int					 kitty_id;
@@ -138,6 +145,14 @@ struct kitty_placement_map {
 	/* Last known origin in absolute grid coordinates. */
 	int64_t					 x;
 	int64_t					 y;
+
+	/* Requested cells and fits for other cell sizes of a virtual one. */
+	u_int					 cols;
+	u_int					 rows;
+	u_int					 xpixel;
+	u_int					 ypixel;
+	struct kitty_fit			*fits;
+	u_int					 nfits;
 
 	TAILQ_ENTRY(kitty_placement_map)	 entry;
 };
@@ -1120,12 +1135,19 @@ static void
 kitty_placement_free(struct kitty_placement_map *kpl)
 {
 	struct image	*im;
+	u_int		 i;
 
 	if (kpl->flags & (KITTY_PLACEMENT_VIRTUAL|KITTY_PLACEMENT_RELATIVE)) {
 		im = image_find(kpl->image_id);
 		if (im != NULL)
 			image_free(im);
 	}
+	for (i = 0; i < kpl->nfits; i++) {
+		im = image_find(kpl->fits[i].image_id);
+		if (im != NULL)
+			image_free(im);
+	}
+	free(kpl->fits);
 	free(kpl);
 }
 
@@ -1177,11 +1199,18 @@ kitty_remove_image(struct image *im)
 	struct kitty_state		*ks;
 	struct kitty_image_map		*map, *next;
 	struct kitty_placement_map	*kpl, *kpl1;
-	u_int				 id = image_get_id(im);
+	u_int				 id = image_get_id(im), i;
 
 	TAILQ_FOREACH(ks, &kitty_states, entry) {
 		TAILQ_FOREACH_SAFE(map, &ks->images, entry, next) {
 			TAILQ_FOREACH_SAFE(kpl, &map->placements, entry, kpl1) {
+				for (i = 0; i < kpl->nfits; i++) {
+					if (kpl->fits[i].image_id != id)
+						continue;
+					kpl->fits[i] = kpl->fits[--kpl->nfits];
+					image_free(im);
+					break;
+				}
 				if (map->image_id != id && kpl->image_id != id)
 					continue;
 				TAILQ_REMOVE(&map->placements, kpl, entry);
@@ -1295,6 +1324,8 @@ kitty_placement_map_set(struct screen_write_ctx *ctx,
     struct kitty_image_map *map, u_int id, struct image *im, int flags)
 {
 	struct kitty_placement_map	*kpl, *kpl1;
+	struct image			*old;
+	u_int				 i;
 
 	if (map == NULL)
 		return (NULL);
@@ -1317,6 +1348,11 @@ kitty_placement_map_set(struct screen_write_ctx *ctx,
 		if (kpl->flags & (KITTY_PLACEMENT_VIRTUAL|
 		    KITTY_PLACEMENT_RELATIVE))
 			image_free(image_find(kpl->image_id));
+		for (i = 0; i < kpl->nfits; i++) {
+			if ((old = image_find(kpl->fits[i].image_id)) != NULL)
+				image_free(old);
+		}
+		kpl->nfits = 0;
 	}
 	kpl->image_id = image_get_id(im);
 	kpl->flags = flags;
@@ -1586,7 +1622,8 @@ kitty_run_get(struct kitty_run *run, struct grid *gd, u_int x, u_int y,
 
 /* Find the virtual placement a decoded placeholder cell shows. */
 static struct kitty_placement_map *
-kitty_cell_target(struct kitty_state *ks, struct kitty_cell *kc)
+kitty_cell_target(struct kitty_state *ks, struct kitty_cell *kc,
+    struct kitty_image_map **mapp)
 {
 	struct kitty_image_map	*map;
 
@@ -1595,20 +1632,62 @@ kitty_cell_target(struct kitty_state *ks, struct kitty_cell *kc)
 	map = kitty_image_map_find(ks, kc->low);
 	if (map == NULL)
 		return (NULL);
+	if (mapp != NULL)
+		*mapp = map;
 	return (kitty_placement_select(map, kc->placement, 1));
+}
+
+static struct image	*kitty_virtual_image(struct image *, u_int, u_int,
+    u_int, u_int);
+
+/*
+ * Get a virtual placement fitted for a cell size, creating it the first time
+ * that size is used.
+ */
+static struct image *
+kitty_virtual_fit(struct kitty_image_map *map, struct kitty_placement_map *kpl,
+    u_int xpixel, u_int ypixel)
+{
+	struct image	*src, *im;
+	u_int		 i;
+
+	if (xpixel == 0)
+		xpixel = 8;
+	if (ypixel == 0)
+		ypixel = 16;
+	if (xpixel == kpl->xpixel && ypixel == kpl->ypixel)
+		return (image_find(kpl->image_id));
+	for (i = 0; i < kpl->nfits; i++) {
+		if (kpl->fits[i].xpixel == xpixel &&
+		    kpl->fits[i].ypixel == ypixel)
+			return (image_find(kpl->fits[i].image_id));
+	}
+	if ((src = image_find(map->image_id)) == NULL)
+		return (NULL);
+	im = kitty_virtual_image(src, kpl->cols, kpl->rows, xpixel, ypixel);
+	if (im == NULL)
+		return (NULL);
+	kpl->fits = xreallocarray(kpl->fits, kpl->nfits + 1,
+	    sizeof *kpl->fits);
+	kpl->fits[kpl->nfits].xpixel = xpixel;
+	kpl->fits[kpl->nfits].ypixel = ypixel;
+	kpl->fits[kpl->nfits].image_id = image_get_id(im);
+	kpl->nfits++;
+	return (im);
 }
 
 /*
  * Find the image and the cell within it shown by a placeholder cell in a
- * pane's grid. The run carries inferred values between calls for adjacent
- * cells and may be NULL.
+ * pane's grid, fitted for a cell size. The run carries inferred values
+ * between calls for adjacent cells and may be NULL.
  */
 int
 kitty_placeholder_get(struct window_pane *wp, struct kitty_run *run,
     struct grid *gd, u_int x, u_int y, const struct grid_cell *gc,
-    struct image **im, u_int *col, u_int *row)
+    u_int xpixel, u_int ypixel, struct image **im, u_int *col, u_int *row)
 {
 	struct kitty_state		*ks;
+	struct kitty_image_map		*map;
 	struct kitty_placement_map	*kpl;
 	struct kitty_run		 local = { 0 };
 	struct kitty_cell		 kc;
@@ -1623,9 +1702,9 @@ kitty_placeholder_get(struct window_pane *wp, struct kitty_run *run,
 		run = &local;
 	if (!kitty_run_get(run, gd, x, y, gc, &kc))
 		return (0);
-	if ((kpl = kitty_cell_target(ks, &kc)) == NULL)
+	if ((kpl = kitty_cell_target(ks, &kc, &map)) == NULL)
 		return (0);
-	if ((*im = image_find(kpl->image_id)) == NULL)
+	if ((*im = kitty_virtual_fit(map, kpl, xpixel, ypixel)) == NULL)
 		return (0);
 	ig = image_get_geometry(*im);
 	if ((u_int)kc.col >= ig->sx || (u_int)kc.row >= ig->sy)
@@ -1782,10 +1861,34 @@ kitty_children_missing(struct kitty_state *ks, struct grid *gd,
 	return (0);
 }
 
+/* Remove the relative placements below a parent from the grid. */
+static int
+kitty_hide_children(struct kitty_state *ks, struct grid *gd,
+    struct kitty_placement_map *parent)
+{
+	struct kitty_image_map		*map;
+	struct kitty_placement_map	*kpl;
+	int				 hidden = 0;
+
+	TAILQ_FOREACH(map, &ks->images, entry) {
+		TAILQ_FOREACH(kpl, &map->placements, entry) {
+			if ((~kpl->flags & KITTY_PLACEMENT_RELATIVE) ||
+			    kpl->parent != parent->serial)
+				continue;
+			if (image_grid_clear(gd, kpl->image_id) != 0)
+				hidden = 1;
+			kpl->flags &= ~KITTY_PLACEMENT_ANCHORED;
+			if (kitty_hide_children(ks, gd, kpl))
+				hidden = 1;
+		}
+	}
+	return (hidden);
+}
+
 /*
  * Anchor relative placements of a virtual placement at the top-left of the
  * visible placeholder cells showing it. If there are none, the relative
- * placements stay where they are.
+ * placements are hidden until there are.
  */
 static int
 kitty_anchor_virtual(struct kitty_state *ks, struct grid *gd,
@@ -1807,7 +1910,7 @@ kitty_anchor_virtual(struct kitty_state *ks, struct grid *gd,
 			grid_get_cell(gd, x, y, &gc);
 			if (!kitty_run_add(&run, &gc, &kc))
 				continue;
-			if (kitty_cell_target(ks, &kc) != kpl)
+			if (kitty_cell_target(ks, &kc, NULL) != kpl)
 				continue;
 			if (!found || x < min_x)
 				min_x = x;
@@ -1816,8 +1919,10 @@ kitty_anchor_virtual(struct kitty_state *ks, struct grid *gd,
 			found = 1;
 		}
 	}
-	if (!found)
-		return (0);
+	if (!found) {
+		kpl->flags &= ~KITTY_PLACEMENT_ANCHORED;
+		return (kitty_hide_children(ks, gd, kpl));
+	}
 	if ((kpl->flags & KITTY_PLACEMENT_ANCHORED) &&
 	    kpl->x == min_x &&
 	    kpl->y == min_y &&
@@ -2327,8 +2432,8 @@ kitty_place_image(struct image *src, struct kitty_command *cmd, u_int xpixel,
  * to the cells, keeping its aspect ratio and centred on the shorter axis.
  */
 static struct image *
-kitty_virtual_image(struct image *src, struct kitty_command *cmd,
-    u_int xpixel, u_int ypixel)
+kitty_virtual_image(struct image *src, u_int cols, u_int rows, u_int xpixel,
+    u_int ypixel)
 {
 	struct image_geom	*sg = image_get_geometry(src);
 	struct image_geom	 ig = { 0 };
@@ -2346,10 +2451,10 @@ kitty_virtual_image(struct image *src, struct kitty_command *cmd,
 	ig.src_h = sg->src_h;
 
 	/* Use the requested cells or enough for the image's own size. */
-	ig.sx = cmd->cols;
+	ig.sx = cols;
 	if (ig.sx == 0)
 		ig.sx = ig.src_w / xpixel + (ig.src_w % xpixel != 0);
-	ig.sy = cmd->rows;
+	ig.sy = rows;
 	if (ig.sy == 0)
 		ig.sy = ig.src_h / ypixel + (ig.src_h % ypixel != 0);
 	if (ig.sx > USHRT_MAX || ig.sy > USHRT_MAX)
@@ -2443,8 +2548,18 @@ kitty_display(struct kitty_state *ks, struct window_pane *wp,
 	struct kitty_placement_map	*kpl;
 
 	if (cmd->unicode) {
-		kitty_placement_map_set(ctx, map, cmd->placement_id, im,
+		kpl = kitty_placement_map_set(ctx, map, cmd->placement_id, im,
 		    KITTY_PLACEMENT_VIRTUAL);
+		if (kpl != NULL) {
+			kpl->cols = cmd->cols;
+			kpl->rows = cmd->rows;
+			kpl->xpixel = wp->window->xpixel;
+			if (kpl->xpixel == 0)
+				kpl->xpixel = 8;
+			kpl->ypixel = wp->window->ypixel;
+			if (kpl->ypixel == 0)
+				kpl->ypixel = 16;
+		}
 		wp->flags |= PANE_REDRAW;
 		return ("OK");
 	}
@@ -2479,7 +2594,8 @@ kitty_handle_place(struct kitty_state *ks, struct window_pane *wp,
 	image_ref(src);
 
 	if (cmd->unicode)
-		im = kitty_virtual_image(src, cmd, w->xpixel, w->ypixel);
+		im = kitty_virtual_image(src, cmd->cols, cmd->rows, w->xpixel,
+		    w->ypixel);
 	else
 		im = kitty_place_image(src, cmd, w->xpixel, w->ypixel);
 	if (im == NULL) {
@@ -2563,8 +2679,8 @@ kitty_handle_transmit(struct kitty_state *ks, struct window_pane *wp,
 
 	if (cmd->action == KITTY_ACTION_TRANSMIT_AND_DISPLAY) {
 		if (cmd->unicode) {
-			im = kitty_virtual_image(src, cmd, w->xpixel,
-			    w->ypixel);
+			im = kitty_virtual_image(src, cmd->cols, cmd->rows,
+			    w->xpixel, w->ypixel);
 		} else
 			im = kitty_place_image(src, cmd, w->xpixel, w->ypixel);
 		if (im == NULL) {

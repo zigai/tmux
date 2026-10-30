@@ -49,10 +49,12 @@ def text(x, y, sgr=b'38;5;7', infer=False):
 
 
 def expected(x, y, cw=8, ch=16):
-    """Pixels of the image fitted to its cells at a pane position."""
-    w, h = 4 * cw, 2 * ch
-    return {(x * cw + xx, y * ch + yy): colours[2 * (yy >= h // 2) +
-        (xx >= w // 2)] for yy in range(h) for xx in range(w)}
+    """Pixels of the image fitted and centred in its cells at a position."""
+    size = min(4 * cw, 2 * ch)
+    left = x * cw + (4 * cw - size) // 2
+    top = y * ch + (2 * ch - size) // 2
+    return {(left + xx, top + yy): colours[2 * (yy >= size // 2) +
+        (xx >= size // 2)] for yy in range(size) for xx in range(size)}
 
 
 def check(client, terminal, wanted):
@@ -117,13 +119,17 @@ with image_test(sys.argv[1]) as test:
     check(client, terminal, {})
     large = test.attach(kitty_graphics=True, cw=16, ch=32)
     large_terminal = KittyTerminal(cw=16, ch=32)
+    square = test.attach(kitty_graphics=True, cw=16, ch=16)
+    square_terminal = KittyTerminal(cw=16, ch=16)
     test.emit(b'\033[2J' + text(3, 2))
     check(client, terminal, expected(3, 2))
     check(large, large_terminal, expected(3, 2, 16, 32))
+    check(square, square_terminal, expected(3, 2, 16, 16))
     test.redraw()
     check(client, terminal, expected(3, 2))
     check(large, large_terminal, expected(3, 2, 16, 32))
-    assert large_terminal.uploads == 1
+    check(square, square_terminal, expected(3, 2, 16, 16))
+    assert large_terminal.uploads == 1 and square_terminal.uploads == 1
 
     # Deleting the virtual placement removes the image from the terminal.
     test.emit(kitty('a=d,d=i,i=7'))

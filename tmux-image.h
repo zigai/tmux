@@ -245,7 +245,8 @@ void			 kitty_update_placements(void *,
 int			 kitty_is_placeholder(const struct utf8_data *);
 int			 kitty_placeholder_get(struct window_pane *,
     struct kitty_run *, struct grid *, u_int, u_int,
-    const struct grid_cell *, struct image **, u_int *, u_int *);
+    const struct grid_cell *, u_int, u_int, struct image **, u_int *,
+    u_int *);
 const struct grid_cell	*kitty_map_placeholder(struct tty *,
     struct image *, u_int, u_int, const struct grid_cell *,
     struct grid_cell *);

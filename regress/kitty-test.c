@@ -491,7 +491,23 @@ test_resolves_any(u_int x, u_int y)
 	if (!kitty_is_placeholder(&gc.data))
 		return (0);
 	return (kitty_placeholder_get(test_wp, NULL, gd, x, gd->hsize + y, &gc,
-	    &im, &col, &row));
+	    8, 16, &im, &col, &row));
+}
+
+/* Find the fit a placeholder cell shows for a client cell size. */
+static const struct image_geom *
+test_fit_at(u_int x, u_int y, u_int xpixel, u_int ypixel)
+{
+	struct grid		*gd = test_wp->base.grid;
+	struct grid_cell	 gc;
+	struct image		*im;
+	u_int			 col, row;
+
+	grid_view_get_cell(gd, x, y, &gc);
+	if (!kitty_placeholder_get(test_wp, NULL, gd, x, gd->hsize + y, &gc,
+	    xpixel, ypixel, &im, &col, &row))
+		return (NULL);
+	return (image_get_geometry(im));
 }
 
 /* Check the image, placement and cell shown by a placeholder cell. */
@@ -509,7 +525,7 @@ test_resolves(u_int x, u_int y, u_int id, u_int placement_id, u_int col,
 		return (0);
 	grid_view_get_cell(gd, x, y, &gc);
 	if (!kitty_placeholder_get(test_wp, NULL, gd, x, gd->hsize + y, &gc,
-	    &im, &c, &r))
+	    8, 16, &im, &c, &r))
 		return (0);
 	return (image_get_id(im) == kpl->image_id && c == col && r == row);
 }
@@ -2608,7 +2624,9 @@ test_virtual_fit(u_int id, u_int p, u_int sx, u_int sy, u_int xoff,
 static int
 test_handle_place_virtual(void)
 {
-	const char	*reply;
+	const struct image_geom	*ig;
+	const char		*reply;
+	char			 s[256];
 
 	test_pane_new();
 	test_graphics("a=t,i=1,f=32,s=2,v=1,q=2", test_fill(2, 1, test_red));
@@ -2632,6 +2650,28 @@ test_handle_place_virtual(void)
 	test_graphics("a=p,i=3,U=1,q=2", NULL);
 	TEST_ASSERT("place_virtual: natural size",
 	    test_virtual_fit(3, 0, 2, 2, 0, 3, 16, 80.0 / 3));
+
+	/* Each client cell size gets its own fit of the same placement. */
+	test_graphics("a=t,i=4,f=32,s=8,v=16,q=2", test_fill(8, 16, test_red));
+	test_graphics("a=p,i=4,U=1,q=2", NULL);
+	test_cursor(0, 0);
+	test_input("\033[38;5;4m");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	test_input(test_placeholder(s, sizeof s, 0, 1, -1));
+	test_input("\033[0m");
+	ig = test_fit_at(1, 0, 4, 8);
+	TEST_ASSERT("place_virtual: small cells",
+	    test_fit_at(1, 0, 8, 16) == NULL && ig != NULL &&
+	    ig->sx == 2 && ig->sy == 2);
+	ig = test_fit_at(0, 0, 16, 16);
+	TEST_ASSERT("place_virtual: wide cells",
+	    ig != NULL && ig->sx == 1 && ig->sy == 1 &&
+	    ig->canvas_xoff == 4 && ig->canvas_yoff == 0 &&
+	    fabs(ig->scaled_width - 8) < 0.001);
+	TEST_ASSERT("place_virtual: fit reused",
+	    test_fit_at(0, 0, 16, 16) == ig);
+	test_graphics("a=d,d=I,i=4", NULL);
+	TEST_ASSERT("place_virtual: fits freed", test_image(4) == NULL);
 
 	/* Area deletes leave virtual placements; image deletes remove them. */
 	test_graphics("a=d,d=a", NULL);
@@ -2788,14 +2828,25 @@ test_relative_virtual_parent(void)
 	TEST_ASSERT("relative_virtual: moved",
 	    test_placement_at(2, 1, 3, 7) && !test_placed_at(6, 3));
 
-	/* Without placeholders the relative placement stays where it was. */
+	/* Without visible placeholders the relative placement is hidden. */
 	test_input("\033[0m\033[8;5H \033[10;3H ");
-	TEST_ASSERT("relative_virtual: kept", test_placement_at(2, 1, 3, 7));
+	TEST_ASSERT("relative_virtual: hidden",
+	    test_count_placements(2) == 0 && !test_placed_at(3, 7));
 
-	/* Placeholders printed again after a clear bring it back. */
-	test_input("\033[2J\033[38;5;50m\033[8;3H");
+	/* Placeholders printed again bring it back. */
+	test_input("\033[38;5;50m\033[8;3H");
 	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
 	TEST_ASSERT("relative_virtual: restored",
+	    test_placement_at(2, 1, 3, 7));
+
+	/* Scrolling the placeholders out of view hides it too. */
+	test_input("\033[0m\033[24;1H");
+	test_input("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+	TEST_ASSERT("relative_virtual: scrolled away",
+	    test_count_placements(2) == 0);
+	test_input("\033[2J\033[38;5;50m\033[8;3H");
+	test_input(test_placeholder(s, sizeof s, 0, 0, -1));
+	TEST_ASSERT("relative_virtual: shown again",
 	    test_placement_at(2, 1, 3, 7));
 
 	test_graphics("a=d,d=i,i=50", NULL);

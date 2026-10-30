@@ -253,8 +253,8 @@ image_map_cell(struct tty *tty, struct window_pane *wp, struct kitty_run *run,
 	if (kitty_is_placeholder(&gc->data)) {
 		if (wp != NULL &&
 		    backend->map_placeholder != NULL &&
-		    kitty_placeholder_get(wp, run, gd, x, y, gc, &im, &col,
-		    &row))
+		    kitty_placeholder_get(wp, run, gd, x, y, gc, tty->xpixel,
+		    tty->ypixel, &im, &col, &row))
 			gcp = backend->map_placeholder(tty, im, col, row, gc,
 			    out);
 		if (gcp == NULL)
@@ -328,8 +328,8 @@ image_draw_placeholders(struct image_backend *backend, struct tty *tty,
 	for (x = px; x < end; x++) {
 		grid_get_cell(gd, x, gy, &gc);
 		if (!kitty_is_placeholder(&gc.data) ||
-		    !kitty_placeholder_get(wp, &run, gd, x, gy, &gc, &im, &col,
-		    &row)) {
+		    !kitty_placeholder_get(wp, &run, gd, x, gy, &gc,
+		    tty->xpixel, tty->ypixel, &im, &col, &row)) {
 			image_draw_placeholder_rect(backend, tty, &rect);
 			continue;
 		}
