@@ -5223,7 +5223,7 @@ window_copy_write_one(struct window_mode_entry *wme,
 	for (fx = 0; fx < nx; fx++) {
 		grid_get_cell(gd, fx, fy, &gc);
 		if (gc.range != 0)
-			pane_ranges_copy_cell(wme->swp, &gc);
+			pane_ranges_copy_cell(wme, &gc);
 		if (fx + gc.data.width <= nx) {
 			window_copy_update_style(wme, fx, fy, &gc, mgc, cgc,
 			    mkgc, clgc);

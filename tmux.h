@@ -3570,7 +3570,7 @@ struct pane_ranges	 *pane_ranges_drawing(struct window_pane *,
     struct screen *);
 void			  pane_ranges_draw_cell(struct pane_ranges *,
     struct grid_cell *);
-void			  pane_ranges_copy_cell(struct window_pane *,
+void			  pane_ranges_copy_cell(struct window_mode_entry *,
     struct grid_cell *);
 int			  pane_ranges_redraw_cells(struct tty *,
     const struct tty_ctx *, u_int);

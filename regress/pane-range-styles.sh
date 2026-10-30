@@ -235,6 +235,20 @@ assert_line 1 "${E}[45mhe${E}[41mllo${E}[49m world" 'selection precedence'
 $TMUX send -t "$pane" -X cancel || fail cancel
 assert_line 1 "${E}[41mhello${E}[49m world" 'style after copy mode'
 
+# Copy mode of another pane does not draw that pane's ranges and survives the
+# pane being killed.
+fresh source
+a=$(new -s 'bg=red' -r 0:0-0:4)
+src=$pane
+pane=$($TMUX split-window -P -F '#{pane_id}' -t "$src" 'exec cat') ||
+    fail split
+$TMUX copy-mode -t "$pane" -s "$src" || fail 'copy mode'
+$TMUX kill-pane -t "$src" || fail 'kill source'
+$TMUX send -t "$pane" -X top-line || fail top
+$TMUX send -t "$pane" -X cursor-down || fail down
+assert_line 1 'hello world' 'source range drawn in copy mode'
+$TMUX display -t "$pane" -p ok >/dev/null || fail 'server died'
+
 # With no range styles drawn, the client gets the same bytes as for a pane
 # without ranges, both for a full redraw and for output.
 fresh plain

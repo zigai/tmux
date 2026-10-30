@@ -1348,16 +1348,20 @@ pane_ranges_draw_cell(struct pane_ranges *prs, struct grid_cell *gc)
 
 /*
  * Apply the style of the ranges of a cell copied from a pane into a mode
- * screen and remove the ranges from it.
+ * screen and remove the ranges from it. Cells copied from another pane are
+ * not kept in step with its ranges, and that pane may be gone, so only the
+ * ranges are removed.
  */
 void
-pane_ranges_copy_cell(struct window_pane *wp, struct grid_cell *gc)
+pane_ranges_copy_cell(struct window_mode_entry *wme, struct grid_cell *gc)
 {
 	struct pane_ranges	*prs;
 
-	prs = pane_ranges_drawing(wp, &wp->base);
-	if (prs != NULL)
-		pane_ranges_draw_cell(prs, gc);
+	if (wme->swp == wme->wp) {
+		prs = pane_ranges_drawing(wme->wp, &wme->wp->base);
+		if (prs != NULL)
+			pane_ranges_draw_cell(prs, gc);
+	}
 	gc->range = 0;
 }
 
