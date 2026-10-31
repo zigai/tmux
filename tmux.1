@@ -2241,6 +2241,13 @@ Move to the next paragraph.
 .Xc
 Move to the next prompt.
 .It Xo
+.Ic next\-range
+.Op Ar group
+.Xc
+Move to the start of the next range, or the next range in
+.Ar group .
+A range starts at its first cell.
+.It Xo
 .Ic next\-word
 (vi: w)
 .Xc
@@ -2366,6 +2373,12 @@ Move to the previous paragraph.
 .Op Fl o
 .Xc
 Move to the previous prompt.
+.It Xo
+.Ic previous\-range
+.Op Ar group
+.Xc
+Move to the start of the previous range, or the previous range in
+.Ar group .
 .It Xo
 .Ic previous\-word
 (vi: b)
@@ -4433,11 +4446,15 @@ destroyed.
 .Tg new-range
 .It Xo Ic new\-range
 .Op Fl P
+.Op Fl a Ar anchor
+.Op Fl b Ar before
+.Op Fl e Ar after
 .Op Fl F Ar format
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
 .Op Fl g Ar group
-.Pq Fl S | Fl r Ar range
+.Op Fl s Ar style
+.Pq Fl S | Fl r Ar range | Fl m Ar text
 .Xc
 Create a range over text in a pane.
 A range has an unsigned ID, unique for the lifetime of the server and never
@@ -4467,6 +4484,22 @@ The text of the range is captured as copy mode would copy it, joining wrapped
 rows, omitting padding and trimming trailing spaces on rows that are not
 wrapped.
 .Pp
+.Fl a
+sets how the range follows its text, either
+.Ql grid
+or
+.Ql text .
+The default is
+.Ql text
+on the alternate screen or with
+.Fl m
+and
+.Ql grid
+otherwise.
+.Pp
+A
+.Ql grid
+range is stored in the cells.
 Each covered cell is tagged with the range, as an OSC 8 hyperlink is, so the
 range is carried by the cell when the text scrolls into history, is trimmed
 from it, is moved by line insertion, deletion or a scroll region, is reflowed
@@ -4486,19 +4519,106 @@ The alternate screen is shown and the cells are in the saved primary screen.
 No cell is tagged.
 .El
 .Pp
-Ranges created on the alternate screen are gone when it is left.
+Grid ranges created on the alternate screen are gone when it is left.
 Respawning a pane clears its screen.
 Ranges that are gone remain listed until killed.
+.Pp
+A
+.Ql text
+range follows its text on the visible screen, for applications such as
+full-screen editors that redraw their own screen.
+Its text is taken from
+.Fl S
+or
+.Fl r ,
+or given with
+.Fl m .
+The text matches where the visible screen shows the same text, with each run of
+spaces, tabs and line breaks in the text and each run of spaces and breaks
+between rows on the screen treated as one space; rows wrapped by
+.Nm
+are joined without a space.
+If given,
+.Fl b
+and
+.Fl e
+must match the text immediately before and after it, ignoring any space
+between them.
+Of several matches, the one nearest the last position of the range is used,
+first by line and then by column.
+The range is searched for only on the screen, primary or alternate, on which it
+was created or last moved, and only when the text on that screen has changed
+and no synchronized update is in progress.
+Its state is one of:
+.Bl -tag -width Ds -offset indent
+.It live
+The text is shown in full.
+.It clipped
+Part of the text is the first text on the screen and starts on the top row, or
+the last text on the screen and ends on the bottom row, with the rest off the
+screen.
+The part ends or starts at a space in the text.
+Only
+.Fl e
+is checked for text clipped at the top and only
+.Fl b
+at the bottom.
+A full match is used before a clipped one.
+.It ambiguous
+There are several matches and none is nearest, or the range has never been
+found and there are several matches.
+.It hidden
+The text is not shown.
+.It suspended
+The other screen is shown.
+.El
+.Pp
+The position of a text range is that of the text found, and is empty if it is
+ambiguous or hidden.
+.Pp
+.Fl s
+sets the style used to draw the cells of the range; without it, the
+.Ic pane\-range\-style
+option is used.
+The style is a format expanded with the range formats, so it can depend on
+the range, for example:
+.Bd -literal -offset indent
+new-range -r 0:0-0:9 -s '#{?#{==:#{range_state},live},bg=colour237,dim}'
+.Ed
+.Pp
+The style is applied when the pane is drawn and is never part of the pane
+contents, so it does not appear in
+.Ic capture\-pane
+output or copied text.
+Where ranges overlap, their styles are combined and the newest range wins
+where they conflict.
+In copy mode, the selection, search matches and the current line style are
+drawn over range styles; copy mode showing another pane does not draw its
+range styles.
+.Ic pane\-ranges
+hides all range styles.
 .Tg set-range
 .It Xo Ic set\-range
+.Op Fl b Ar before
+.Op Fl e Ar after
 .Op Fl t Ar target-pane
 .Op Fl n Ar name
+.Op Fl s Ar style
 .Op Fl r Ar range
 .Ar range-id
 .Xc
-Change the name of a range or, with
+Change the name or style of a range or, with
 .Fl r ,
 move it to different cells and capture its text again.
+.Fl b
+and
+.Fl e
+change the text that must be before and after a text range; an empty string
+removes it.
+An empty
+.Ar style
+makes the range use
+.Ic pane\-range\-style .
 .Tg kill-range
 .It Xo Ic kill\-range
 .Op Fl t Ar target-pane
@@ -6546,6 +6666,21 @@ see the
 section.
 Attributes are ignored.
 .Pp
+.It Ic pane\-range\-style Ar style
+Set the style of pane ranges that do not have their own; see
+.Ic new\-range .
+The style is expanded as a format for each range.
+For how to specify
+.Ar style ,
+see the
+.Sx STYLES
+section.
+.Pp
+.It Xo Ic pane\-ranges
+.Op Ic on | off
+.Xc
+If off, pane ranges are drawn without their styles.
+.Pp
 .It Xo Ic pane\-scrollbars
 .Op Cm off | modal | on | auto\-hide
 .Xc
@@ -7226,12 +7361,38 @@ and a location suffix, one of the following:
 .It Li "ScrollbarUp" Ta "above the scrollbar slider"
 .It Li "ScrollbarDown" Ta "below the scrollbar slider"
 .It Li "Empty" Ta "empty space in the window"
+.It Li "Range" Ta "a pane range in the contents of a pane"
 .It Li "ControlN" Ta "on control range N"
 .El
 .Pp
 See the
 .Sx STYLES
 section for information on control ranges.
+.Pp
+.Ql Range
+is used instead of
+.Ql Pane
+when the cell under the mouse is covered by a range (see
+.Ic new\-range ) ,
+including in copy mode.
+If a
+.Ql Range
+key has no binding in a key table, the matching
+.Ql Pane
+binding in that table is used, so ranges change nothing without
+configuration.
+The
+.Ql mouse_range_id ,
+.Ql mouse_range_name
+and
+.Ql mouse_range_group
+formats give the newest range under the mouse.
+A binding decides whether the application in the pane also gets the event,
+for example:
+.Bd -literal -offset indent
+bind -n MouseUp1Range if -F '#{mouse_any_flag}' 'send -M' \e
+    'display "#{mouse_range_name}"'
+.Ed
 .Pp
 The following mouse events are available:
 .Bl -column "MouseDown1" "MouseDrag1" "WheelDown" -offset indent
@@ -7877,6 +8038,7 @@ The following variables are available, where appropriate:
 .It Li "copy_command_status" Ta "" Ta "OSC 133 exit status when the block is completed"
 .It Li "copy_cursor_hyperlink" Ta "" Ta "Hyperlink under cursor in copy mode"
 .It Li "copy_cursor_line" Ta "" Ta "Line the cursor is on in copy mode"
+.It Li "copy_cursor_range_id" Ta "" Ta "ID of newest range under cursor in copy mode"
 .It Li "copy_cursor_word" Ta "" Ta "Word under cursor in copy mode"
 .It Li "copy_cursor_x" Ta "" Ta "Cursor X position in copy mode"
 .It Li "copy_cursor_y" Ta "" Ta "Cursor Y position in copy mode"
@@ -7938,6 +8100,9 @@ The following variables are available, where appropriate:
 .It Li "mouse_button_flag" Ta "" Ta "Pane mouse button flag"
 .It Li "mouse_hyperlink" Ta "" Ta "Hyperlink under mouse, if any"
 .It Li "mouse_line" Ta "" Ta "Line under mouse, if any"
+.It Li "mouse_range_group" Ta "" Ta "Group of newest range under mouse, if any"
+.It Li "mouse_range_id" Ta "" Ta "ID of newest range under mouse, if any"
+.It Li "mouse_range_name" Ta "" Ta "Name of newest range under mouse, if any"
 .It Li "mouse_sgr_flag" Ta "" Ta "Pane mouse SGR flag"
 .It Li "mouse_standard_flag" Ta "" Ta "Pane mouse standard flag"
 .It Li "mouse_status_line" Ta "" Ta "Status line on which mouse event took place"
@@ -8037,16 +8202,18 @@ The following variables are available, where appropriate:
 .It Li "program_title" Ta "" Ta "Program status title"
 .It Li "prev_window_active" Ta "" Ta "1 if previous window in W: loop is active"
 .It Li "prev_window_index" Ta "" Ta "Index of previous window in W: loop"
-.It Li "range_end_line" Ta "" Ta "History line of last tagged cell, or empty if gone"
-.It Li "range_end_x" Ta "" Ta "Column of last tagged cell, or empty if gone"
+.It Li "range_anchor" Ta "" Ta "Range anchor, one of grid, text"
+.It Li "range_end_line" Ta "" Ta "History line of last cell, or empty if gone, ambiguous or hidden"
+.It Li "range_end_x" Ta "" Ta "Column of last cell, or empty if gone, ambiguous or hidden"
 .It Li "range_group" Ta "" Ta "Range group"
 .It Li "range_id" Ta "" Ta "Range ID"
 .It Li "range_name" Ta "" Ta "Range name"
-.It Li "range_start_line" Ta "" Ta "History line of first tagged cell, or empty if gone"
-.It Li "range_start_x" Ta "" Ta "Column of first tagged cell, or empty if gone"
-.It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone"
+.It Li "range_start_line" Ta "" Ta "History line of first cell, or empty if gone, ambiguous or hidden"
+.It Li "range_start_x" Ta "" Ta "Column of first cell, or empty if gone, ambiguous or hidden"
+.It Li "range_state" Ta "" Ta "Range state, one of live, modified, suspended, gone, clipped, ambiguous, hidden"
+.It Li "range_style" Ta "" Ta "Style of range, or empty to use pane-range-style"
 .It Li "range_text" Ta "" Ta "Text captured when range was created or moved"
-.It Li "range_visible_y" Ta "" Ta "First visible row with a tagged cell, or empty"
+.It Li "range_visible_y" Ta "" Ta "First visible row with a cell of range, or empty"
 .It Li "rectangle_toggle" Ta "" Ta "1 if rectangle selection is activated"
 .It Li "refresh_active" Ta "" Ta "1 if copy mode refresh is active"
 .It Li "scroll_position" Ta "" Ta "Scroll position in copy mode"

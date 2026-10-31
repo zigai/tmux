@@ -1790,6 +1790,22 @@ const struct options_table_entry options_table[] = {
 	  .text = "The default colour palette for colours zero to 255."
 	},
 
+	{ .name = "pane-range-style",
+	  .type = OPTIONS_TABLE_STRING,
+	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,
+	  .default_str = "underscore",
+	  .flags = OPTIONS_TABLE_IS_STYLE,
+	  .separator = ",",
+	  .text = "Default style of pane ranges."
+	},
+
+	{ .name = "pane-ranges",
+	  .type = OPTIONS_TABLE_FLAG,
+	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,
+	  .default_num = 1,
+	  .text = "Whether the styles of pane ranges are shown."
+	},
+
 	{ .name = "pane-scrollbars",
 	  .type = OPTIONS_TABLE_CHOICE,
 	  .scope = OPTIONS_TABLE_WINDOW,

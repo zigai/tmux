@@ -37,9 +37,10 @@ const struct cmd_entry cmd_new_range_entry = {
 	.name = "new-range",
 	.alias = NULL,
 
-	.args = { "PF:t:n:g:Sr:", 0, 0, NULL },
-	.usage = "[-P] [-F format] [-t target-pane] [-n name] [-g group] "
-		"(-S | -r range)",
+	.args = { "a:b:e:PF:t:n:g:m:s:Sr:", 0, 0, NULL },
+	.usage = "[-P] [-a anchor] [-b before] [-e after] [-F format] "
+		"[-t target-pane] [-n name] [-g group] [-s style] "
+		"(-S | -r range | -m text)",
 
 	.target = { 't', CMD_FIND_PANE, 0 },
 
@@ -51,8 +52,9 @@ const struct cmd_entry cmd_set_range_entry = {
 	.name = "set-range",
 	.alias = NULL,
 
-	.args = { "t:n:r:", 1, 1, NULL },
-	.usage = "[-t target-pane] [-n name] [-r range] range-id",
+	.args = { "b:e:t:n:s:r:", 1, 1, NULL },
+	.usage = "[-b before] [-e after] [-t target-pane] [-n name] "
+		"[-s style] [-r range] range-id",
 
 	.target = { 't', CMD_FIND_PANE, 0 },
 
@@ -101,6 +103,22 @@ cmd_range_find(struct cmdq_item *item, struct window_pane *wp,
 	if (r == NULL)
 		cmdq_error(item, "no such range: %s", value);
 	return (r);
+}
+
+/* Check a range style unless it is a format. */
+static int
+cmd_range_check_style(struct cmdq_item *item, const char *style)
+{
+	struct style	sy;
+
+	if (style == NULL || strstr(style, "#{") != NULL)
+		return (1);
+	style_set(&sy, &grid_default_cell);
+	if (style_parse(&sy, &grid_default_cell, style) != 0) {
+		cmdq_error(item, "invalid style: %s", style);
+		return (0);
+	}
+	return (1);
 }
 
 /* Get the span of the copy mode selection if the pane still shows it. */
@@ -154,26 +172,53 @@ cmd_new_range_exec(struct cmd *self, struct cmdq_item *item)
 	struct pane_range_span	 span;
 	struct pane_range	*r;
 	struct format_tree	*ft;
-	const char		*template, *name, *group;
+	enum pane_range_anchor	 anchor;
+	const char		*template, *name, *group, *value, *text, *style;
 	char			*cause = NULL, *expanded;
 
-	if (args_has(args, 'S') == args_has(args, 'r')) {
-		cmdq_error(item, "exactly one of -S or -r is required");
+	if (args_has(args, 'S') + args_has(args, 'r') +
+	    args_has(args, 'm') != 1) {
+		cmdq_error(item, "exactly one of -S, -r or -m is required");
 		return (CMD_RETURN_ERROR);
 	}
+	if ((value = args_get(args, 'a')) != NULL) {
+		if (strcmp(value, "grid") == 0)
+			anchor = PANE_RANGE_GRID;
+		else if (strcmp(value, "text") == 0)
+			anchor = PANE_RANGE_TEXT;
+		else {
+			cmdq_error(item, "invalid anchor: %s", value);
+			return (CMD_RETURN_ERROR);
+		}
+	} else if (args_has(args, 'm') || SCREEN_IS_ALTERNATE(&wp->base))
+		anchor = PANE_RANGE_TEXT;
+	else
+		anchor = PANE_RANGE_GRID;
+	if (anchor == PANE_RANGE_GRID && (args_has(args, 'm') ||
+	    args_has(args, 'b') || args_has(args, 'e'))) {
+		cmdq_error(item, "-m, -b and -e need a text anchor");
+		return (CMD_RETURN_ERROR);
+	}
+
+	style = args_get(args, 's');
+	if (!cmd_range_check_style(item, style))
+		return (CMD_RETURN_ERROR);
+
 	pane_ranges_update(wp);
+	text = args_get(args, 'm');
 	if (args_has(args, 'S')) {
 		if (!cmd_range_selection(wp, &span, &cause))
 			goto fail;
-	} else {
+	} else if (args_has(args, 'r')) {
 		if (!pane_range_parse(wp, args_get(args, 'r'), &span, &cause))
 			goto fail;
 	}
 
 	name = args_get(args, 'n');
 	group = args_get(args, 'g');
-	r = pane_range_create(wp, &span, name == NULL ? "" : name,
-	    group == NULL ? "" : group, &cause);
+	r = pane_range_create(wp, text == NULL ? &span : NULL, text, anchor,
+	    name == NULL ? "" : name, group == NULL ? "" : group,
+	    args_get(args, 'b'), args_get(args, 'e'), style, &cause);
 	if (r == NULL)
 		goto fail;
 
@@ -211,20 +256,33 @@ cmd_set_range_exec(struct cmd *self, struct cmdq_item *item)
 
 	if ((r = cmd_range_find(item, wp, args_string(args, 0))) == NULL)
 		return (CMD_RETURN_ERROR);
+	if (!cmd_range_check_style(item, args_get(args, 's')))
+		return (CMD_RETURN_ERROR);
 
+	if ((args_has(args, 'b') || args_has(args, 'e')) &&
+	    r->anchor != PANE_RANGE_TEXT) {
+		cmdq_error(item, "not a text range");
+		return (CMD_RETURN_ERROR);
+	}
 	if (args_has(args, 'r')) {
 		if (!pane_range_parse(wp, args_get(args, 'r'), &span, &cause) ||
-		    !pane_range_move(wp, r, &span, &cause)) {
-			cmdq_error(item, "%s", cause);
-			free(cause);
-			return (CMD_RETURN_ERROR);
-		}
+		    !pane_range_move(wp, r, &span, &cause))
+			goto fail;
 	}
-	if (args_has(args, 'n')) {
-		free(r->name);
-		r->name = xstrdup(args_get(args, 'n'));
+	if (args_has(args, 'b') || args_has(args, 'e')) {
+		pane_range_set_text_context(wp, r, args_get(args, 'b'),
+		    args_get(args, 'e'));
 	}
+	if (args_has(args, 'n'))
+		pane_range_set_name(wp, r, args_get(args, 'n'));
+	if (args_has(args, 's'))
+		pane_range_set_style(wp, r, args_get(args, 's'));
 	return (CMD_RETURN_NORMAL);
+
+fail:
+	cmdq_error(item, "%s", cause);
+	free(cause);
+	return (CMD_RETURN_ERROR);
 }
 
 /* Kill a range or the ranges in a group. */

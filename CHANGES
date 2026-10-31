@@ -16,6 +16,22 @@ CHANGES FROM 3.7c TO 3.8
   reflow and the alternate screen. The history_collected counter is now 64
   bits.
 
+* Add text ranges (new-range -a text), which follow their text on the visible
+  screen for applications that redraw their own screen: text may move, be
+  re-wrapped or repeated, and is matched again only after a synchronized
+  update ends. -m creates one from given text, -b and -e give the text that
+  must come before and after it, and the range_anchor format shows the anchor.
+  Ranges created on the alternate screen are text ranges by default.
+
+* Draw pane ranges with a style, given by new-range and set-range -s or the
+  pane-range-style option. The style is a format so it can depend on the
+  range state, and the pane-ranges option hides all range styles.
+
+* Add a Range mouse key location, used instead of Pane over a pane range, with
+  mouse_range_id, mouse_range_name and mouse_range_group formats. Unbound Range
+  keys use the Pane binding. Add next-range and previous-range copy mode
+  commands and a copy_cursor_range_id format.
+
 * Many improvements to floating panes:
 
   - new-pane and split-window can now set the title with -T and border lines

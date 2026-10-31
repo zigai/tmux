@@ -199,6 +199,7 @@ dist_tmux_SOURCES = \
 	options.c \
 	pane-command.c \
 	pane-ranges.c \
+	pane-ranges-find.c \
 	paste.c \
 	pointer-shapes.c \
 	proc.c \

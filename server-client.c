@@ -1343,6 +1343,9 @@ have_event:
 		key = KEYC_MAKE_MOUSE_KEY(type, bn, loc);
 	}
 
+	if (loc == KEYC_MOUSE_LOCATION_PANE)
+		key = pane_ranges_mouse_key(wp, key, px, py);
+
 	/* Apply modifiers if any. */
 	if (b & MOUSE_MASK_META)
 		key |= KEYC_META;
@@ -1799,6 +1802,8 @@ try_again:
 		log_debug("currently repeating");
 
 	bd = key_bindings_get(table, key0);
+	if (bd == NULL)
+		bd = pane_ranges_key_binding(table, key0);
 
 	/*
 	 * If prefix-timeout is enabled and we're in the prefix table, see if
@@ -2191,6 +2196,7 @@ server_client_loop(void)
 	RB_FOREACH(w, windows, &windows) {
 		TAILQ_FOREACH(wp, &w->panes, entry) {
 			if (wp->flags & PANE_STYLECHANGED) {
+				pane_ranges_style_changed(wp);
 				wme = TAILQ_FIRST(&wp->modes);
 				if (wme != NULL &&
 				    wme->mode->style_changed != NULL)

@@ -203,6 +203,7 @@ enum key_code_mouse_location {
 	KEYC_MOUSE_LOCATION_SCROLLBAR_SLIDER,
 	KEYC_MOUSE_LOCATION_SCROLLBAR_DOWN,
 	KEYC_MOUSE_LOCATION_EMPTY,
+	KEYC_MOUSE_LOCATION_RANGE,
 	KEYC_MOUSE_LOCATION_CONTROL0, /* keep order */
 	KEYC_MOUSE_LOCATION_CONTROL1,
 	KEYC_MOUSE_LOCATION_CONTROL2,
@@ -275,6 +276,7 @@ enum key_code_mouse_location {
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, SCROLLBAR_SLIDER), \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, SCROLLBAR_DOWN),   \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, EMPTY),            \
+	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, RANGE),            \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL0),         \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL1),         \
 	KEYC_MOUSE_KEY(KEYC_ ## t, KEYC_TYPE_ ## t, CONTROL2),         \
@@ -325,6 +327,7 @@ enum key_code_mouse_location {
 	{ #s "ScrollbarSlider", KEYC_ ## name ## _SCROLLBAR_SLIDER }, \
 	{ #s "ScrollbarDown", KEYC_ ## name ## _SCROLLBAR_DOWN },     \
 	{ #s "Empty", KEYC_ ## name ## _EMPTY },		      \
+	{ #s "Range", KEYC_ ## name ## _RANGE },			      \
 	{ #s "Border", KEYC_ ## name ## _BORDER },		      \
 	{ #s "Control0", KEYC_ ## name ## _CONTROL0 },		      \
 	{ #s "Control1", KEYC_ ## name ## _CONTROL1 },		      \
@@ -1327,7 +1330,15 @@ enum pane_range_state {
 	PANE_RANGE_LIVE,
 	PANE_RANGE_MODIFIED,
 	PANE_RANGE_SUSPENDED,
-	PANE_RANGE_GONE
+	PANE_RANGE_GONE,
+	PANE_RANGE_CLIPPED,
+	PANE_RANGE_AMBIGUOUS,
+	PANE_RANGE_HIDDEN
+};
+
+enum pane_range_anchor {
+	PANE_RANGE_GRID,
+	PANE_RANGE_TEXT
 };
 
 struct pane_range_span {
@@ -1342,7 +1353,19 @@ struct pane_range {
 	char			*name;
 	char			*group;
 	char			*text;
+	char			*style;
 	u_int			 cells;
+
+	enum pane_range_anchor	 anchor;
+	int			 alternate;
+	char			*match;
+	char			*before;
+	char			*after;
+	int			 has_last;
+	uint64_t		 last_line;
+	u_int			 last_x;
+	struct grid_cell	 style_cell;
+	u_int			 style_generation;
 
 	enum pane_range_state	 state;
 	int			 positioned;
@@ -2060,6 +2083,7 @@ struct tty_style_ctx {
 	u_int			 dim;
 	struct hyperlinks	*hyperlinks;
 	struct window_pane	*wp;
+	struct pane_ranges	*ranges;
 };
 
 /* Maximum reported terminal size. */
@@ -3894,6 +3918,8 @@ bitstr_t	*fuzzy_match(const char *, const char *, u_int, u_int *);
 /* pane-ranges.c */
 void			  pane_ranges_check(void);
 void			  pane_ranges_update(struct window_pane *);
+void			  pane_ranges_sync(struct window_pane *);
+void			  pane_ranges_written(struct screen *);
 void			  pane_ranges_free(struct screen *);
 struct pane_range	 *pane_range_first(struct window_pane *);
 struct pane_range	 *pane_range_next(struct pane_range *);
@@ -3905,17 +3931,47 @@ char			 *pane_range_text(struct grid *, u_int, u_int, u_int,
 int			  pane_range_parse(struct window_pane *, const char *,
     struct pane_range_span *, char **);
 struct pane_range	 *pane_range_create(struct window_pane *,
-    const struct pane_range_span *, const char *, const char *,
-    char **);
+    const struct pane_range_span *, const char *,
+    enum pane_range_anchor, const char *, const char *,
+    const char *, const char *, const char *, char **);
 int			  pane_range_move(struct window_pane *,
     struct pane_range *,
     const struct pane_range_span *, char **);
+void			  pane_range_set_text_context(struct window_pane *,
+    struct pane_range *, const char *, const char *);
 void			  pane_range_kill(struct window_pane *,
     struct pane_range *);
 void			  pane_ranges_kill_group(struct window_pane *,
     const char *);
 void			  pane_range_formats(struct format_tree *,
     struct pane_range *);
+void			  pane_range_set_name(struct window_pane *,
+    struct pane_range *, const char *);
+void			  pane_range_set_style(struct window_pane *,
+    struct pane_range *, const char *);
+void			  pane_ranges_style_changed(struct window_pane *);
+struct pane_ranges	 *pane_ranges_drawing(struct window_pane *,
+    struct screen *);
+struct pane_range	 *pane_ranges_text_at(struct window_pane *, u_int,
+    u_int);
+void			  pane_ranges_draw_cell(struct pane_ranges *,
+    struct grid_cell *, u_int, u_int);
+void			  pane_ranges_copy_cell(struct window_mode_entry *,
+    struct grid_cell *);
+int			  pane_ranges_redraw_cells(struct tty *,
+    const struct tty_ctx *, u_int);
+
+/* pane-ranges-find.c */
+struct pane_range	*pane_ranges_cell(struct window_pane *, struct grid *,
+    u_int, u_int);
+struct pane_range	*pane_ranges_visible(struct window_pane *, u_int,
+    u_int);
+struct pane_range	*pane_ranges_mouse(struct mouse_event *);
+key_code		 pane_ranges_mouse_key(struct window_pane *, key_code,
+    u_int, u_int);
+struct key_binding	*pane_ranges_key_binding(struct key_table *, key_code);
+int			 pane_ranges_find(struct window_pane *, struct grid *,
+    u_int *, u_int *, int, const char *);
 
 /* grid.c */
 extern const struct grid_cell grid_default_cell;
@@ -4457,6 +4513,10 @@ extern const struct window_mode window_client_mode;
 /* window-copy.c */
 int				 window_copy_get_selection_span(
     struct window_pane *, struct window_copy_selection *);
+struct grid			*window_copy_get_backing(struct window_pane *,
+    uint64_t *, int *);
+struct grid			*window_copy_get_cell_grid(struct window_pane *,
+    struct window_pane **, u_int *, u_int *);
 extern const struct window_mode window_copy_mode;
 extern const struct window_mode window_view_mode;
 void printflike(3, 4) window_copy_add(struct window_pane *, int, const char *,
