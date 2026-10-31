@@ -2892,18 +2892,12 @@ input_exit_osc(struct input_ctx *ictx)
 	case 52:
 		input_osc_52(ictx, p);
 		break;
-	case 99:
-		input_osc_99(ictx, p);
-		break;
 	case 72:
 		if (wp != NULL)
 			dnd_pane_input(wp, ictx, p);
 		break;
-	case 5522:
-		if (wp != NULL && ictx->input_end == INPUT_END_BEL)
-			kitty_clipboard_input(wp, p, "\007");
-		else if (wp != NULL)
-			kitty_clipboard_input(wp, p, "\033\\");
+	case 99:
+		input_osc_99(ictx, p);
 		break;
 	case 104:
 		input_osc_104(ictx, p);
@@ -2920,14 +2914,20 @@ input_exit_osc(struct input_ctx *ictx)
 	case 133:
 		input_osc_133(ictx, p);
 		break;
+	case 777:
+		input_osc_777(ictx, p);
+		break;
+	case 5522:
+		if (wp != NULL && ictx->input_end == INPUT_END_BEL)
+			kitty_clipboard_input(wp, p, "\007");
+		else if (wp != NULL)
+			kitty_clipboard_input(wp, p, "\033\\");
+		break;
 	case 30001:
 		input_osc_30001(ictx);
 		break;
 	case 30101:
 		input_osc_30101(ictx);
-		break;
-	case 777:
-		input_osc_777(ictx, p);
 		break;
 	default:
 		log_debug("%s: unknown '%u'", __func__, option);
