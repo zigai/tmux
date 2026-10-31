@@ -64,22 +64,22 @@ struct pane_range *
 pane_ranges_cell(struct window_pane *wp, struct grid *gd, u_int x, u_int y)
 {
 	struct grid_cell	  gc;
-	struct pane_range	**ranges, *r;
+	struct pane_range	**ranges, *r = NULL, *text;
 	u_int			  n;
 
 	if (wp->base.ranges == NULL || y >= gd->hsize + gd->sy || x >= gd->sx)
 		return (NULL);
-	if (grid_get_line(gd, y)->extdsize == 0)
-		return (NULL);
-	grid_get_cell(gd, x, y, &gc);
-	if (gc.range == 0)
-		return (NULL);
-
-	ranges = pane_ranges_at(wp, gc.range, &n);
-	if (ranges == NULL)
-		return (NULL);
-	r = ranges[0];
-	free(ranges);
+	if (grid_get_line(gd, y)->extdsize != 0) {
+		grid_get_cell(gd, x, y, &gc);
+		if (gc.range != 0 &&
+		    (ranges = pane_ranges_at(wp, gc.range, &n)) != NULL) {
+			r = ranges[0];
+			free(ranges);
+		}
+	}
+	text = pane_ranges_text_cell(wp, gd, x, y);
+	if (text != NULL && (r == NULL || text->id > r->id))
+		return (text);
 	return (r);
 }
 
@@ -89,19 +89,12 @@ pane_ranges_visible(struct window_pane *wp, u_int x, u_int y)
 {
 	struct window_pane	*swp;
 	struct grid		*gd;
-	struct pane_range	*r, *text;
 
 	if (x >= wp->sx || y >= wp->sy)
 		return (NULL);
 	if (TAILQ_EMPTY(&wp->modes)) {
-		if (wp->base.ranges == NULL)
-			return (NULL);
 		gd = wp->base.grid;
-		r = pane_ranges_cell(wp, gd, x, gd->hsize + y);
-		text = pane_ranges_text_at(wp, x, y);
-		if (text != NULL && (r == NULL || text->id > r->id))
-			return (text);
-		return (r);
+		return (pane_ranges_cell(wp, gd, x, gd->hsize + y));
 	}
 	gd = window_copy_get_cell_grid(wp, &swp, &x, &y);
 	if (gd == NULL)
@@ -165,23 +158,69 @@ pane_ranges_find_cmp(const void *a, const void *b)
 	return (0);
 }
 
+/* State of a search for the next or previous range. */
+struct pane_ranges_search {
+	struct pane_range	**list;
+	u_int			  nlist;
+	u_char			 *done;
+	const char		 *group;
+	int			  next;
+	int			  result;
+	u_int			  rx;
+	u_int			  ry;
+};
+
+/*
+ * Consider a range found at a cell for the first time. Return 1 if the search
+ * should stop.
+ */
+static int
+pane_ranges_find_one(struct pane_ranges_search *search, struct pane_range *r,
+    u_int x, u_int y, int after, int at)
+{
+	struct pane_range	**found;
+
+	found = bsearch(&r, search->list, search->nlist, sizeof *search->list,
+	    pane_ranges_find_cmp);
+	if (found == NULL || search->done[found - search->list])
+		return (0);
+	search->done[found - search->list] = 1;
+	if (search->group != NULL && strcmp(r->group, search->group) != 0)
+		return (0);
+	if (search->next && after) {
+		search->rx = x;
+		search->ry = y;
+		search->result = 1;
+		return (1);
+	}
+	if (!search->next && !after && !at) {
+		search->rx = x;
+		search->ry = y;
+		search->result = 1;
+	}
+	return (0);
+}
+
 /*
  * Find the first cell of the next or previous range after or before a position
  * in a grid holding cells of a pane, optionally only ranges in a group. A
- * range starts at the first cell in the grid that carries it. Return 1 and
- * change the position if one is found.
+ * range starts at the first cell in the grid that carries it, or for a text
+ * range the first cell of its text. Return 1 and change the position if one
+ * is found.
  */
 int
 pane_ranges_find(struct window_pane *wp, struct grid *gd, u_int *px,
     u_int *py, int next, const char *group)
 {
-	struct pane_range	**list = NULL, **ranges, **found, *r;
-	struct grid_line	 *gl;
-	struct grid_cell	  gc;
-	u_char			 *done = NULL, *seen = NULL;
-	u_int			  nlist = 0, nseen = 0, n, i, x, y, limit;
-	u_int			  rx = 0, ry = 0;
-	int			  result = 0, after, stop = 0;
+	struct pane_ranges_search  search;
+	struct pane_range	 **list = NULL, **ranges, **text, *r;
+	struct grid_line	  *gl;
+	struct grid_cell	   gc;
+	u_char			  *seen = NULL;
+	uint64_t		   line;
+	u_int			   nlist = 0, nseen = 0, ntext, n, i, x, y;
+	u_int			   limit;
+	int			   alternate, after, at, stop = 0;
 
 	if (wp->base.ranges == NULL)
 		return (0);
@@ -192,16 +231,37 @@ pane_ranges_find(struct window_pane *wp, struct grid *gd, u_int *px,
 	if (nlist == 0)
 		return (0);
 	qsort(list, nlist, sizeof *list, pane_ranges_find_cmp);
-	done = xcalloc(nlist, 1);
+
+	memset(&search, 0, sizeof search);
+	search.list = list;
+	search.nlist = nlist;
+	search.done = xcalloc(nlist, 1);
+	search.group = group;
+	search.next = next;
+	alternate = SCREEN_IS_ALTERNATE(&wp->base);
 
 	for (y = 0; !stop && y < gd->hsize + gd->sy; y++) {
 		gl = grid_get_line(gd, y);
-		if (gl->extdsize == 0)
+		text = pane_ranges_text_line(wp, gd, y, &line, &ntext);
+		if (gl->extdsize == 0 && ntext == 0)
 			continue;
 		limit = gl->cellsize;
-		if (limit > gd->sx)
+		if (ntext != 0 || limit > gd->sx)
 			limit = gd->sx;
 		for (x = 0; !stop && x < limit; x++) {
+			after = (y > *py || (y == *py && x > *px));
+			at = (y == *py && x == *px);
+			for (i = 0; !stop && i < ntext; i++) {
+				r = text[i];
+				if (r->span.start_line != line ||
+				    r->span.start_x != x ||
+				    r->alternate != alternate)
+					continue;
+				stop = pane_ranges_find_one(&search, r, x, y,
+				    after, at);
+			}
+			if (gl->extdsize == 0 || x >= gl->cellsize)
+				continue;
 			grid_get_cell(gd, x, y, &gc);
 			if (gc.range == 0)
 				continue;
@@ -214,41 +274,22 @@ pane_ranges_find(struct window_pane *wp, struct grid *gd, u_int *px,
 			seen[gc.range] = 1;
 
 			ranges = pane_ranges_at(wp, gc.range, &n);
-			after = (y > *py || (y == *py && x > *px));
-			for (i = 0; i < n; i++) {
-				found = bsearch(&ranges[i], list, nlist,
-				    sizeof *list, pane_ranges_find_cmp);
-				if (found == NULL || done[found - list])
-					continue;
-				done[found - list] = 1;
-				r = *found;
-				if (group != NULL &&
-				    strcmp(r->group, group) != 0)
-					continue;
-				if (next && after) {
-					rx = x;
-					ry = y;
-					result = stop = 1;
-					break;
-				}
-				if (!next && !after && (y != *py || x != *px)) {
-					rx = x;
-					ry = y;
-					result = 1;
-				}
+			for (i = 0; !stop && i < n; i++) {
+				stop = pane_ranges_find_one(&search, ranges[i],
+				    x, y, after, at);
 			}
 			free(ranges);
-			if (!next && (after || (y == *py && x == *px)))
+			if (!next && (after || at))
 				stop = 1;
 		}
 	}
 
 	free(seen);
-	free(done);
+	free(search.done);
 	free(list);
-	if (result) {
-		*px = rx;
-		*py = ry;
+	if (search.result) {
+		*px = search.rx;
+		*py = search.ry;
 	}
-	return (result);
+	return (search.result);
 }

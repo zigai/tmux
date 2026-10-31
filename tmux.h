@@ -3698,12 +3698,16 @@ void			  pane_range_set_style(struct window_pane *,
 void			  pane_ranges_style_changed(struct window_pane *);
 struct pane_ranges	 *pane_ranges_drawing(struct window_pane *,
     struct screen *);
-struct pane_range	 *pane_ranges_text_at(struct window_pane *, u_int,
-    u_int);
+struct pane_range	 *pane_ranges_text_cell(struct window_pane *,
+    struct grid *, u_int, u_int);
+struct pane_range	**pane_ranges_text_line(struct window_pane *,
+    struct grid *, u_int, uint64_t *, u_int *);
 void			  pane_ranges_draw_cell(struct pane_ranges *,
     struct grid_cell *, u_int, u_int);
+int			  pane_ranges_copy_line(struct window_mode_entry *,
+    struct grid *, u_int, uint64_t *);
 void			  pane_ranges_copy_cell(struct window_mode_entry *,
-    struct grid_cell *);
+    struct grid_cell *, u_int, const uint64_t *);
 int			  pane_ranges_redraw_cells(struct tty *,
     const struct tty_ctx *, u_int);
 

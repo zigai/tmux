@@ -270,6 +270,23 @@ assert_line 1 "${E}[45mhe${E}[41mllo${E}[49m world" 'selection precedence'
 $TMUX send -t "$pane" -X cancel || fail cancel
 assert_line 1 "${E}[41mhello${E}[49m world" 'style after copy mode'
 
+# Copy mode shows text ranges on the lines that show the text they were found
+# on, and not on old text it still shows after the pane changes.
+fresh copytext
+output '\033[?1049h\033[H\033[2Jalpha beta\r\ngamma'
+a=$(new -s 'bg=red' -m beta)
+$TMUX copy-mode -t "$pane" || fail 'copy mode'
+assert_line 1 "alpha ${E}[41mbeta${E}[49m" 'text range in copy mode'
+b=$(new -s 'bg=blue' -m gamma)
+assert_line 2 "${E}[44mgamma${E}[49m" 'text range created in copy mode'
+output '\033[H\033[2Jgamma beta'
+assert_line 1 'alpha beta' 'text range drawn on old text in copy mode'
+assert_line 2 'gamma' 'moved text range left style in copy mode'
+$TMUX send -t "$pane" -X cancel || fail cancel
+assert_line 1 "${E}[44mgamma${E}[49m ${E}[41mbeta${E}[49m" \
+    'text style after copy mode'
+output '\033[?1049l'
+
 # A range made after the text changed under copy mode is not drawn on the old
 # text copy mode still shows.
 fresh changed

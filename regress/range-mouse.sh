@@ -315,6 +315,46 @@ $TMUX send -t "$pane" -X next-range g || fail next
 assert_cursor "30:1:$a" 'moved range'
 $TMUX send -t "$pane" -X cancel || fail cancel
 
+# Copy mode finds text ranges on the lines that show the text they were found
+# on, with the mouse and the range commands.
+fresh sh -c 'stty raw -echo; printf READY; exec cat'
+wait_format '#{cursor_x}' 5
+output '\r\033[2K\033[?1049h\033[Halpha beta gamma\r\ndelta beta'
+t1=$(new -a text -m 'alpha beta')
+t2=$(new -m delta)
+g=$(new -a grid -r 0:11-0:15)
+$TMUX copy-mode -t "$pane" || fail 'copy mode'
+record -T copy-mode MouseDown1Range "$(recorder 'copy:#{mouse_range_id}')"
+click 0 3 1
+wait_got "copy:$t1" 'copy mode click on text range'
+click 0 13 1
+wait_got "copy:$g" 'copy mode click on grid range'
+click 0 2 2
+wait_got "copy:$t2" 'copy mode click on second text range'
+click 0 9 2
+wait_got 'copy-pane:' 'copy mode click off text ranges'
+$TMUX send -t "$pane" -X history-top || fail top
+assert_cursor "0:0:$t1" 'cursor on text range'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "0:11:$g" 'next to grid range'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "1:0:$t2" 'next to text range'
+$TMUX send -t "$pane" -X previous-range || fail previous
+assert_cursor "0:11:$g" 'previous to grid range'
+$TMUX send -t "$pane" -X previous-range || fail previous
+assert_cursor "0:0:$t1" 'previous to text range'
+output '\033[2J\033[Hdelta'
+$TMUX send -t "$pane" -X history-top || fail top
+assert_cursor '0:0:' 'text range on old text'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "0:11:$g" 'next found text range on old text'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "0:11:$g" 'next found moved text range'
+click 0 2 1
+wait_got 'copy-pane:' 'click on text range on old text'
+$TMUX unbind -T copy-mode MouseDown1Range || fail unbind
+$TMUX send -t "$pane" -X cancel || fail cancel
+
 # Copy mode of another pane finds the ranges of that pane until it is
 # destroyed, then finds none.
 dst=$pane

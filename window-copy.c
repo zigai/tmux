@@ -5836,12 +5836,17 @@ window_copy_write_one(struct window_mode_entry *wme,
 	struct grid			*gd = data->backing->grid;
 	struct grid_cell		 gc;
 	u_int		 		 fx, i, width;
+	uint64_t			 line;
+	int				 text;
 
+	text = pane_ranges_copy_line(wme, gd, fy, &line);
 	screen_write_cursormove(ctx, px, py, 0);
 	for (fx = 0; fx < nx; fx++) {
 		grid_get_cell(gd, fx, fy, &gc);
-		if (gc.range != 0)
-			pane_ranges_copy_cell(wme, &gc);
+		if (gc.range != 0 || text) {
+			pane_ranges_copy_cell(wme, &gc, fx,
+			    text ? &line : NULL);
+		}
 		if (fx + gc.data.width <= nx) {
 #ifdef ENABLE_IMAGES
 			if (image_grid_area_has_images(gd, fx, fy,
