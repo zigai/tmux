@@ -55,6 +55,13 @@ check()
 	wait_until has full "$1" || fail "$2"
 }
 
+# Check if a client's terminal has said what type it is.
+has_type()
+{
+	$TMUX list-clients -F '#{client_termname}:#{client_termtype}' |
+	    grep -q "^$1:."
+}
+
 CAT="stty raw -echo; exec cat"
 A=$($TMUX new-session -d -P -F '#{pane_id}' -s one -x40 -y10 "$CAT") ||
     exit 1
@@ -65,15 +72,20 @@ $TMUX set -as terminal-features 'xterm-256color:osc99' || exit 1
 PID=$($TMUX display -p '#{pid}')
 
 attach full xterm-256color one
-attach plain screen one
-wait_for_clients 2 $TMUX || exit 1
+attach plain vt52 one
+attach nested screen one
+wait_for_clients 3 $TMUX || exit 1
 
 # The terminal is asked what it supports.
 check '\033]99;i=tmux:p=?;\033\\' "no query sent"
 
+# A tmux running in this tmux is known as tmux, which forwards notifications.
+wait_until has_type screen || fail "nested tmux not identified"
 emit "$A" '\033]99;;Hello\033\\'
 check "\033]99;i=$(oid $A n0):a=focus,report:p=title:e=1;SGVsbG8=\033\\\\" \
     "anonymous notification"
+wait_until has nested "\033]99;i=$(oid $A n0):a=focus,report:p=title:e=1;SGVsbG8=\033\\\\" ||
+    fail "not sent to nested tmux"
 emit "$A" '\033]99;i=x:a=-focus:u=2:f=YXBw;Hi\007'
 check "\033]99;i=$(oid $A ix):a=-focus,report:u=2:f=YXBw:p=title:e=1;SGk=\033\\\\" \
     "notification with keys"

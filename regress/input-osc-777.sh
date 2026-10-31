@@ -43,6 +43,13 @@ has()
 	grep -Fq "$(printf "$2")" "$DIR/$1"
 }
 
+# Check if a client's terminal has said what type it is.
+has_type()
+{
+	$TMUX list-clients -F '#{client_termname}:#{client_termtype}' |
+	    grep -q "^$1:."
+}
+
 CAT="stty raw -echo; exec cat"
 A=$($TMUX new-session -d -P -F '#{pane_id}' -s one -x40 -y10 "$CAT") ||
     exit 1
@@ -51,12 +58,17 @@ $TMUX set -g status off || exit 1
 $TMUX set -as terminal-features 'xterm-256color:osc777' || exit 1
 
 attach full xterm-256color one
-attach plain screen one
-wait_for_clients 2 $TMUX || exit 1
+attach plain vt52 one
+attach nested screen one
+wait_for_clients 3 $TMUX || exit 1
 
+# A tmux running in this tmux is known as tmux, which forwards notifications.
+wait_until has_type screen || fail "nested tmux not identified"
 emit "$A" '\033]777;notify;Title;Body; with ;\007'
 wait_until has full '\033]777;notify;Title;Body; with ;\033\\' ||
     fail "notification not forwarded"
+wait_until has nested '\033]777;notify;Title;Body; with ;\033\\' ||
+    fail "not sent to nested tmux"
 emit "$B" '\033]777;notify;Hidden;\033\\'
 wait_until has full '\033]777;notify;Hidden;\033\\' ||
     fail "notification from hidden window not forwarded"

@@ -44,6 +44,13 @@ has()
 	grep -Fq "$(printf "$2")" "$DIR/$1"
 }
 
+# Check if a client's terminal has said what type it is.
+has_type()
+{
+	$TMUX list-clients -F '#{client_termname}:#{client_termtype}' |
+	    grep -q "^$1:."
+}
+
 # Check a notification is forwarded with ST.
 check()
 {
@@ -73,11 +80,16 @@ $TMUX set -g status off || exit 1
 $TMUX set -as terminal-features 'xterm-256color:osc9' || exit 1
 
 attach full xterm-256color one
-attach plain screen one
+attach plain vt52 one
 attach elsewhere xterm-256color other
-wait_for_clients 3 $TMUX || exit 1
+attach nested screen one
+wait_for_clients 4 $TMUX || exit 1
 
+# A tmux running in this tmux is known as tmux, which forwards notifications.
+wait_until has_type screen || fail "nested tmux not identified"
 check "$A" 'Build done'
+wait_until has nested '\033]9;Build done\033\\' ||
+    fail "not sent to nested tmux"
 check "$A" 'caf\303\251; 50%%'
 check "$B" 'From hidden window'
 

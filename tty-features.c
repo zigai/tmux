@@ -654,6 +654,9 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "overline,"
 			      "usstyle,"
 			      "hyperlinks,"
+			      "osc777,"
+			      "osc9,"
+			      "osc99,"
 			      "progressbar"
 		},
 		{ .name = "rxvt-unicode",
@@ -673,6 +676,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "usstyle,"
 			      "sync,"
 			      "osc7,"
+			      "osc9,"
 			      "hyperlinks,"
 			      "progressbar"
 		},
@@ -684,6 +688,9 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "usstyle,"
 			      "sync,"
 			      "osc7,"
+			      "osc777,"
+			      "osc9,"
+			      "osc99,"
 			      "hyperlinks"
 		},
 		{ .name = "WezTerm",
@@ -694,6 +701,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "focus,"
 			      "hyperlinks,"
 			      "imagescroll,"
+			      "osc777,"
+			      "osc9,"
 			      "overline,"
 			      "sixel,"
 			      "sync,"
