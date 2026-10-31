@@ -310,7 +310,7 @@ input_key_kitty(struct screen *s, struct bufferevent *bev, key_code key,
 
 	flags = input_kitty_flags(s);
 	if (flags == 0) {
-		if (event == KITTY_EVENT_RELEASE || input_kitty_modifier_key(key))
+		if (input_kitty_bypass(kk, key))
 			return (0);
 		return (-1);
 	}

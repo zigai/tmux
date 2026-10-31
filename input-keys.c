@@ -586,7 +586,7 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
     const struct kitty_key *kk)
 {
 	struct input_key_entry	*ike = NULL;
-	key_code		 newkey;
+	key_code		 newkey, onlykey;
 	struct utf8_data	 ud;
 
 	/* Mouse keys need a pane. */
@@ -687,6 +687,12 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
 		input_key_write(__func__, bev, ike->data, strlen(ike->data));
 		return (0);
 	}
+
+	/* Keys only the Kitty protocol can send cannot be written here. */
+	onlykey = key & KEYC_MASK_KEY;
+	if ((onlykey >= KEYC_F13 && onlykey <= KEYC_F35) ||
+	    (onlykey >= KEYC_CAPSLOCK && onlykey <= KEYC_ISO_LEVEL5_SHIFT))
+		return (-1);
 
 	/* Ignore internal function key codes. */
 	if (KEYC_IS_USER(key) || KEYC_IS_SPECIAL(key) || KEYC_IS_MOUSE(key)) {
