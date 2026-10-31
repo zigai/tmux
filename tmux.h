@@ -70,6 +70,8 @@ struct mouse_event;
 struct options;
 struct options_array_item;
 struct options_entry;
+struct program_status;
+struct program_status_forward;
 struct prompt;
 struct window_pane_prompt;
 struct redraw_damage;
@@ -465,6 +467,7 @@ enum {
 	KEYC_REPORT_COLOURS,
 	KEYC_REPORT_PALETTE,
 	KEYC_REPORT_WINSZ,
+	KEYC_REPORT_PROGRAM_STATUS,
 
 	/* Mouse state. */
 	KEYC_MOUSE, /* unclassified mouse event */
@@ -1112,6 +1115,29 @@ struct progress_bar {
 	int			progress;
 };
 
+/* Program status states, from least to most urgent. */
+enum program_status_state {
+	PROGRAM_STATUS_IDLE,
+	PROGRAM_STATUS_WORKING,
+	PROGRAM_STATUS_DONE,
+	PROGRAM_STATUS_ERROR,
+	PROGRAM_STATUS_BLOCKED
+};
+
+/* Program status record. */
+struct program_status_record {
+	char				*id;
+	enum program_status_state	 state;
+	const char			*kind;
+	int				 progress;
+	char				*app;
+	char				*title;
+	char				*msg;
+
+	uint64_t			 updated;
+	RB_ENTRY(program_status_record)	 entry;
+};
+
 /* Virtual screen. */
 struct screen_sel;
 struct screen_titles;
@@ -1419,6 +1445,8 @@ struct window_pane {
 	time_t		 cmd_end_time;
 	int		 cmd_status;
 	char		*cmd_line;
+
+	struct program_status *program_status;
 
 	int		 fd;
 	struct bufferevent *event;
@@ -1810,6 +1838,7 @@ struct tty_term {
 #define TERM_INVALIDMS 0x80
 #define TERM_NOREPLACE 0x100
 #define TERM_KITTYGRAPHICS 0x200
+#define TERM_PROGRAMSTATUS 0x400
 	int		 flags;
 
 	LIST_ENTRY(tty_term) entry;
@@ -1872,6 +1901,8 @@ struct tty {
 
 	size_t		 sync_offset;
 
+	struct program_status_forward *program_status;
+
 	struct termios	 tio;
 
 	struct grid_cell cell;
@@ -1897,8 +1928,10 @@ struct tty {
 #define TTY_HAVEKITTYGRAPHICS 0x20000
 #define TTY_WINSZPIXELS 0x40000
 #define TTY_WINSZAPPLY 0x80000
+#define TTY_HAVEPROGRAMSTATUS 0x100000
 #define TTY_ALL_REQUEST_FLAGS \
-	(TTY_HAVEDA|TTY_HAVEDA2|TTY_HAVEXDA|TTY_HAVESYNC|TTY_HAVEKITTYGRAPHICS)
+	(TTY_HAVEDA|TTY_HAVEDA2|TTY_HAVEXDA|TTY_HAVESYNC| \
+	    TTY_HAVEKITTYGRAPHICS|TTY_HAVEPROGRAMSTATUS)
 	int		 flags;
 
 	struct tty_term	*term;
@@ -4350,6 +4383,31 @@ struct hyperlinks	*hyperlinks_init(void);
 struct hyperlinks	*hyperlinks_copy(struct hyperlinks *);
 void			 hyperlinks_reset(struct hyperlinks *);
 void			 hyperlinks_free(struct hyperlinks *);
+
+/* program-status.c */
+const char	*program_status_state_name(enum program_status_state);
+void		 program_status_report(struct window_pane *, const char *,
+		     size_t);
+void		 program_status_end_running(struct window_pane *);
+void		 program_status_dismiss(struct window_pane *);
+void		 program_status_reset(struct window_pane *);
+void		 program_status_free(struct window_pane *);
+struct program_status_record *program_status_root(struct window_pane *);
+struct program_status_record *program_status_first(struct window_pane *);
+struct program_status_record *program_status_next(
+		     struct program_status_record *);
+u_int		 program_status_count(struct window_pane *);
+const char	*program_status_app(struct window_pane *,
+		     struct program_status_record *);
+int		 program_status_pane_state(struct window_pane *);
+int		 program_status_window_state(struct window *);
+int		 program_status_session_state(struct session *);
+char		*program_status_text(const char *, int);
+void		 program_status_forward_client(struct client *);
+void		 program_status_session_changed(struct client *);
+void		 program_status_stop(struct tty *);
+void		 program_status_free_tty(struct tty *);
+void		 program_status_build_events(void);
 
 /* json.c */
 struct json_node	*json_parse(const char *, char **);

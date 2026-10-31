@@ -418,6 +418,8 @@ tty_start_tty(struct tty *tty)
 	tty->mouse_drag_flag = 0;
 	tty->mouse_drag_update = NULL;
 	tty->mouse_drag_release = NULL;
+
+	program_status_forward_client(c);
 }
 
 void
@@ -435,6 +437,8 @@ tty_send_requests(struct tty *tty)
 		return;
 	}
 
+	if (~flags & TTY_HAVEPROGRAMSTATUS)
+		tty_puts(tty, "\033]7501;?\033\\");
 	if (~flags & TTY_HAVEDA)
 		tty_puts(tty, "\033[c");
 	if (~flags & TTY_HAVEDA2)
@@ -503,6 +507,8 @@ tty_stop_tty(struct tty *tty)
 
 	event_del(&tty->event_in);
 	event_del(&tty->event_out);
+
+	program_status_stop(tty);
 
 	/*
 	 * Be flexible about error handling and try not kill the server just
@@ -586,6 +592,7 @@ void
 tty_free(struct tty *tty)
 {
 	tty_close(tty);
+	program_status_free_tty(tty);
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 0);
 #endif
@@ -618,6 +625,7 @@ tty_update_features(struct tty *tty)
 		server_redraw_client(c);
 		tty_invalidate(tty);
 	}
+	program_status_forward_client(c);
 }
 
 void

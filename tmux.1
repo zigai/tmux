@@ -5284,6 +5284,8 @@ mouse sequences.
 Supports the OSC 7 working directory extension.
 .It overline
 Supports the overline SGR attribute.
+.It programstatus
+Supports the OSC 7501 program status protocol.
 .It progressbar
 Supports the OSC 9;4 progress bar extension.
 .It rectfill
@@ -6748,6 +6750,8 @@ Run when a pane enters a mode.
 Run when a pane exits a mode.
 .It pane\-moved
 Run when a pane is moved to another window.
+.It pane\-program\-status\-changed
+Run when the program status records of a pane change.
 .It pane\-prompt\-closed
 Run when a prompt in a pane is closed.
 .It pane\-prompt\-opened
@@ -7413,6 +7417,12 @@ Its flags are:
 .It Li "c" Ta "client environment"
 .El
 .Pp
+.Ql G:\&
+will loop over each program status record of the pane in order of ID; inside
+the loop, the
+.Ql program_
+formats refer to that record instead of the pane's own record.
+.Pp
 .Ql N:\&
 checks if a window (without any suffix or with the
 .Ql w
@@ -7682,6 +7692,8 @@ The following variables are available, where appropriate:
 .It Li "pane_pipe" Ta "" Ta "1 if pane is being piped"
 .It Li "pane_pipe_pid" Ta "" Ta "PID of pipe process, if any"
 .It Li "pane_private_modes" Ta "" Ta "List of enabled DECSET private modes"
+.It Li "pane_program_count" Ta "" Ta "Number of program status records in pane"
+.It Li "pane_program_state" Ta "" Ta "Most urgent program status state in pane"
 .It Li "pane_pb_state" Ta "" Ta "Pane progress bar state, one of hidden, normal, error, indeterminate, paused (can be set by application)"
 .It Li "pane_pb_progress" Ta "" Ta "Pane progress bar progress percentage (can be set by application)"
 .It Li "pane_right" Ta "" Ta "Right of pane"
@@ -7703,6 +7715,13 @@ The following variables are available, where appropriate:
 .It Li "pane_z" Ta "" Ta "Z position of pane"
 .It Li "pane_zoomed_flag" Ta "" Ta "1 if pane is zoomed"
 .It Li "pid" Ta "" Ta "Server PID"
+.It Li "program_id" Ta "" Ta "ID of program status record, empty for the pane's own record"
+.It Li "program_kind" Ta "" Ta "What a blocked program is waiting for: permission, question or auth"
+.It Li "program_message" Ta "" Ta "Program status message"
+.It Li "program_name" Ta "" Ta "Name of program reporting its status"
+.It Li "program_progress" Ta "" Ta "Program status progress percentage"
+.It Li "program_state" Ta "" Ta "Program status state: idle, working, done, blocked or error"
+.It Li "program_title" Ta "" Ta "Program status title"
 .It Li "prev_window_active" Ta "" Ta "1 if previous window in W: loop is active"
 .It Li "prev_window_index" Ta "" Ta "Index of previous window in W: loop"
 .It Li "rectangle_toggle" Ta "" Ta "1 if rectangle selection is activated"
@@ -7746,6 +7765,7 @@ The following variables are available, where appropriate:
 .It Li "session_marked" Ta "" Ta "1 if this session contains the marked pane"
 .It Li "session_name" Ta "#S" Ta "Name of session"
 .It Li "session_path" Ta "" Ta "Working directory of session"
+.It Li "session_program_state" Ta "" Ta "Most urgent program status state in session"
 .It Li "session_silence_flag" Ta "" Ta "1 if any window in session has silence alert"
 .It Li "session_stack" Ta "" Ta "Window indexes in most recent order"
 .It Li "session_windows" Ta "" Ta "Number of windows in session"
@@ -7786,6 +7806,7 @@ The following variables are available, where appropriate:
 .It Li "window_offset_x" Ta "" Ta "X offset into window if larger than client"
 .It Li "window_offset_y" Ta "" Ta "Y offset into window if larger than client"
 .It Li "window_panes" Ta "" Ta "Number of panes in window"
+.It Li "window_program_state" Ta "" Ta "Most urgent program status state in window"
 .It Li "window_raw_flags" Ta "" Ta "Window flags with nothing escaped"
 .It Li "window_silence_flag" Ta "" Ta "1 if window has silence alert"
 .It Li "window_stack_index" Ta "" Ta "Index in session most recent stack"
@@ -8097,6 +8118,24 @@ It can also be modified with the
 .Ic select\-pane
 .Fl T
 command.
+.Pp
+A program may also report its status with the OSC 7501 program status escape
+sequence: whether it is idle, working, done, blocked waiting for the user, or
+has failed, with an optional message.
+The pane's own record and any records with an ID are kept, up to 256 per pane,
+and are shown by the
+.Ql program_
+formats and the
+.Ql G:\&
+format loop.
+The most urgent state is blocked, then error, done, working and idle.
+Working and blocked records are removed when the program exits or a new OSC 133
+shell prompt starts.
+Done and error records are removed when a key is typed into the pane.
+Direction overrides and invisible formatting characters are removed from the
+message and title, and in the status line they are not treated as styles.
+If the terminal supports the sequence, the records of each pane in the attached
+session are passed on to it.
 .Sh GLOBAL AND SESSION ENVIRONMENT
 When the server is started,
 .Nm

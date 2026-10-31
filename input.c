@@ -178,6 +178,7 @@ static void	input_osc_110(struct input_ctx *, const char *);
 static void	input_osc_111(struct input_ctx *, const char *);
 static void	input_osc_112(struct input_ctx *, const char *);
 static void	input_osc_133(struct input_ctx *, const char *);
+static void	input_osc_7501(struct input_ctx *, const char *);
 
 /* Transition entry/exit handlers. */
 static void	input_clear(struct input_ctx *);
@@ -1407,6 +1408,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 {
 	struct screen_write_ctx		*sctx = &ictx->ctx;
 	struct screen			*s = sctx->s;
+	struct window_pane		*wp = ictx->wp;
 	const struct input_table_entry	*entry;
 
 	if (ictx->flags & INPUT_DISCARD)
@@ -1422,6 +1424,8 @@ input_esc_dispatch(struct input_ctx *ictx)
 
 	switch (entry->type) {
 	case INPUT_ESC_RIS:
+		if (wp != NULL)
+			program_status_reset(wp);
 		colour_palette_clear(ictx->palette);
 		input_reset_cell(ictx);
 		screen_write_reset(sctx);
@@ -2788,6 +2792,9 @@ input_exit_osc(struct input_ctx *ictx)
 	case 133:
 		input_osc_133(ictx, p);
 		break;
+	case 7501:
+		input_osc_7501(ictx, p);
+		break;
 	default:
 		log_debug("%s: unknown '%u'", __func__, option);
 		break;
@@ -3415,6 +3422,7 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 		}
 		if (wp != NULL) {
 			wp->last_prompt_time = time(NULL);
+			program_status_end_running(wp);
 			events_fire_pane("pane-shell-prompt", wp);
 		}
 		break;
@@ -3465,6 +3473,32 @@ input_osc_133(struct input_ctx *ictx, const char *p)
 		}
 		break;
 	}
+}
+
+/* Handle the OSC 7501 sequence for program status. */
+static void
+input_osc_7501(struct input_ctx *ictx, const char *p)
+{
+	struct window_pane	*wp = ictx->wp;
+	const char		*end;
+	size_t			 size;
+
+	if (wp == NULL)
+		return;
+
+	if (ictx->input_end == INPUT_END_BEL)
+		end = "\007";
+	else
+		end = "\033\\";
+	if (strcmp(p, "?") == 0) {
+		input_reply(ictx, 1, "\033]7501;?:states=idle,working,done,"
+		    "blocked,error:kinds=permission,question,auth%s", end);
+		return;
+	}
+
+	/* The whole sequence is OSC, the buffer and the terminator. */
+	size = 2 + ictx->input_len + strlen(end);
+	program_status_report(wp, p, size);
 }
 
 /* Handle OSC 52 reply. */

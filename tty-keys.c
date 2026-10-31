@@ -71,6 +71,8 @@ static int	tty_keys_device_attributes2(struct tty *, const char *, size_t,
 		    size_t *, int);
 static int	tty_keys_extended_device_attributes(struct tty *, const char *,
 		    size_t, size_t *, int);
+static int	tty_keys_program_status(struct tty *, const char *, size_t,
+		    size_t *, int);
 static int	tty_keys_sync(struct tty *, const char *, size_t, size_t *,
 		    int);
 #ifdef ENABLE_IMAGES
@@ -99,6 +101,7 @@ static const struct {
 	{ KEYC_REPORT_COLOURS, tty_keys_colours1 },
 	{ KEYC_REPORT_PALETTE, tty_keys_palette },
 	{ KEYC_REPORT_WINSZ, tty_keys_winsz },
+	{ KEYC_REPORT_PROGRAM_STATUS, tty_keys_program_status },
 #ifdef ENABLE_IMAGES
 	{ KEYC_REPORT_KITTY_GRAPHICS, tty_keys_kitty_graphics }
 #endif
@@ -1484,6 +1487,8 @@ tty_keys_device_attributes(struct tty *tty, const char *buf, size_t len,
 	}
 	log_debug("%s: received primary DA %.*s", c->name, (int)*size, buf);
 
+	/* A program status query sent before DA is answered by now, if ever. */
+	tty->flags |= TTY_HAVEPROGRAMSTATUS;
 	tty_update_features(tty);
 	tty->flags |= TTY_HAVEDA;
 
@@ -1537,6 +1542,57 @@ tty_keys_sync(struct tty *tty, const char *buf, size_t len, size_t *size,
 	}
 	log_debug("%s: received DECRPM %.*s", c->name, (int)*size, buf);
 	tty->flags |= TTY_HAVESYNC;
+
+	return (0);
+}
+
+/*
+ * Handle a program status (OSC 7501) feature detection reply. Returns 0 for
+ * success, -1 for failure, 1 for partial.
+ */
+static int
+tty_keys_program_status(struct tty *tty, const char *buf, size_t len,
+    size_t *size, int apply)
+{
+	struct client		*c = tty->client;
+	static const char	 prefix[] = "\033]7501;?";
+	size_t			 i, end;
+
+	*size = 0;
+	if (tty->flags & TTY_HAVEPROGRAMSTATUS)
+		return (-1);
+
+	for (i = 0; i < (sizeof prefix) - 1; i++) {
+		if (i == len)
+			return (1);
+		if (buf[i] != prefix[i])
+			return (-1);
+	}
+	for (end = i; end < len; end++) {
+		if (buf[end] == '\007' || buf[end] == '\033')
+			break;
+		if (buf[end] < ' ' || buf[end] > '~' || end - i == 256)
+			return (-1);
+	}
+	if (end == len)
+		return (1);
+	if (buf[end] == '\007')
+		*size = end + 1;
+	else {
+		if (end + 1 == len)
+			return (1);
+		if (buf[end + 1] != '\\')
+			return (-1);
+		*size = end + 2;
+	}
+	if (!apply)
+		return (0);
+
+	tty_parse_client_features(c, "programstatus", ",");
+	log_debug("%s: received program status reply %.*s", c->name,
+	    (int)*size, buf);
+	tty->flags |= TTY_HAVEPROGRAMSTATUS;
+	tty_update_features(tty);
 
 	return (0);
 }
