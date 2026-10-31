@@ -957,10 +957,16 @@ program_status_forward_seen(struct program_status_forward *psf)
 	}
 	n = j;
 
-	if (n == psf->nseen &&
-	    (n == 0 || memcmp(seen, psf->seen, n * sizeof *seen) == 0)) {
-		free(seen);
-		return (1);
+	if (n == psf->nseen) {
+		for (i = 0; i < n; i++) {
+			if (seen[i].id != psf->seen[i].id ||
+			    seen[i].generation != psf->seen[i].generation)
+				break;
+		}
+		if (i == n) {
+			free(seen);
+			return (1);
+		}
 	}
 	free(psf->seen);
 	psf->seen = seen;
