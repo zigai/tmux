@@ -56,6 +56,10 @@ replies '\033[>1u\033[?1049h\033[?u\033[>8u\033[?u\033[?1049l\033[?u\033[?1049h\
 replies '\033[>5u\033[?1049h\033[>6u\033c\033[?u\033[?1049l\033[?u' \
     '\033[?0u\033[?0u'
 
+# Respawning a pane empties both stacks.
+replies '\033[>5u\033[?1049h\033[>6u\033[5n' '\033[0n'
+replies '\033[?u\033[?1049h\033[?u' '\033[?0u\033[?0u'
+
 # modifyOtherKeys does not change the flags, and extended-keys always forces
 # modifyOtherKeys, not this protocol.
 replies '\033[>4;2m\033[?u' '\033[?0u'
