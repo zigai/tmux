@@ -130,6 +130,10 @@ TAILQ_HEAD(notification_icons, notification_icon);
 
 struct notification_query {
 	char				*id;
+	char				*ids;
+
+	struct client			**clients;
+	u_int				 nclients;
 
 	TAILQ_ENTRY(notification_query)	 entry;
 };
@@ -370,6 +374,18 @@ notification_remove_icon(struct notification_icon *ni)
 	free(ni);
 }
 
+static void
+notification_remove_query(struct notifications *ns,
+    struct notification_query *nq)
+{
+	TAILQ_REMOVE(&ns->queries, nq, entry);
+	ns->nqueries--;
+	free(nq->id);
+	free(nq->ids);
+	free(nq->clients);
+	free(nq);
+}
+
 /* Free notification state for a pane. */
 void
 notification_free(struct window_pane *wp)
@@ -388,11 +404,8 @@ notification_free(struct window_pane *wp)
 		if (ni->pane == wp->id)
 			notification_remove_icon(ni);
 	}
-	TAILQ_FOREACH_SAFE(nq, &ns->queries, entry, nq1) {
-		TAILQ_REMOVE(&ns->queries, nq, entry);
-		free(nq->id);
-		free(nq);
-	}
+	TAILQ_FOREACH_SAFE(nq, &ns->queries, entry, nq1)
+		notification_remove_query(ns, nq);
 	free(ns);
 	wp->notifications = NULL;
 }
@@ -765,6 +778,75 @@ notification_close(struct window_pane *wp, const char *id)
 	free(oid);
 }
 
+static int
+notification_query_has(struct notification_query *nq, struct client *c)
+{
+	u_int	i;
+
+	for (i = 0; i < nq->nclients; i++) {
+		if (nq->clients[i] == c)
+			return (1);
+	}
+	return (0);
+}
+
+/* Remove a client from an alive query and answer it if it was the last. */
+static void
+notification_query_done(struct window_pane *wp, struct notification_query *nq,
+    struct client *c)
+{
+	struct notifications	*ns = wp->notifications;
+	char			*metadata;
+	u_int			 i;
+
+	for (i = 0; i < nq->nclients; i++) {
+		if (nq->clients[i] == c)
+			break;
+	}
+	if (i == nq->nclients)
+		return;
+	memmove(&nq->clients[i], &nq->clients[i + 1],
+	    (nq->nclients - i - 1) * sizeof *nq->clients);
+	if (--nq->nclients != 0)
+		return;
+
+	xasprintf(&metadata, "i=%s:p=alive", nq->id);
+	notification_reply(wp, metadata, nq->ids);
+	free(metadata);
+	notification_remove_query(ns, nq);
+}
+
+/*
+ * Add an identifier to the answer to an alive query, unless another client has
+ * already given it.
+ */
+static void
+notification_query_add(struct notification_query *nq, const char *id)
+{
+	char	*copy, *cp, *next, *ids;
+
+	copy = next = xstrdup(nq->ids);
+	while ((cp = strsep(&next, ",")) != NULL) {
+		if (strcmp(cp, id) == 0) {
+			free(copy);
+			return;
+		}
+	}
+	free(copy);
+
+	if (*nq->ids == '\0')
+		ids = xstrdup(id);
+	else
+		xasprintf(&ids, "%s,%s", nq->ids, id);
+	free(nq->ids);
+	nq->ids = ids;
+}
+
+/*
+ * Ask every client that has answered the support query, because each terminal
+ * knows only about the notifications it is showing. The pane is answered with
+ * all their identifiers once they have all replied or gone.
+ */
 static void
 notification_alive(struct window_pane *wp, const char *id)
 {
@@ -772,35 +854,37 @@ notification_alive(struct window_pane *wp, const char *id)
 	struct notification_query	*nq;
 	struct client			*c;
 	char				*oid, *metadata;
-	int				 sent = 0;
+
+	nq = xcalloc(1, sizeof *nq);
+	TAILQ_FOREACH(c, &clients, entry) {
+		if (!notification_client_ok(c, wp, TTYC_SNOT99))
+			continue;
+		if (c->tty.notification_caps == NULL)
+			continue;
+		nq->clients = xreallocarray(nq->clients, nq->nclients + 1,
+		    sizeof *nq->clients);
+		nq->clients[nq->nclients++] = c;
+	}
+	if (nq->nclients == 0) {
+		free(nq);
+		return;
+	}
+	nq->id = xstrdup(id);
+	nq->ids = xstrdup("");
+
+	if (ns->nqueries == NOTIFICATION_ENTRIES)
+		notification_remove_query(ns, TAILQ_FIRST(&ns->queries));
+	TAILQ_INSERT_TAIL(&ns->queries, nq, entry);
+	ns->nqueries++;
 
 	oid = notification_outer_id(wp, id, 0);
 	xasprintf(&metadata, "i=%s:p=alive", oid);
 	TAILQ_FOREACH(c, &clients, entry) {
-		if (notification_client_ok(c, wp, TTYC_SNOT99)) {
+		if (notification_query_has(nq, c))
 			notification_write(c, metadata, "");
-			sent = 1;
-		}
 	}
 	free(metadata);
 	free(oid);
-	if (!sent)
-		return;
-
-	TAILQ_FOREACH(nq, &ns->queries, entry) {
-		if (strcmp(nq->id, id) == 0)
-			return;
-	}
-	if (ns->nqueries == NOTIFICATION_ENTRIES) {
-		nq = TAILQ_FIRST(&ns->queries);
-		TAILQ_REMOVE(&ns->queries, nq, entry);
-		free(nq->id);
-		free(nq);
-	} else
-		ns->nqueries++;
-	nq = xmalloc(sizeof *nq);
-	nq->id = xstrdup(id);
-	TAILQ_INSERT_TAIL(&ns->queries, nq, entry);
 }
 
 /* Answer a query with what the most recently active client supports. */
@@ -1067,51 +1151,51 @@ notification_closed(struct client *c, struct window_pane *wp,
  * process sent are given to it.
  */
 static void
-notification_alive_reply(struct window_pane *wp, const char *rest,
-    const char *payload)
+notification_alive_reply(struct client *c, struct window_pane *wp,
+    const char *rest, const char *payload)
 {
 	struct notifications		*ns = wp->notifications;
 	struct notification_query	*nq;
-	struct evbuffer			*evb;
 	struct window_pane		*found;
-	char				*copy, *cp, *next, *ids, *metadata;
+	char				*copy, *cp, *next;
 	const char			*id;
 
 	if (ns == NULL || *rest != 'i')
 		return;
 	TAILQ_FOREACH(nq, &ns->queries, entry) {
-		if (strcmp(nq->id, rest + 1) == 0)
+		if (strcmp(nq->id, rest + 1) == 0 &&
+		    notification_query_has(nq, c))
 			break;
 	}
 	if (nq == NULL)
 		return;
 
-	evb = evbuffer_new();
-	if (evb == NULL)
-		fatalx("out of memory");
 	copy = next = xstrdup(payload);
 	while ((cp = strsep(&next, ",")) != NULL) {
 		found = notification_find(cp, &id);
-		if (found != wp || *id != 'i' ||
-		    notification_find_entry(ns, id) == NULL)
+		if (found != wp || *id != 'i')
 			continue;
-		if (EVBUFFER_LENGTH(evb) != 0)
-			evbuffer_add(evb, ",", 1);
-		evbuffer_add_printf(evb, "%s", id + 1);
+		if (notification_find_entry(ns, id) != NULL)
+			notification_query_add(nq, id + 1);
 	}
 	free(copy);
-	ids = xstrndup((char *)EVBUFFER_DATA(evb), EVBUFFER_LENGTH(evb));
-	evbuffer_free(evb);
 
-	xasprintf(&metadata, "i=%s:p=alive", nq->id);
-	notification_reply(wp, metadata, ids);
-	free(metadata);
-	free(ids);
+	notification_query_done(wp, nq, c);
+}
 
-	TAILQ_REMOVE(&ns->queries, nq, entry);
-	ns->nqueries--;
-	free(nq->id);
-	free(nq);
+/* Forget a client that is going away in the alive queries waiting for it. */
+void
+notification_client_lost(struct client *c)
+{
+	struct window_pane		*wp;
+	struct notification_query	*nq, *nq1;
+
+	RB_FOREACH(wp, window_pane_tree, &all_window_panes) {
+		if (wp->notifications == NULL)
+			continue;
+		TAILQ_FOREACH_SAFE(nq, &wp->notifications->queries, entry, nq1)
+			notification_query_done(wp, nq, c);
+	}
 }
 
 /* Handle an OSC 99 reply from a client's terminal. */
@@ -1149,7 +1233,7 @@ notification_terminal_reply(struct client *c, const char *buf, size_t len)
 	else if (strcmp(type, "close") == 0)
 		notification_closed(c, wp, oid, rest, payload);
 	else if (strcmp(type, "alive") == 0)
-		notification_alive_reply(wp, rest, payload);
+		notification_alive_reply(c, wp, rest, payload);
 
 out:
 	free(copy);

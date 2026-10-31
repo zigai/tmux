@@ -4138,6 +4138,7 @@ void	 notification_osc9(struct window_pane *, const char *);
 void	 notification_osc777(struct window_pane *, const char *, const char *);
 char	*notification_osc99(struct window_pane *, const char *, const char *);
 void	 notification_terminal_reply(struct client *, const char *, size_t);
+void	 notification_client_lost(struct client *);
 void	 notification_free(struct window_pane *);
 
 /* names.c */

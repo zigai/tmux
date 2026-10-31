@@ -435,6 +435,7 @@ server_client_lost(struct client *c)
 
 	cmd_wait_for_client_lost(c);
 	cmdq_next(c);
+	notification_client_lost(c);
 
 	if (c->flags & CLIENT_ATTACHED) {
 		server_client_attached_lost(c);
