@@ -131,6 +131,16 @@ pane $RIGHT 't=m:o=1;text/plain'
 expect $DIR/out2 't=m:o=1;text/plain' "answer to second client"
 expect_none $DIR/out1 "answer sent to first client"
 
+# A client moving over the pane takes it from the other client, so the answer
+# goes only to the client that moved last.
+terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3;text/plain"
+expect $DIR/out1 't=m:o=0' "first client refused until the pane answers"
+expect $DIR/out2 't=m:o=0' "second client refused when first comes back"
+expect $DIR/right "t=m:$IN:o=3:i=7;text/plain" "first client move"
+pane $RIGHT 't=m:o=1;text/plain'
+expect $DIR/out1 't=m:o=1;text/plain' "answer to first client"
+expect_none $DIR/out2 "answer sent to second client"
+
 # Changing to a window with no drop targets unregisters both, and back.
 $INNER neww -d -t inner:1 'sleep 100' || exit 1
 $INNER selectw -t inner:1 || exit 1
@@ -169,7 +179,6 @@ expect $DIR/out1 "$(printf '%s\n' 't=a:x=1;1:0123456789abcdef0123')" \
 expect $DIR/right "t=M:$IN:o=1:i=7;text/plain" "drop again"
 $INNER kill-pane -t $RIGHT || exit 1
 expect $DIR/out1 "$(printf '%s\n' 't=r:o=0' 't=A')" "pane killed"
-expect $DIR/out2 "$(printf '%s\n' 't=m:o=0' 't=A')" \
-    "pane killed, second client"
+expect $DIR/out2 't=A' "pane killed, second client"
 
 exit 0
