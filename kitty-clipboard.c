@@ -1090,14 +1090,14 @@ kitty_clipboard_free(struct window_pane *wp)
 	}
 }
 
-/* Is a request waiting for this client to answer, and not yet late? */
+/* Is a request waiting for this client to answer? Late ones count if asked. */
 int
-kitty_clipboard_waiting(struct client *c)
+kitty_clipboard_waiting(struct client *c, int late)
 {
 	struct kitty_clipboard_request	*r;
 
 	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
-		if (r->c == c && !r->late)
+		if (r->c == c && (late || !r->late))
 			return (1);
 	}
 	return (0);

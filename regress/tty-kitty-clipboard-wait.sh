@@ -139,7 +139,7 @@ wait_for_output '^[]5522;type=write:status=EBUSY:id=w4^[\'\
 
 # A request the terminal does not answer for a time, perhaps while it asks
 # the user, no longer holds Escape back, but its answer still reaches the pane,
-# even split after its first two bytes once it has started.
+# even split after its first two bytes.
 kill -STOP $stopped || exit 1
 : >$TMP/first
 check "\\033]5522;type=read:id=r6;$PLAIN\\033\\\\" '' "read"
@@ -152,15 +152,13 @@ sleep 0.2
 $TMUX2 send-keys -t t: -l x || exit 1
 wait_for_text '^[x' cat $TMP/out || fail "Escape held by unanswered read"
 $TMUX unbind -n M-x || exit 1
-$TMUX2 send-keys -t t: -l "$(printf '\033]5522;type=read:status=OK:id=%s\033\\' $id)" ||
-    exit 1
 $TMUX2 send-keys -t t: -l "$(printf '\033]')" || exit 1
 sleep 0.05
 $TMUX2 send-keys -t t: -l \
     "$(printf '5522;type=read:status=DATA:id=%s:mime=%s;bGF0ZQ==\033\\' $id $PLAIN)" ||
     exit 1
 kill -CONT $stopped || exit 1
-wait_for_output '^[x^[]5522;type=read:status=OK:id=r6^[\'\
+wait_for_output '^[x'\
 "^[]5522;type=read:status=DATA:id=r6:mime=$PLAIN;bGF0ZQ==^[\\"\
 '^[]5522;type=read:status=OK:id=r6^[\'\
 "^[]5522;type=read:status=DATA:id=r6:mime=$PLAIN;MQ==^[\\"\
