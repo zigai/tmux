@@ -449,17 +449,12 @@ tty_send_requests(struct tty *tty)
 		tty_puts(tty, "\033[?u");
 		tty->flags |= TTY_KKBQUERIED;
 	}
-	/* Before primary DA, so that its reply means no drag and drop. */
+	/*
+	 * Before primary DA, so that its reply means no drag and drop or Kitty
+	 * graphics.
+	 */
 	if (~flags & TTY_HAVEDND)
 		tty_puts(tty, "\033]72;t=q\033\\");
-	if (~flags & TTY_HAVEDA)
-		tty_puts(tty, "\033[c");
-	if (~flags & TTY_HAVEDA2)
-		tty_puts(tty, "\033[>c");
-	if (~flags & TTY_HAVEXDA)
-		tty_puts(tty, "\033[>q");
-	if (~flags & TTY_HAVESYNC)
-		tty_puts(tty, "\033[?2026$p");
 #ifdef ENABLE_IMAGES
 	if (tty_term_flag(term, TTYC_XT) && (~flags & TTY_HAVEKITTYGRAPHICS))
 		tty_puts(tty, "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\");
@@ -468,6 +463,14 @@ tty_send_requests(struct tty *tty)
 #else
 	tty->flags |= TTY_HAVEKITTYGRAPHICS;
 #endif
+	if (~flags & TTY_HAVEDA)
+		tty_puts(tty, "\033[c");
+	if (~flags & TTY_HAVEDA2)
+		tty_puts(tty, "\033[>c");
+	if (~flags & TTY_HAVEXDA)
+		tty_puts(tty, "\033[>q");
+	if (~flags & TTY_HAVESYNC)
+		tty_puts(tty, "\033[?2026$p");
 
 	tty_puts(tty, "\033]10;?\033\\\033]11;?\033\\");
 	tty->flags |= (TTY_WAITBG|TTY_WAITFG);

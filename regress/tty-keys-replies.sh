@@ -184,9 +184,9 @@ for name, report in reports:
                     else:
                         wire = b"\033[?2026;5$y"
                 if delivery == "unanswered":
-                    # An unanswered graphics query uses the startup timeout.
-                    wire = b""
-                    time.sleep(5.1)
+                    # The primary DA reply ends the wait for a reply to the
+                    # graphics query, so a later reply has no effect.
+                    wire = b"\033[?1;2c" + report
                 if delivery in ("whole", "invalid", "unanswered"):
                     chunks = [wire]
                 elif delivery in ("split", "expired"):
