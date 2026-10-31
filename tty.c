@@ -588,7 +588,8 @@ tty_stop_tty(struct tty *tty)
 	}
 	if (tty_term_has(tty->term, TTYC_DSBP))
 		tty_raw(tty, tty_term_string(tty->term, TTYC_DSBP));
-	if (tty->mode & MODE_PASTE_EVENTS)
+	if ((tty->mode & MODE_PASTE_EVENTS) &&
+	    (tty->term->flags & TERM_KITTYCLIPBOARD))
 		tty_raw(tty, "\033[?5522l");
 
 	tty_raw(tty, tty_term_string(tty->term, TTYC_DSESC));
@@ -1108,7 +1109,8 @@ tty_update_mode(struct tty *tty, int mode, struct screen *s)
 		if (tty->pointer_shape != 0)
 			tty->pointer_shape = -1;
 	}
-	if (changed & MODE_PASTE_EVENTS) {
+	if ((changed & MODE_PASTE_EVENTS) &&
+	    (term->flags & TERM_KITTYCLIPBOARD)) {
 		if (mode & MODE_PASTE_EVENTS)
 			tty_puts(tty, "\033[?5522h");
 		else

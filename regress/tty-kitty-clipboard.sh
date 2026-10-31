@@ -108,18 +108,26 @@ check "\\033]5522;type=read;$PLAIN\\033\\\\" \
 [ "$($TMUX show-buffer)" = "outer text" ] || fail "buffer from both"
 
 # Without the feature the text is set with OSC 52 and the pane is answered by
-# tmux.
+# tmux, and mode 5522 is never set or reset in the terminal, even when a theme
+# change makes tmux send every mode again. The second write is sent after any
+# mode change before it.
 $TMUX2 kill-window -t outer:1 || exit 1
 wait_for_clients 0 $TMUX || exit 1
 $TMUX set -su terminal-features || exit 1
 attach 2 1
 wait_for_text clipboard $TMUX list-clients -F '#{client_termfeatures}' ||
     fail "no clipboard feature"
-check "\\033]5522;type=write:id=w4\\033\\\\\
+check "\\033[?5522h\\033]5522;type=write:id=w4\\033\\\\\
 \\033]5522;type=wdata:mime=$PLAIN;b25l\\033\\\\\
 \\033]5522;type=wdata\\033\\\\" \
     '^[]5522;type=write:status=DONE:id=w4^[\' "write without feature"
 sent 2 "\\033]52;;b25l\\007" "OSC 52 without feature"
-grep -q '5522;' $TMP/terminal2 && fail "OSC 5522 without feature"
+$TMUX set -s theme dark || exit 1
+check "\\033]5522;type=write:id=w5\\033\\\\\
+\\033]5522;type=wdata:mime=$PLAIN;dHdv\\033\\\\\
+\\033]5522;type=wdata\\033\\\\" \
+    '^[]5522;type=write:status=DONE:id=w5^[\' "second write without feature"
+sent 2 "\\033]52;;dHdv\\007" "second OSC 52 without feature"
+grep -Eaq '5522;|\?5522[hl]' $TMP/terminal2 && fail "OSC 5522 without feature"
 
 exit 0

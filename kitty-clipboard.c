@@ -484,21 +484,19 @@ kitty_clipboard_get(struct window_pane *wp)
 }
 
 /*
- * A pane has one read at a time, so a new request fails the read still waiting
- * for the terminal. A waiting write has already been sent and only the
- * terminal knows if it was applied, so it keeps waiting for its answer.
+ * A pane has one request at a time waiting for the terminal, which may be
+ * asking the user about it, so a new request is refused until it is answered.
  */
-static void
-kitty_clipboard_cancel(struct window_pane *wp)
+static int
+kitty_clipboard_busy(struct window_pane *wp)
 {
-	struct kitty_clipboard_request	*r, *r1;
+	struct kitty_clipboard_request	*r;
 
-	TAILQ_FOREACH_SAFE(r, &kitty_clipboard_requests, entry, r1) {
-		if (r->pane != wp->id || r->write)
-			continue;
-		kitty_clipboard_status(wp, "read", r->pane_id, "EBUSY", r->end);
-		kitty_clipboard_free_request(r);
+	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
+		if (r->pane == wp->id)
+			return (1);
 	}
+	return (0);
 }
 
 /* Fail a write transaction. */
@@ -614,11 +612,13 @@ kitty_clipboard_write_alias(struct kitty_clipboard *kc, const char *target,
 }
 
 /* Find the text in a transaction, after applying aliases. */
-static struct kitty_clipboard_data *
-kitty_clipboard_find_text(struct kitty_clipboard *kc)
+static int
+kitty_clipboard_find_text(struct kitty_clipboard *kc,
+    struct kitty_clipboard_data *text)
 {
-	struct kitty_clipboard_data	*all, *kd, *found = NULL;
+	struct kitty_clipboard_data	*all, *kd;
 	u_int				 n, i, j;
+	int				 found = 0;
 
 	all = xreallocarray(NULL, kc->nentries + kc->naliases + 1,
 	    sizeof *all);
@@ -654,8 +654,8 @@ kitty_clipboard_find_text(struct kitty_clipboard *kc)
 		}
 	}
 	if (i != n && all[i].size != 0) {
-		found = xmalloc(sizeof *found);
-		memcpy(found, &all[i], sizeof *found);
+		*text = all[i];
+		found = 1;
 	}
 	free(all);
 	return (found);
@@ -666,20 +666,24 @@ static void
 kitty_clipboard_write_commit(struct window_pane *wp, const char *end)
 {
 	struct kitty_clipboard		*kc = wp->kitty_clipboard;
-	struct kitty_clipboard_data	*kd, *text;
+	struct kitty_clipboard_data	*kd, text;
 	struct kitty_clipboard_alias	*ka;
 	struct kitty_clipboard_request	*r = NULL;
 	struct client			*c, *best = NULL;
 	struct evbuffer			*evb;
 	char				*meta;
 	u_int				 i;
+	int				 found;
 
 	if (kc->current != -1 && kc->ncarry != 0) {
 		kitty_clipboard_write_fail(wp, "EINVAL", end);
 		return;
 	}
-	kitty_clipboard_cancel(wp);
-	text = kitty_clipboard_find_text(kc);
+	if (kitty_clipboard_busy(wp)) {
+		kitty_clipboard_write_fail(wp, "EBUSY", end);
+		return;
+	}
+	found = kitty_clipboard_find_text(kc, &text);
 
 	TAILQ_FOREACH(c, &clients, entry) {
 		if (!kitty_clipboard_client_ready(c, wp->window))
@@ -726,22 +730,21 @@ kitty_clipboard_write_commit(struct window_pane *wp, const char *end)
 			continue;
 		if (c->tty.term->flags & TERM_KITTYCLIPBOARD)
 			kitty_clipboard_send_tty(&c->tty, EVBUFFER_DATA(evb));
-		else if (text != NULL) {
+		else if (found) {
 			tty_set_selection(&c->tty, kc->primary ? "p" : "",
-			    text->data, text->size);
+			    text.data, text.size);
 		}
 	}
 	evbuffer_free(evb);
 
-	if (text != NULL) {
-		paste_add(NULL, xmemdup(text->data, text->size), text->size);
+	if (found) {
+		paste_add(NULL, xmemdup(text.data, text.size), text.size);
 		events_fire_pane("pane-set-clipboard", wp);
 	}
 	if (r == NULL) {
 		kitty_clipboard_status(wp, "write", kc->id,
-		    text != NULL ? "DONE" : "ENOSYS", end);
+		    found ? "DONE" : "ENOSYS", end);
 	}
-	free(text);
 	kitty_clipboard_reset(kc);
 }
 
@@ -804,10 +807,15 @@ kitty_clipboard_read(struct window_pane *wp,
 	if ((mimes = kitty_clipboard_decode_string(payload)) == NULL)
 		return;
 
-	kitty_clipboard_cancel(wp);
 	state = options_get_number(global_options, "get-clipboard");
-	if (state == 0) {
+	if (state == 0 ||
+	    options_get_number(global_options, "set-clipboard") != 2) {
 		kitty_clipboard_status(wp, "read", meta->id, "EPERM", end);
+		free(mimes);
+		return;
+	}
+	if (kitty_clipboard_busy(wp)) {
+		kitty_clipboard_status(wp, "read", meta->id, "EBUSY", end);
 		free(mimes);
 		return;
 	}
@@ -1084,14 +1092,14 @@ kitty_clipboard_free(struct window_pane *wp)
 	}
 }
 
-/* Is a request waiting for this client to answer, and not yet late? */
+/* Is a request waiting for this client to answer? Late ones count if asked. */
 int
-kitty_clipboard_waiting(struct client *c)
+kitty_clipboard_waiting(struct client *c, int late)
 {
 	struct kitty_clipboard_request	*r;
 
 	TAILQ_FOREACH(r, &kitty_clipboard_requests, entry) {
-		if (r->c == c && !r->late)
+		if (r->c == c && (late || !r->late))
 			return (1);
 	}
 	return (0);

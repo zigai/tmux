@@ -48,6 +48,12 @@ check "\\033]5522;type=write:id=w1\\033\\\\\
     '^[]5522;type=write:status=EPERM:id=w1^[\' "write with set-clipboard off"
 [ -z "$($TMUX list-buffers)" ] || fail "buffer from refused write"
 
+# So do reads, even from a buffer.
+$TMUX set-buffer 'secret' || exit 1
+check "\\033]5522;type=read:id=r0;$PLAIN\\033\\\\" \
+    '^[]5522;type=read:status=EPERM:id=r0^[\' "read with set-clipboard off"
+$TMUX delete-buffer || exit 1
+
 # Text split at any point, or sent as separately padded chunks, makes a
 # buffer. With no client to forward it to, the write is done.
 $TMUX set -s set-clipboard on || exit 1
