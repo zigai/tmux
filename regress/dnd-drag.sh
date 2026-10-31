@@ -57,6 +57,11 @@ expect $DIR/left "$(printf '%s\n' 't=E:i=9;OK' 't=e:x=1:y=0:i=9' \
 pane $LEFT 't=e:y=0:m=0;aGk='
 expect $DIR/out 't=e:y=0:m=0;aGk=' "drag data"
 
+# Error text may be UTF-8, but text with C1 controls is not sent on.
+pane $LEFT "$(printf 't=E:y=0;bad\302\23552;c;aGk=')"
+pane $LEFT "$(printf 't=E:y=0;caf\303\251')"
+expect $DIR/out "$(printf 't=E:y=0;caf\303\251')" "error text"
+
 # Once the drag finishes, more drag commands are refused.
 terminal outer 't=e:x=4:y=0'
 expect $DIR/left 't=e:x=4:y=0:i=9' "drag finished"
