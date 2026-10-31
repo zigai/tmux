@@ -23,6 +23,22 @@ at()
 }
 IN=$(at 4 3)
 
+# A move split across two reads, with a gap longer than escape-time, is still
+# one move and is not typed into the pane. The startup queries are answered
+# first, so keys are not held for them.
+$OUTER send-keys -t outer:0 -l "$(printf '\033]10;rgb:ffff/ffff/ffff\033\\')"
+$OUTER send-keys -t outer:0 -l "$(printf '\033]11;rgb:0000/0000/0000\033\\')"
+wait_for_text tmux $INNER display -p '#{client_termtype}' ||
+    fail "no terminal type"
+$OUTER send-keys -t outer:0 -l \
+    "$(printf '\033]72;t=m:%s:o=3;text/pl' "$(at $((OFF + 4)) 3)")"
+sleep 0.1
+$OUTER send-keys -t outer:0 -l "$(printf 'ain\033\\')"
+expect $DIR/right "t=m:$IN:o=3:i=7;text/plain" "split move"
+expect $DIR/out1 't=m:o=0' "split move refused"
+terminal outer:0 't=m:x=-1:y=-1'
+expect $DIR/right 't=m:x=-1:y=-1:i=7' "split move left window"
+
 # Moving over a pane that accepts drops: it gets the move relative to itself
 # and its answer goes to the terminal. Until then the drop is refused.
 terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3;text/plain text/uri-list"
