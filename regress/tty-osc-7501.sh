@@ -193,6 +193,12 @@ $TMUX choose-tree -t "$p2" -F '{#{program_message}|#{program_title}}' ||
 wait_for_text '{#[fg=red]markup|#[fg=blue]title}' \
     $TMUX2 capture-pane -p -t outer || exit 1
 $TMUX copy-mode -q -t "$p2" || exit 1
+$TMUX display-popup -t "$p2" -T '(#{program_message}|#{program_title})' \
+    -w 50 -h 6 'exec sleep 1000' &
+wait_for_text '(#[fg=red]markup|#[fg=blue]title)' \
+    $TMUX2 capture-pane -p -t outer || exit 1
+$TMUX display-popup -C -t "$p2" || exit 1
+wait
 
 # A key typed in a pane removes its done and error records only. Records in
 # other panes stay.

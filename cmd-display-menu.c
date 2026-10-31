@@ -462,6 +462,7 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 	struct layout_geometry	 lg;
 	struct event_payload	*ep;
 	struct cmd_find_state	 fs;
+	struct format_tree	*ft;
 	const char		*value, *style = args_get(args, 's');
 	const char		*border_style = args_get(args, 'S');
 	char			*cause = NULL, *title = NULL;
@@ -605,8 +606,12 @@ cmd_display_popup_exec(struct cmd *self, struct cmdq_item *item)
 		options_set_string(new_wp->options, "pane-active-border-style",
 		    0, "%s", border_style);
 	}
-	if (args_has(args, 'T'))
-		title = format_single_from_target(item, args_get(args, 'T'));
+	if (args_has(args, 'T')) {
+		ft = format_create_from_target(item);
+		format_add_flags(ft, FORMAT_DRAW);
+		title = format_expand(ft, args_get(args, 'T'));
+		format_free(ft);
+	}
 	if (title != NULL) {
 		options_set_number(new_wp->options, "pane-border-status",
 		    PANE_STATUS_TOP);
