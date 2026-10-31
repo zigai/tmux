@@ -130,8 +130,8 @@ $TMUX select-window -t one:0 || exit 1
 listen "$B" '\033]99;i=nf:a=-focus,report;Stay\033\\' nf
 wait_until has c1 "i=$(oid $B inf):a=-focus,report" ||
     fail "notification not sent"
-reply c1 "\033]99;i=$(oid $B inf);\033\\\\"
-check nf '^[]99;i=nf;^[\' "activation without focus"
+reply c1 "\033]99;i=$(oid $B inf);\007"
+check nf '^[]99;i=nf;^[\' "activation without focus with BEL"
 [ "$(window)" = 0 ] || fail "activation without focus changed window"
 
 listen "$B" '\033]99;i=f;Go\033\\' f
