@@ -465,8 +465,7 @@ input_key_extended(struct bufferevent *bev, key_code key)
 	} else
 		key &= KEYC_MASK_KEY;
 
-	if (options_get_number(global_options, "extended-keys-format") ==
-	    EXTENDED_KEYS_XTERM)
+	if (options_get_number(global_options, "extended-keys-format") == 1)
 		xsnprintf(tmp, sizeof tmp, "\033[27;%c;%llu~", modifier, key);
 	else
 		xsnprintf(tmp, sizeof tmp, "\033[%llu;%cu", key, modifier);
@@ -586,7 +585,7 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
     const struct kitty_key *kk)
 {
 	struct input_key_entry	*ike = NULL;
-	key_code		 newkey;
+	key_code		 newkey, onlykey;
 	struct utf8_data	 ud;
 
 	/* Mouse keys need a pane. */
@@ -601,7 +600,7 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
 	}
 
 	/* Kitty keys take precedence if the application asked for them. */
-	if (input_key_kitty(s, bev, key, kk) == 0)
+	if (input_kitty_key(s, bev, key, kk) == 0)
 		return (0);
 
 	/* Is this backspace? */
@@ -687,6 +686,12 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
 		input_key_write(__func__, bev, ike->data, strlen(ike->data));
 		return (0);
 	}
+
+	/* Keys only the Kitty protocol can send cannot be written here. */
+	onlykey = key & KEYC_MASK_KEY;
+	if ((onlykey >= KEYC_F13 && onlykey <= KEYC_F35) ||
+	    (onlykey >= KEYC_CAPSLOCK && onlykey <= KEYC_ISO_LEVEL5_SHIFT))
+		return (-1);
 
 	/* Ignore internal function key codes. */
 	if (KEYC_IS_USER(key) || KEYC_IS_SPECIAL(key) || KEYC_IS_MOUSE(key)) {

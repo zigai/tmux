@@ -445,8 +445,10 @@ tty_send_requests(struct tty *tty)
 	}
 
 	if (options_get_number(global_options, "extended-keys") != 0 &&
-	    (~flags & TTY_HAVEKKB))
+	    (~flags & TTY_HAVEKKB)) {
 		tty_puts(tty, "\033[?u");
+		tty->flags |= TTY_KKBQUERIED;
+	}
 	/* Before primary DA, so that its reply means no drag and drop. */
 	if (~flags & TTY_HAVEDND)
 		tty_puts(tty, "\033]72;t=q\033\\");
@@ -513,8 +515,16 @@ tty_extended_keys_changed(struct tty *tty)
 		return;
 	if (tty->term->flags & TERM_KITTYKEYS)
 		return;
-	tty->flags &= ~TTY_HAVEKKB;
-	tty_puts(tty, "\033[?u");
+
+	/*
+	 * Ask only once. A DA request follows so its reply ends the wait,
+	 * which cannot work while the DA sent at attach is unanswered.
+	 */
+	if ((tty->flags & TTY_KKBQUERIED) || (~tty->flags & TTY_HAVEDA))
+		return;
+	tty->flags |= TTY_KKBQUERIED;
+	tty->flags &= ~(TTY_HAVEKKB|TTY_HAVEDA);
+	tty_puts(tty, "\033[?u\033[c");
 	tty_start_start_timer(tty);
 }
 

@@ -27,99 +27,6 @@
 
 /* Detect support in the outside terminal and decode its key sequences. */
 
-struct tty_kitty_key {
-	u_int		 number;
-	key_code	 key;
-};
-
-static const struct tty_kitty_key tty_kitty_keys[] = {
-	{ 57358, KEYC_CAPSLOCK },
-	{ 57359, KEYC_SCROLLLOCK },
-	{ 57360, KEYC_NUMLOCK },
-	{ 57361, KEYC_PRINTSCREEN },
-	{ 57362, KEYC_PAUSE },
-	{ 57363, KEYC_MENU },
-	{ 57376, KEYC_F13 },
-	{ 57377, KEYC_F14 },
-	{ 57378, KEYC_F15 },
-	{ 57379, KEYC_F16 },
-	{ 57380, KEYC_F17 },
-	{ 57381, KEYC_F18 },
-	{ 57382, KEYC_F19 },
-	{ 57383, KEYC_F20 },
-	{ 57384, KEYC_F21 },
-	{ 57385, KEYC_F22 },
-	{ 57386, KEYC_F23 },
-	{ 57387, KEYC_F24 },
-	{ 57388, KEYC_F25 },
-	{ 57389, KEYC_F26 },
-	{ 57390, KEYC_F27 },
-	{ 57391, KEYC_F28 },
-	{ 57392, KEYC_F29 },
-	{ 57393, KEYC_F30 },
-	{ 57394, KEYC_F31 },
-	{ 57395, KEYC_F32 },
-	{ 57396, KEYC_F33 },
-	{ 57397, KEYC_F34 },
-	{ 57398, KEYC_F35 },
-	{ 57399, KEYC_KP_ZERO|KEYC_KEYPAD },
-	{ 57400, KEYC_KP_ONE|KEYC_KEYPAD },
-	{ 57401, KEYC_KP_TWO|KEYC_KEYPAD },
-	{ 57402, KEYC_KP_THREE|KEYC_KEYPAD },
-	{ 57403, KEYC_KP_FOUR|KEYC_KEYPAD },
-	{ 57404, KEYC_KP_FIVE|KEYC_KEYPAD },
-	{ 57405, KEYC_KP_SIX|KEYC_KEYPAD },
-	{ 57406, KEYC_KP_SEVEN|KEYC_KEYPAD },
-	{ 57407, KEYC_KP_EIGHT|KEYC_KEYPAD },
-	{ 57408, KEYC_KP_NINE|KEYC_KEYPAD },
-	{ 57409, KEYC_KP_PERIOD|KEYC_KEYPAD },
-	{ 57410, KEYC_KP_SLASH|KEYC_KEYPAD },
-	{ 57411, KEYC_KP_STAR|KEYC_KEYPAD },
-	{ 57412, KEYC_KP_MINUS|KEYC_KEYPAD },
-	{ 57413, KEYC_KP_PLUS|KEYC_KEYPAD },
-	{ 57414, KEYC_KP_ENTER|KEYC_KEYPAD },
-	{ 57415, KEYC_KP_EQUAL|KEYC_KEYPAD },
-	{ 57416, KEYC_KP_SEPARATOR|KEYC_KEYPAD },
-	{ 57417, KEYC_KP_LEFT|KEYC_KEYPAD },
-	{ 57418, KEYC_KP_RIGHT|KEYC_KEYPAD },
-	{ 57419, KEYC_KP_UP|KEYC_KEYPAD },
-	{ 57420, KEYC_KP_DOWN|KEYC_KEYPAD },
-	{ 57421, KEYC_KP_PPAGE|KEYC_KEYPAD },
-	{ 57422, KEYC_KP_NPAGE|KEYC_KEYPAD },
-	{ 57423, KEYC_KP_HOME|KEYC_KEYPAD },
-	{ 57424, KEYC_KP_END|KEYC_KEYPAD },
-	{ 57425, KEYC_KP_IC|KEYC_KEYPAD },
-	{ 57426, KEYC_KP_DC|KEYC_KEYPAD },
-	{ 57427, KEYC_KP_BEGIN|KEYC_KEYPAD },
-	{ 57428, KEYC_MEDIA_PLAY },
-	{ 57429, KEYC_MEDIA_PAUSE },
-	{ 57430, KEYC_MEDIA_PLAYPAUSE },
-	{ 57431, KEYC_MEDIA_REVERSE },
-	{ 57432, KEYC_MEDIA_STOP },
-	{ 57433, KEYC_MEDIA_FASTFORWARD },
-	{ 57434, KEYC_MEDIA_REWIND },
-	{ 57435, KEYC_MEDIA_NEXT },
-	{ 57436, KEYC_MEDIA_PREVIOUS },
-	{ 57437, KEYC_MEDIA_RECORD },
-	{ 57438, KEYC_VOLUME_DOWN },
-	{ 57439, KEYC_VOLUME_UP },
-	{ 57440, KEYC_VOLUME_MUTE },
-	{ 57441, KEYC_LEFT_SHIFT },
-	{ 57442, KEYC_LEFT_CTRL },
-	{ 57443, KEYC_LEFT_ALT },
-	{ 57444, KEYC_LEFT_SUPER },
-	{ 57445, KEYC_LEFT_HYPER },
-	{ 57446, KEYC_LEFT_META },
-	{ 57447, KEYC_RIGHT_SHIFT },
-	{ 57448, KEYC_RIGHT_CTRL },
-	{ 57449, KEYC_RIGHT_ALT },
-	{ 57450, KEYC_RIGHT_SUPER },
-	{ 57451, KEYC_RIGHT_HYPER },
-	{ 57452, KEYC_RIGHT_META },
-	{ 57453, KEYC_ISO_LEVEL3_SHIFT },
-	{ 57454, KEYC_ISO_LEVEL5_SHIFT }
-};
-
 static int
 tty_kitty_parse_number(const char *s, u_int *value, int empty)
 {
@@ -180,65 +87,37 @@ tty_kitty_find_end(const char *buf, size_t len, size_t *end)
 static key_code
 tty_kitty_function(u_int number, char final)
 {
-	u_int	i;
+	key_code	key;
 
-	if (final == 'u') {
-		switch (number) {
-		case 9:
-			return (C0_HT);
-		case 13:
-			return (C0_CR);
-		case 27:
-			return (C0_ESC);
-		case 127:
-			return (KEYC_BSPACE);
-		}
-		for (i = 0; i < nitems(tty_kitty_keys); i++) {
-			if (tty_kitty_keys[i].number == number)
-				return (tty_kitty_keys[i].key);
-		}
-		return (KEYC_NONE);
+	key = input_kitty_find(number, final);
+	if (key != KEYC_NONE) {
+		if (final >= 'A' && final <= 'D')
+			key |= KEYC_CURSOR;
+		return (key);
 	}
+	if (final == 'u')
+		return (KEYC_NONE);
 
+	/* Other forms terminals send for some keys. */
 	if (final == '~') {
 		switch (number) {
-		case 2: return (KEYC_IC);
-		case 3: return (KEYC_DC);
-		case 5: return (KEYC_PPAGE);
-		case 6: return (KEYC_NPAGE);
-		case 7: return (KEYC_HOME);
-		case 8: return (KEYC_END);
-		case 11: return (KEYC_F1);
-		case 12: return (KEYC_F2);
-		case 13: return (KEYC_F3);
-		case 14: return (KEYC_F4);
-		case 15: return (KEYC_F5);
-		case 17: return (KEYC_F6);
-		case 18: return (KEYC_F7);
-		case 19: return (KEYC_F8);
-		case 20: return (KEYC_F9);
-		case 21: return (KEYC_F10);
-		case 23: return (KEYC_F11);
-		case 24: return (KEYC_F12);
-		case 29: return (KEYC_MENU);
-		case 57427: return (KEYC_KP_BEGIN|KEYC_KEYPAD);
+		case 7:
+			return (KEYC_HOME);
+		case 8:
+			return (KEYC_END);
+		case 11:
+			return (KEYC_F1);
+		case 12:
+			return (KEYC_F2);
+		case 14:
+			return (KEYC_F4);
+		case 29:
+			return (KEYC_MENU);
+		case 57427:
+			return (KEYC_KP_BEGIN|KEYC_KEYPAD);
 		}
-		return (KEYC_UNKNOWN);
-	}
-	if (number != 1)
-		return (KEYC_UNKNOWN);
-	switch (final) {
-	case 'A': return (KEYC_UP|KEYC_CURSOR);
-	case 'B': return (KEYC_DOWN|KEYC_CURSOR);
-	case 'C': return (KEYC_RIGHT|KEYC_CURSOR);
-	case 'D': return (KEYC_LEFT|KEYC_CURSOR);
-	case 'E': return (KEYC_KP_BEGIN|KEYC_KEYPAD);
-	case 'F': return (KEYC_END);
-	case 'H': return (KEYC_HOME);
-	case 'P': return (KEYC_F1);
-	case 'Q': return (KEYC_F2);
-	case 'S': return (KEYC_F4);
-	}
+	} else if (final == 'E' && number == 1)
+		return (KEYC_KP_BEGIN|KEYC_KEYPAD);
 	return (KEYC_UNKNOWN);
 }
 
@@ -334,14 +213,15 @@ int
 tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
     key_code *key, struct kitty_key *kk)
 {
-	struct client	*c = tty->client;
-	struct utf8_data ud;
-	utf8_char	 uc;
-	size_t		 end;
-	char		 tmp[256], *copy, *field, final;
-	u_int		 values[3], count, fields = 0, cp, keymods;
-	key_code	 nkey, onlykey;
-	int		 result;
+	struct client		*c = tty->client;
+	struct kitty_key	 nk;
+	struct utf8_data	 ud;
+	utf8_char		 uc;
+	size_t			 end;
+	char			 tmp[256], *copy, *field, final;
+	u_int			 values[3], count, fields = 0, cp, keymods;
+	key_code		 nkey, onlykey;
+	int			 result;
 
 	*size = 0;
 	if ((tty->flags & TTY_KKBPUSHED) == 0)
@@ -367,10 +247,10 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 	final = buf[end];
 	*size = end + 1;
 
-	memset(kk, 0, sizeof *kk);
-	kk->final = final;
-	kk->modifiers = 1;
-	kk->event = KITTY_EVENT_PRESS;
+	memset(&nk, 0, sizeof nk);
+	nk.final = final;
+	nk.modifiers = 1;
+	nk.event = KITTY_EVENT_PRESS;
 
 	copy = tmp;
 	while ((field = strsep(&copy, ";")) != NULL) {
@@ -378,58 +258,58 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 			if (*field == '\0') {
 				if (final == 'u')
 					return (-1);
-				kk->number = 1;
+				nk.number = 1;
 			} else {
 				if (tty_kitty_parse_list(field, values, 3,
 				    &count) != 0)
 					return (-1);
-				kk->number = values[0];
+				nk.number = values[0];
 				if (count > 1)
-					kk->shifted = values[1];
+					nk.shifted = values[1];
 				if (count > 2)
-					kk->base = values[2];
+					nk.base = values[2];
 			}
 		} else if (fields == 1) {
 			if (tty_kitty_parse_list(field, values, 2, &count) != 0)
 				return (-1);
 			if (count > 0 && *field != '\0')
-				kk->modifiers = values[0];
+				nk.modifiers = values[0];
 			if (count > 1)
-				kk->event = values[1];
+				nk.event = values[1];
 		} else if (fields == 2) {
-			if (tty_kitty_parse_list(field, kk->text,
-			    KITTY_TEXT_MAX, &kk->ntext) != 0)
+			if (tty_kitty_parse_list(field, nk.text,
+			    KITTY_TEXT_MAX, &nk.ntext) != 0)
 				return (-2);
 		} else
 			return (-1);
 		fields++;
 	}
-	if (kk->number == 0 || kk->modifiers == 0)
+	if (nk.number == 0 || nk.modifiers == 0)
 		return (-1);
-	if (kk->event < KITTY_EVENT_PRESS || kk->event > KITTY_EVENT_RELEASE)
+	if (nk.event < KITTY_EVENT_PRESS || nk.event > KITTY_EVENT_RELEASE)
 		return (-2);
-	kk->modifiers--;
-	keymods = kk->modifiers;
+	nk.modifiers--;
+	keymods = nk.modifiers;
 
-	nkey = tty_kitty_function(kk->number, final);
+	nkey = tty_kitty_function(nk.number, final);
 	if (nkey == KEYC_NONE) {
 		if (final != 'u')
 			return (-1);
-		if (kk->number >= 57344 && kk->number <= 63743)
+		if (nk.number >= 57344 && nk.number <= 63743)
 			return (-2);
 
 		/*
 		 * A key with only Shift is the character it types, without
 		 * the Shift, as with other terminals.
 		 */
-		cp = kk->number;
+		cp = nk.number;
 		if ((keymods & ~(KITTY_MOD_SHIFT|KITTY_MOD_CAPSLOCK|
 		    KITTY_MOD_NUMLOCK)) == 0) {
-			if (kk->ntext == 1 && kk->text[0] >= 0x20 &&
-			    kk->text[0] != 0x7f)
-				cp = kk->text[0];
-			else if ((keymods & KITTY_MOD_SHIFT) && kk->shifted != 0)
-				cp = kk->shifted;
+			if (nk.ntext == 1 && nk.text[0] >= 0x20 &&
+			    nk.text[0] != 0x7f)
+				cp = nk.text[0];
+			else if ((keymods & KITTY_MOD_SHIFT) && nk.shifted != 0)
+				cp = nk.shifted;
 			else if ((keymods & KITTY_MOD_SHIFT) &&
 			    cp >= 'a' && cp <= 'z')
 				cp -= 'a' - 'A';
@@ -448,8 +328,12 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 
 	if (keymods & KITTY_MOD_SHIFT)
 		nkey |= KEYC_SHIFT;
-	if (keymods & (KITTY_MOD_ALT|KITTY_MOD_META))
-		nkey |= KEYC_META|KEYC_IMPLIED_META;
+	/* Keypad keys have no sequence with Meta, so it is sent as ESC. */
+	if (keymods & (KITTY_MOD_ALT|KITTY_MOD_META)) {
+		nkey |= KEYC_META;
+		if (~nkey & KEYC_KEYPAD)
+			nkey |= KEYC_IMPLIED_META;
+	}
 	if (keymods & KITTY_MOD_CTRL)
 		nkey |= KEYC_CTRL;
 	if (keymods & KITTY_MOD_SUPER)
@@ -465,8 +349,9 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 	if (log_get_level() != 0) {
 		log_debug("%s: Kitty key %.*s is %llx (%s) event %u", c->name,
 		    (int)*size, buf, nkey, key_string_lookup_key(nkey, 1),
-		    kk->event);
+		    nk.event);
 	}
 	*key = nkey;
+	*kk = nk;
 	return (0);
 }

@@ -1644,7 +1644,7 @@ tty_keys_device_attributes(struct tty *tty, const char *buf, size_t len,
 	}
 	log_debug("%s: received primary DA %.*s", c->name, (int)*size, buf);
 
-	/* The keyboard query, if sent, is answered first; else nothing is due. */
+	/* A keyboard query sent before this is answered by now, if at all. */
 	tty->flags |= TTY_HAVEKKB;
 	tty_update_features(tty);
 	tty->flags |= TTY_HAVEDA;
