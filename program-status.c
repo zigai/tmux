@@ -461,7 +461,7 @@ program_status_beneath(const char *id, const char *parent)
 	    (id[len] == '\0' || id[len] == '/'));
 }
 
-/* Timer to redraw and run the hook after records have changed. */
+/* Timer to run the hook after records have changed. */
 static void
 program_status_changed_callback(__unused int fd, __unused short events,
     void *data)
@@ -470,15 +470,13 @@ program_status_changed_callback(__unused int fd, __unused short events,
 	struct window_pane	*wp = ps->wp;
 
 	ps->pending = 0;
-	server_redraw_window_borders(wp->window);
-	server_status_window(wp->window);
 	events_fire_pane("pane-program-status-changed", wp);
 	program_status_check_empty(wp);
 }
 
 /*
- * Records of a pane have changed. Redraws and the hook wait so a burst of
- * reports runs them once.
+ * Records of a pane have changed. The hook waits so a burst of reports runs
+ * it once.
  */
 static void
 program_status_changed(struct window_pane *wp)
@@ -488,6 +486,8 @@ program_status_changed(struct window_pane *wp)
 
 	log_debug("%s: %%%u", __func__, wp->id);
 
+	server_redraw_window_borders(wp->window);
+	server_status_window(wp->window);
 	if (!ps->pending) {
 		ps->pending = 1;
 		tv.tv_sec = 0;
