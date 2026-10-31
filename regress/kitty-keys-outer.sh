@@ -169,7 +169,7 @@ $TMUX set -g extended-keys off \; \
     set-hook -g client-attached 'set -g extended-keys on' || exit 1
 $TMUX2 set -g extended-keys on || exit 1
 $TMUX new -d -s s4 -x80 -y24 'exec sleep 100' || exit 1
-attach o7 s4
+attach o8 s4
 wait_for_output 'Kitty 1' client_mode s4 || exit 1
 
 exit 0
