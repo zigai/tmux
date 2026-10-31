@@ -153,7 +153,7 @@ $TMUX2 send-keys -t t: -l x || exit 1
 wait_for_text '^[x' cat $TMP/out || fail "Escape held by unanswered read"
 $TMUX unbind -n M-x || exit 1
 $TMUX2 send-keys -t t: -l "$(printf '\033]')" || exit 1
-sleep 0.05
+sleep 0.2
 $TMUX2 send-keys -t t: -l \
     "$(printf '5522;type=read:status=DATA:id=%s:mime=%s;bGF0ZQ==\033\\' $id $PLAIN)" ||
     exit 1
@@ -189,7 +189,7 @@ check "\\033]5522;type=read:id=r5;$PLAIN\\033\\\\" '' "read"
 wait_for_text 'type=read:id=tmux-' cat $TMP/first || fail "read not sent"
 id=$(sent_id read first)
 $TMUX2 send-keys -t t: -l "$(printf '\033]')" || exit 1
-sleep 0.05
+sleep 0.2
 $TMUX2 send-keys -t t: -l "$(printf '5522;type=read:status=OK:id=%s\033\\' $id)" ||
     exit 1
 wait_for_output '^[]5522;type=read:status=OK:id=r5^[\' cat $TMP/out ||
