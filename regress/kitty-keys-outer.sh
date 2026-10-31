@@ -53,6 +53,16 @@ client_mode()
 	    -f "#{==:#{client_session},$1}"
 }
 
+# Draw a message on a client and wait for it in the capture, so everything the
+# client wrote before it has been captured too.
+flush()
+{
+	client=$($TMUX list-clients -F '#{client_name}' \
+	    -f "#{==:#{client_session},$2}")
+	$TMUX display-message -c "$client" "flush-$1" || exit 1
+	wait_for_text "flush-$1" cat "$DIR/$1" || exit 1
+}
+
 outer_mode()
 {
 	$TMUX2 display -p -t "$1" '#{pane_key_mode}'
@@ -92,6 +102,7 @@ $TMUX2 set -g extended-keys off || exit 1
 attach o3 s1
 wait_for_output 'Ext' $TMUX list-clients -F '#{client_key_mode}' \
     -f '#{==:#{client_session},s1}' || exit 1
+flush o3 s1
 [ "$(sent "$DIR/o3")" = '1b5b3f75 ' ] || exit 1
 $TMUX detach-client -s s1 || exit 1
 
@@ -112,6 +123,7 @@ $TMUX set -gu terminal-features || exit 1
 $TMUX2 set -g extended-keys on || exit 1
 attach o5 s1
 wait_for_output 'VT10x' client_mode s1 || exit 1
+flush o5 s1
 [ -z "$(sent "$DIR/o5")" ] || exit 1
 $TMUX set -g extended-keys on || exit 1
 wait_for_output 'Kitty 31' client_mode s1 || exit 1
