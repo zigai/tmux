@@ -336,6 +336,7 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
 	struct client		*tc = cmdq_get_target_client(item);
 	struct menu		*menu = NULL;
 	struct menu_item	 menu_item;
+	struct format_tree	*ft;
 	const char		*key, *name, *value;
 	const char		*style = args_get(args, 's');
 	const char		*border_style = args_get(args, 'S');
@@ -360,9 +361,12 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
 		}
 	}
 
-	if (args_has(args, 'T'))
-		title = format_single_from_target(item, args_get(args, 'T'));
-	else
+	if (args_has(args, 'T')) {
+		ft = format_create_from_target(item);
+		format_add_flags(ft, FORMAT_DRAW);
+		title = format_expand(ft, args_get(args, 'T'));
+		format_free(ft);
+	} else
 		title = xstrdup("");
 	menu = menu_create(title);
 	free(title);

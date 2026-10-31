@@ -906,6 +906,7 @@ window_customize_build_keys(struct window_customize_modedata *data,
 	free(title);
 
 	ft = format_create_from_state(NULL, NULL, fs);
+	format_add_flags(ft, FORMAT_DRAW);
 	format_add(ft, "is_option", "0");
 	format_add(ft, "is_key", "1");
 	format_add(ft, "is_environment", "0");
@@ -1083,6 +1084,7 @@ window_customize_build(void *modedata,
 		cmd_find_from_pane(&fs, data->wp, 0);
 
 	ft = format_create_from_state(NULL, NULL, &fs);
+	format_add_flags(ft, FORMAT_DRAW);
 	format_add(ft, "is_option", "1");
 	format_add(ft, "is_key", "0");
 	format_add(ft, "is_environment", "0");

@@ -128,6 +128,11 @@ cmd_display_message_exec(struct cmd *self, struct cmdq_item *item)
 		flags = FORMAT_VERBOSE;
 	else
 		flags = 0;
+	if (cmdq_get_client(item) != NULL &&
+	    !args_has(args, 'p') &&
+	    tc != NULL &&
+	    (~tc->flags & CLIENT_CONTROL))
+		flags |= FORMAT_DRAW;
 	ft = format_create(cmdq_get_client(item), item, FORMAT_NONE, flags);
 	format_defaults(ft, c, s, wl, wp);
 

@@ -78,6 +78,7 @@ menu_add_item(struct menu *menu, const struct menu_item *item,
     struct cmdq_item *qitem, struct client *c, struct cmd_find_state *fs)
 {
 	struct menu_item	*new_item;
+	struct format_tree	*ft;
 	const char		*key = NULL, *cmd, *suffix = "";
 	char			*s, *trimmed, *name;
 	u_int			 width, max_width;
@@ -99,9 +100,12 @@ menu_add_item(struct menu *menu, const struct menu_item *item,
 		return;
 
 	if (fs != NULL)
-		s = format_single_from_state(qitem, item->name, c, fs);
+		ft = format_create_from_state(qitem, c, fs);
 	else
-		s = format_single(qitem, item->name, c, NULL, NULL, NULL);
+		ft = format_create_defaults(qitem, c, NULL, NULL, NULL);
+	format_add_flags(ft, FORMAT_DRAW);
+	s = format_expand(ft, item->name);
+	format_free(ft);
 	if (*s == '\0') { /* no item if empty after format expanded */
 		free(s);
 		menu->count--;

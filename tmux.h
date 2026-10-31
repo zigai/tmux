@@ -76,6 +76,8 @@ struct notifications;
 struct options;
 struct options_array_item;
 struct options_entry;
+struct program_status;
+struct program_status_forward;
 struct prompt;
 struct window_pane_prompt;
 struct redraw_damage;
@@ -549,6 +551,7 @@ enum {
 	KEYC_REPORT_KITTY_COLOURS,
 	KEYC_REPORT_WINSZ,
 	KEYC_REPORT_NOTIFICATION,
+	KEYC_REPORT_PROGRAM_STATUS,
 
 	/* Mouse state. */
 	KEYC_MOUSE, /* unclassified mouse event */
@@ -1242,6 +1245,32 @@ struct pointer_shapes {
  */
 #define SCREEN_COLOURS 12
 
+/* Program status states, from least to most urgent. */
+enum program_status_state {
+	PROGRAM_STATUS_IDLE,
+	PROGRAM_STATUS_WORKING,
+	PROGRAM_STATUS_DONE,
+	PROGRAM_STATUS_ERROR,
+	PROGRAM_STATUS_BLOCKED
+};
+
+/* Program status record. */
+struct program_status_record {
+	char				*id;
+	enum program_status_state	 state;
+	const char			*kind;
+	int				 progress;
+	char				*app;
+	char				*title;
+	char				*msg;
+
+	char				*forward_id;
+	char				*forward;
+
+	uint64_t			 updated;
+	RB_ENTRY(program_status_record)	 entry;
+};
+
 /* Virtual screen. */
 struct screen_sel;
 struct screen_titles;
@@ -1605,6 +1634,8 @@ struct window_pane {
 	time_t		 cmd_end_time;
 	int		 cmd_status;
 	char		*cmd_line;
+
+	struct program_status *program_status;
 
 	int		 fd;
 	struct bufferevent *event;
@@ -2015,6 +2046,7 @@ struct tty_term {
 #define TERM_KITTYGRAPHICS 0x200
 #define TERM_KITTYKEYS 0x400
 #define TERM_KITTYCLIPBOARD 0x800
+#define TERM_PROGRAMSTATUS 0x1000
 	int		 flags;
 
 	LIST_ENTRY(tty_term) entry;
@@ -2082,6 +2114,8 @@ struct tty {
 
 	size_t		 sync_offset;
 
+	struct program_status_forward *program_status;
+
 	struct termios	 tio;
 
 	struct grid_cell cell;
@@ -2114,9 +2148,10 @@ struct tty {
 #define TTY_EXTKEYS 0x1000000
 #define TTY_HAVEDND 0x2000000
 #define TTY_KKBQUERIED 0x4000000
+#define TTY_HAVEPROGRAMSTATUS 0x8000000
 #define TTY_ALL_REQUEST_FLAGS \
 	(TTY_HAVEDA|TTY_HAVEDA2|TTY_HAVEXDA|TTY_HAVESYNC|TTY_HAVEKITTYGRAPHICS| \
-	    TTY_HAVEKKB|TTY_HAVEDND)
+	    TTY_HAVEKKB|TTY_HAVEDND|TTY_HAVEPROGRAMSTATUS)
 	int		 flags;
 	u_int		 kitty_keys;
 
@@ -3000,6 +3035,7 @@ struct key_binding	**sort_get_key_bindings_table(struct key_table *,
 #define FORMAT_NOJOBS 0x4
 #define FORMAT_VERBOSE 0x8
 #define FORMAT_LAST 0x10
+#define FORMAT_DRAW 0x20
 #define FORMAT_NONE 0
 #define FORMAT_PANE 0x80000000U
 #define FORMAT_WINDOW 0x40000000U
@@ -3025,6 +3061,7 @@ void		 format_each(struct format_tree *, void (*)(const char *,
 char		*format_pretty_time(time_t, int);
 char		*format_expand_time(struct format_tree *, const char *);
 char		*format_expand(struct format_tree *, const char *);
+void		 format_add_flags(struct format_tree *, int);
 char		*format_single(struct cmdq_item *, const char *,
 		     struct client *, struct session *, struct winlink *,
 		     struct window_pane *);
@@ -4700,6 +4737,31 @@ void	 kitty_clipboard_reset_pane(struct window_pane *);
 u_int		 pointer_shape_find(const char *);
 u_int		 pointer_shape_find_alias(const char *);
 const char	*pointer_shape_name(u_int);
+
+/* program-status.c */
+const char	*program_status_state_name(enum program_status_state);
+void		 program_status_report(struct window_pane *, const char *,
+		     size_t);
+void		 program_status_end_running(struct window_pane *);
+void		 program_status_dismiss(struct window_pane *);
+void		 program_status_reset(struct window_pane *);
+void		 program_status_free(struct window_pane *);
+struct program_status_record *program_status_root(struct window_pane *);
+struct program_status_record *program_status_first(struct window_pane *);
+struct program_status_record *program_status_next(struct window_pane *,
+		     struct program_status_record *);
+u_int		 program_status_count(struct window_pane *);
+const char	*program_status_app(struct window_pane *,
+		     struct program_status_record *);
+int		 program_status_pane_state(struct window_pane *);
+int		 program_status_window_state(struct window *);
+int		 program_status_session_state(struct session *);
+char		*program_status_text(const char *, int);
+void		 program_status_forward_client(struct client *);
+void		 program_status_session_changed(struct client *);
+void		 program_status_stop(struct tty *);
+void		 program_status_free_tty(struct tty *);
+void		 program_status_build_events(void);
 
 /* json.c */
 struct json_node	*json_parse(const char *, char **);

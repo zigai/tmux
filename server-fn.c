@@ -356,6 +356,7 @@ server_destroy_pane(struct window_pane *wp, int notify)
 	struct window		*w = wp->window;
 	struct screen_write_ctx	 ctx;
 	struct grid_cell	 gc;
+	struct format_tree	*ft;
 	int			 remain_on_exit;
 	const char		*s;
 	char			*expanded;
@@ -378,6 +379,7 @@ server_destroy_pane(struct window_pane *wp, int notify)
 
 	if (~wp->flags & PANE_STATUSREADY)
 		return;
+	program_status_end_running(wp);
 	remain_on_exit = options_get_number(wp->options, "remain-on-exit");
 	switch (remain_on_exit) {
 	case 0:
@@ -405,7 +407,10 @@ server_destroy_pane(struct window_pane *wp, int notify)
 			screen_write_linefeed(&ctx, 1, 8);
 			memcpy(&gc, &grid_default_cell, sizeof gc);
 
-			expanded = format_single(NULL, s, NULL, NULL, NULL, wp);
+			ft = format_create_defaults(NULL, NULL, NULL, NULL, wp);
+			format_add_flags(ft, FORMAT_DRAW);
+			expanded = format_expand(ft, s);
+			format_free(ft);
 			format_draw(&ctx, &gc, sx, expanded, NULL, 0);
 			free(expanded);
 

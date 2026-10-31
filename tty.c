@@ -427,6 +427,8 @@ tty_start_tty(struct tty *tty)
 	tty->mouse_drag_release = NULL;
 	tty->flags &= ~TTY_MOUSEPOSITION;
 	tty->pointer_shape = 0;
+
+	program_status_forward_client(c);
 }
 
 void
@@ -450,11 +452,13 @@ tty_send_requests(struct tty *tty)
 		tty->flags |= TTY_KKBQUERIED;
 	}
 	/*
-	 * Before primary DA, so that its reply means no drag and drop or Kitty
-	 * graphics.
+	 * Before primary DA, so that its reply means no drag and drop, program
+	 * status or Kitty graphics.
 	 */
 	if (~flags & TTY_HAVEDND)
 		tty_puts(tty, "\033]72;t=q\033\\");
+	if (~flags & TTY_HAVEPROGRAMSTATUS)
+		tty_puts(tty, "\033]7501;?\033\\");
 #ifdef ENABLE_IMAGES
 	if (tty_term_flag(term, TTYC_XT) && (~flags & TTY_HAVEKITTYGRAPHICS))
 		tty_puts(tty, "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\");
@@ -558,6 +562,8 @@ tty_stop_tty(struct tty *tty)
 	event_del(&tty->event_in);
 	event_del(&tty->event_out);
 
+	program_status_stop(tty);
+
 	/*
 	 * Be flexible about error handling and try not kill the server just
 	 * because the fd is invalid. Things like ssh -t can easily leave us
@@ -657,6 +663,7 @@ tty_free(struct tty *tty)
 	tty_close(tty);
 	free(tty->notification_caps);
 	dnd_tty_free(tty);
+	program_status_free_tty(tty);
 #ifdef ENABLE_IMAGES
 	image_tty_free(tty, 0);
 #endif
@@ -706,6 +713,7 @@ tty_update_features(struct tty *tty)
 		server_redraw_client(c);
 		tty_invalidate(tty);
 	}
+	program_status_forward_client(c);
 }
 
 void

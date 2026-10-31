@@ -1640,6 +1640,7 @@ window_pane_destroy(struct window_pane *wp)
 	wp->flags |= PANE_DESTROYED;
 	dnd_pane_free(wp);
 	window_pane_clear_prompt(wp);
+	program_status_free(wp);
 
 	window_pane_free_modes(wp);
 	screen_write_sync_clear_dirty(wp);

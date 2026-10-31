@@ -135,7 +135,7 @@ window_switch_add_session(struct window_switch_modedata *data,
 	struct window_switch_itemdata	*item;
 	struct format_tree		*ft;
 
-	ft = format_create(NULL, NULL, FORMAT_NONE, 0);
+	ft = format_create(NULL, NULL, FORMAT_NONE, FORMAT_DRAW);
 	format_defaults(ft, NULL, s, NULL, NULL);
 
 	item = window_switch_add_item(data);
@@ -156,7 +156,7 @@ window_switch_add_window(struct window_switch_modedata *data,
 	struct window_switch_itemdata	*item;
 	struct format_tree		*ft;
 
-	ft = format_create(NULL, NULL, FORMAT_NONE, 0);
+	ft = format_create(NULL, NULL, FORMAT_NONE, FORMAT_DRAW);
 	format_defaults(ft, NULL, wl->session, wl, NULL);
 
 	item = window_switch_add_item(data);
@@ -237,7 +237,7 @@ window_switch_build(struct window_switch_modedata *data)
 		break;
 	case WINDOW_SWITCH_TYPE_INPUT:
 		cmd_find_from_pane(&fs, data->wp, 0);
-		ft = format_create(NULL, NULL, FORMAT_NONE, 0);
+		ft = format_create(NULL, NULL, FORMAT_NONE, FORMAT_DRAW);
 		format_defaults(ft, NULL, fs.s, fs.wl, fs.wp);
 		for (i = 0; i < data->lines_size; i++)
 			window_switch_add_input(data, i, ft);

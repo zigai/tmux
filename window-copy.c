@@ -5979,6 +5979,7 @@ window_copy_write_line(struct window_mode_entry *wme,
 	screen_write_cursormove(ctx, 0, py, 0);
 
 	ft = format_create_defaults(NULL, NULL, NULL, NULL, wp);
+	format_add_flags(ft, FORMAT_DRAW);
 
 	style_apply(&gc, oo, "copy-mode-position-style", ft);
 	gc.flags |= GRID_FLAG_NOPALETTE;

@@ -331,6 +331,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 			close(sc->wp0->fd);
 			sc->wp0->fd = -1;
 		}
+		program_status_end_running(sc->wp0);
 		window_pane_reset_mode_all(sc->wp0);
 		screen_reinit(&sc->wp0->base);
 		dnd_pane_free(sc->wp0);

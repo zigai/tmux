@@ -202,6 +202,7 @@ dist_tmux_SOURCES = \
 	paste.c \
 	pointer-shapes.c \
 	proc.c \
+	program-status.c \
 	prompt-history.c \
 	prompt.c \
 	regsub.c \

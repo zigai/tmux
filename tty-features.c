@@ -445,6 +445,13 @@ static const struct tty_feature tty_feature_imagescroll = {
 	0
 };
 
+/* Terminal supports the program status protocol (OSC 7501). */
+static const struct tty_feature tty_feature_programstatus = {
+	"programstatus",
+	NULL,
+	TERM_PROGRAMSTATUS
+};
+
 /* Terminal supports the OSC 9;4 progress bar. */
 static const char *const tty_feature_progressbar_capabilities[] = {
 	"Spb=\\E]9;4;%p1%d;%p2%d\\E\\\\",
@@ -511,6 +518,7 @@ static const struct tty_feature *const tty_features[] = {
 	&tty_feature_osc99,
 	&tty_feature_overline,
 	&tty_feature_pointershape,
+	&tty_feature_programstatus,
 	&tty_feature_progressbar,
 	&tty_feature_rectfill,
 	&tty_feature_rgb,

@@ -406,6 +406,8 @@ server_client_set_session(struct client *c, struct session *s)
 		alerts_check_session(s);
 		tty_update_client_offset(c);
 		status_timer_start(c);
+		if (old != s)
+			program_status_session_changed(c);
 		server_client_fire_session_changed(c, old);
 
 		/*
@@ -1919,8 +1921,14 @@ forward_key:
 		goto out;
 	if (c->flags & CLIENT_READONLY)
 		goto out;
-	if (wp != NULL)
+	if (wp != NULL) {
+		if (!KEYC_IS_MOUSE(key) &&
+		    key != KEYC_FOCUS_IN &&
+		    key != KEYC_FOCUS_OUT &&
+		    (~key & KEYC_SENT))
+			program_status_dismiss(wp);
 		window_pane_key(wp, c, s, wl, key, m, &event->kitty);
+	}
 	goto out;
 
 paste_key:

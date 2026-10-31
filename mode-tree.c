@@ -857,6 +857,7 @@ mode_tree_draw(struct mode_tree_data *mtd)
 	screen_write_start(&ctx, s);
 	screen_write_clearscreen(&ctx, 8);
 	ft = format_create_defaults(NULL, NULL, NULL, NULL, wp);
+	format_add_flags(ft, FORMAT_DRAW);
 
 	keylen = 0;
 	for (i = 0; i < mtd->line_size; i++) {

@@ -132,6 +132,10 @@ format_job_cmp(struct format_job *fj1, struct format_job *fj2)
 #define FORMAT_ENVIRON 0x80000000ULL
 #define FORMAT_DIFFERENCE 0x100000000ULL
 #define FORMAT_CYCLE 0x200000000ULL
+#define FORMAT_PROGRAM_STATUS 0x400000000ULL
+
+/* Tree flags for text which will be drawn, where # starts markup. */
+#define FORMAT_ESCAPE (FORMAT_STATUS|FORMAT_DRAW)
 
 /* Limit on recursion. */
 #define FORMAT_LOOP_LIMIT 100
@@ -178,6 +182,7 @@ struct format_tree {
 	struct window		*w;
 	struct window_pane	*wp;
 	struct paste_buffer	*pb;
+	struct program_status_record *program_record;
 
 	struct cmdq_item	*item;
 	struct client		*client;
@@ -2758,6 +2763,145 @@ format_cb_pane_ranges(struct format_tree *ft)
 	return (NULL);
 }
 
+/* Get the program status record for a format. */
+static struct program_status_record *
+format_program_status_record(struct format_tree *ft)
+{
+	if (ft->program_record != NULL)
+		return (ft->program_record);
+	if (ft->wp == NULL)
+		return (NULL);
+	return (program_status_root(ft->wp));
+}
+
+/* Callback for pane_program_count. */
+static void *
+format_cb_pane_program_count(struct format_tree *ft)
+{
+	if (ft->wp != NULL)
+		return (format_printf("%u", program_status_count(ft->wp)));
+	return (NULL);
+}
+
+/* Callback for pane_program_state. */
+static void *
+format_cb_pane_program_state(struct format_tree *ft)
+{
+	int	state;
+
+	if (ft->wp == NULL || (state = program_status_pane_state(ft->wp)) == -1)
+		return (NULL);
+	return (xstrdup(program_status_state_name(state)));
+}
+
+/* Callback for window_program_state. */
+static void *
+format_cb_window_program_state(struct format_tree *ft)
+{
+	int	state;
+
+	if (ft->w == NULL || (state = program_status_window_state(ft->w)) == -1)
+		return (NULL);
+	return (xstrdup(program_status_state_name(state)));
+}
+
+/* Callback for session_program_state. */
+static void *
+format_cb_session_program_state(struct format_tree *ft)
+{
+	int	state;
+
+	if (ft->s == NULL ||
+	    (state = program_status_session_state(ft->s)) == -1)
+		return (NULL);
+	return (xstrdup(program_status_state_name(state)));
+}
+
+/* Callback for program_id. */
+static void *
+format_cb_program_id(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL)
+		return (NULL);
+	return (xstrdup(psr->id));
+}
+
+/* Callback for program_kind. */
+static void *
+format_cb_program_kind(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL || psr->kind == NULL)
+		return (NULL);
+	return (xstrdup(psr->kind));
+}
+
+/* Callback for program_message. */
+static void *
+format_cb_program_message(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL || psr->msg == NULL)
+		return (NULL);
+	return (program_status_text(psr->msg, ft->flags & FORMAT_ESCAPE));
+}
+
+/* Callback for program_name. */
+static void *
+format_cb_program_name(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+	const char			*app;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL || (app = program_status_app(ft->wp, psr)) == NULL)
+		return (NULL);
+	return (xstrdup(app));
+}
+
+/* Callback for program_progress. */
+static void *
+format_cb_program_progress(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL || psr->progress == -1)
+		return (NULL);
+	return (format_printf("%d", psr->progress));
+}
+
+/* Callback for program_state. */
+static void *
+format_cb_program_state(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL)
+		return (NULL);
+	return (xstrdup(program_status_state_name(psr->state)));
+}
+
+/* Callback for program_title. */
+static void *
+format_cb_program_title(struct format_tree *ft)
+{
+	struct program_status_record	*psr;
+
+	psr = format_program_status_record(ft);
+	if (psr == NULL || psr->title == NULL)
+		return (NULL);
+	return (program_status_text(psr->title, ft->flags & FORMAT_ESCAPE));
+}
+
 /* Callback for pane_right. */
 static void *
 format_cb_pane_right(struct format_tree *ft)
@@ -4085,6 +4229,12 @@ static const struct format_table_entry format_table[] = {
 	{ "pane_private_modes", FORMAT_TABLE_STRING,
 	  format_cb_pane_private_modes
 	},
+	{ "pane_program_count", FORMAT_TABLE_STRING,
+	  format_cb_pane_program_count
+	},
+	{ "pane_program_state", FORMAT_TABLE_STRING,
+	  format_cb_pane_program_state
+	},
 	{ "pane_ranges", FORMAT_TABLE_STRING,
 	  format_cb_pane_ranges
 	},
@@ -4144,6 +4294,27 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "pid", FORMAT_TABLE_STRING,
 	  format_cb_pid
+	},
+	{ "program_id", FORMAT_TABLE_STRING,
+	  format_cb_program_id
+	},
+	{ "program_kind", FORMAT_TABLE_STRING,
+	  format_cb_program_kind
+	},
+	{ "program_message", FORMAT_TABLE_STRING,
+	  format_cb_program_message
+	},
+	{ "program_name", FORMAT_TABLE_STRING,
+	  format_cb_program_name
+	},
+	{ "program_progress", FORMAT_TABLE_STRING,
+	  format_cb_program_progress
+	},
+	{ "program_state", FORMAT_TABLE_STRING,
+	  format_cb_program_state
+	},
+	{ "program_title", FORMAT_TABLE_STRING,
+	  format_cb_program_title
 	},
 	{ "scroll_region_lower", FORMAT_TABLE_STRING,
 	  format_cb_scroll_region_lower
@@ -4222,6 +4393,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "session_path", FORMAT_TABLE_STRING,
 	  format_cb_session_path
+	},
+	{ "session_program_state", FORMAT_TABLE_STRING,
+	  format_cb_session_program_state
 	},
 	{ "session_silence_flag", FORMAT_TABLE_STRING,
 	  format_cb_session_silence_flag
@@ -4345,6 +4519,9 @@ static const struct format_table_entry format_table[] = {
 	},
 	{ "window_panes", FORMAT_TABLE_STRING,
 	  format_cb_window_panes
+	},
+	{ "window_program_state", FORMAT_TABLE_STRING,
+	  format_cb_window_program_state
 	},
 	{ "window_raw_flags", FORMAT_TABLE_STRING,
 	  format_cb_window_raw_flags
@@ -5110,7 +5287,7 @@ format_build_modifiers(struct format_expand_state *es, const char **s,
 			break;
 
 		/* Check single character modifiers with no arguments. */
-		if (strchr("labdnwETSWPOVL!<>A", cp[0]) != NULL &&
+		if (strchr("labdnwETSWPOVLG!<>A", cp[0]) != NULL &&
 		    format_is_end(cp[1])) {
 			format_add_modifier(&list, count, cp, 1, NULL, 0);
 			cp++;
@@ -5905,6 +6082,56 @@ format_loop_environ(struct format_expand_state *es, const char *fmt,
 	return (value);
 }
 
+/* Loop over program status records. */
+static char *
+format_loop_program_status(struct format_expand_state *es, const char *fmt)
+{
+	struct format_tree		*ft = es->ft, *nft;
+	struct format_expand_state	 next;
+	struct program_status_record	*psr, *psr_next;
+	char				*expanded, *value;
+	struct evbuffer			*buffer;
+	size_t				 size;
+	u_int				 i = 0;
+
+	if (ft->wp == NULL) {
+		format_log(es, "program status loop but no pane");
+		return (xstrdup(""));
+	}
+
+	buffer = evbuffer_new();
+	if (buffer == NULL)
+		fatalx("out of memory");
+
+	for (psr = program_status_first(ft->wp); psr != NULL; psr = psr_next) {
+		psr_next = program_status_next(ft->wp, psr);
+		format_log(es, "program status loop: %s", psr->id);
+		nft = format_create(ft->client, ft->item, FORMAT_NONE,
+		    ft->flags);
+		nft->program_record = psr;
+
+		format_add(nft, "loop_last_flag", "%d", psr_next == NULL);
+		format_add(nft, "loop_index", "%u", i);
+
+		format_defaults(nft, ft->c, ft->s, ft->wl, ft->wp);
+		format_copy_state(&next, es, 0);
+		next.ft = nft;
+
+		expanded = format_expand1(&next, fmt);
+		format_free(nft);
+		evbuffer_add(buffer, expanded, strlen(expanded));
+		free(expanded);
+		i++;
+	}
+
+	if ((size = EVBUFFER_LENGTH(buffer)) != 0)
+		value = xmemdup(EVBUFFER_DATA(buffer), size);
+	else
+		value = xstrdup("");
+	evbuffer_free(buffer);
+	return (value);
+}
+
 /* Loop over clients. */
 static char *
 format_loop_clients(struct format_expand_state *es, const char *fmt)
@@ -6417,6 +6644,9 @@ format_replace(struct format_expand_state *es, const char *key, size_t keylen,
 				if (fm->argc == 1)
 					loop_flags = fm->argv[0];
 				break;
+			case 'G':
+				modifiers |= FORMAT_PROGRAM_STATUS;
+				break;
 			case 'L':
 				modifiers |= FORMAT_CLIENTS;
 				if (fm->argc < 1) {
@@ -6555,6 +6785,8 @@ format_replace(struct format_expand_state *es, const char *key, size_t keylen,
 		value = format_loop_panes(es, copy);
 		if (value == NULL)
 			goto fail;
+	} else if (modifiers & FORMAT_PROGRAM_STATUS) {
+		value = format_loop_program_status(es, copy);
 	} else if (modifiers & FORMAT_CLIENTS) {
 		value = format_loop_clients(es, copy);
 		if (value == NULL)
@@ -7087,6 +7319,13 @@ format_single(struct cmdq_item *item, const char *fmt, struct client *c,
 	expanded = format_expand(ft, fmt);
 	format_free(ft);
 	return (expanded);
+}
+
+/* Add flags to a tree. */
+void
+format_add_flags(struct format_tree *ft, int flags)
+{
+	ft->flags |= flags;
 }
 
 /* Expand a single string using state. */

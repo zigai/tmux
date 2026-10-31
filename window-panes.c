@@ -708,10 +708,11 @@ window_panes_draw_format(struct window_panes_modedata *data,
     struct screen_write_ctx *ctx, struct window_pane *wp, u_int x, u_int y,
     u_int sx, const struct grid_cell *gc)
 {
-	struct session	*s = data->session;
-	struct winlink	*wl = s->curw;
-	const char	*format;
-	char		*expanded;
+	struct session		*s = data->session;
+	struct winlink		*wl = s->curw;
+	struct format_tree	*ft;
+	const char		*format;
+	char			*expanded;
 
 	if (sx == 0)
 		return;
@@ -724,7 +725,10 @@ window_panes_draw_format(struct window_panes_modedata *data,
 	if (s == NULL)
 		return;
 
-	expanded = format_single(NULL, format, NULL, s, wl, wp);
+	ft = format_create_defaults(NULL, NULL, s, wl, wp);
+	format_add_flags(ft, FORMAT_DRAW);
+	expanded = format_expand(ft, format);
+	format_free(ft);
 	if (*expanded != '\0') {
 		screen_write_cursormove(ctx, x, y, 0);
 		format_draw(ctx, gc, sx, expanded, NULL, 0);
