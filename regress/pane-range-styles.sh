@@ -20,14 +20,15 @@ mkdir -m 700 "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" \
     "$XDG_RUNTIME_DIR" || { rm -rf "$tmp"; exit 1; }
 export TERM SHELL LC_ALL TMUX_TMPDIR XDG_CONFIG_HOME XDG_CACHE_HOME \
     XDG_DATA_HOME XDG_RUNTIME_DIR
+. ./regress-common.inc
 TMUX="$TEST_TMUX -Lrange-styles-$$ -f/dev/null"
 OUTER="$TEST_TMUX -Lrange-styles-outer-$$ -f/dev/null"
 E=$(printf '\033')
 serial=0
 cleanup()
 {
-	$TMUX kill-server >/dev/null 2>&1
-	$OUTER kill-server >/dev/null 2>&1
+	stop_server $TMUX
+	stop_server $OUTER
 	rm -rf "$tmp"
 }
 fail()
@@ -86,15 +87,28 @@ assert_line()
 	fail "$3"
 }
 
-# Record the bytes the inner client sends while a command runs.
+# Have the application set the clipboard to some text, which the inner client
+# passes to the outer tmux as a buffer, and wait for it, so everything the
+# inner client sent before has been read. The second argument is the text in
+# base64.
+mark()
+{
+	printf '\033]52;c;%s\007' "$2" >"$tmp/mark.bin"
+	$TMUX load-buffer -b mark "$tmp/mark.bin" || fail 'load mark'
+	$TMUX paste-buffer -S -r -d -b mark -t "$pane" || fail 'paste mark'
+	wait_for_output "$1" $OUTER show-buffer || fail "mark $1 not seen"
+}
+
+# Record the bytes the inner client sends while a command runs, ending with
+# the end mark.
 record()
 {
 	file=$tmp/record-$1
 	shift
-	sleep 0.3
+	mark start c3RhcnQ=
 	$OUTER pipe-pane -O "cat >$file; touch $file.done" || fail pipe
 	"$@"
-	sleep 0.3
+	mark end ZW5k
 	$OUTER pipe-pane || fail 'close pipe'
 	attempt=0
 	while [ ! -f "$file.done" ]; do
@@ -112,7 +126,8 @@ same_bytes()
 		echo >&2
 		fail "$3"
 	}
-	[ -s "$tmp/record-$1" ] || fail "nothing recorded: $3"
+	cmp -s "$tmp/record-$1" "$tmp/record-empty" &&
+	    fail "nothing recorded: $3"
 }
 refresh()
 {
@@ -126,9 +141,12 @@ stream()
 trap cleanup EXIT HUP INT TERM
 $TMUX new-session -d -s styles -x 30 -y 6 'sleep 10000' || fail start
 $TMUX set -g status off || fail status
+$TMUX set -g set-clipboard on || fail clipboard
+$TMUX set -as terminal-features 'tmux*:clipboard' || fail features
 $OUTER new-session -d -x 30 -y 6 || fail 'outer start'
 $OUTER set -g status off || fail 'outer status'
 $OUTER set -g default-terminal tmux-256color || fail 'outer terminal'
+$OUTER set -g set-clipboard on || fail 'outer clipboard'
 $OUTER send -l "$TMUX attach" || fail 'outer send'
 $OUTER send Enter || fail 'outer enter'
 attempt=0
@@ -325,6 +343,9 @@ $TMUX display -t "$pane" -p ok >/dev/null || fail 'server died'
 # With no range styles drawn, the client gets the same bytes as for a pane
 # without ranges, both for a full redraw and for output.
 fresh plain
+record empty true
+[ "$(cat -v "$tmp/record-empty")" = '^[]52;c;ZW5k^G' ] ||
+    fail "empty recording: $(cat -v "$tmp/record-empty")"
 record plain-refresh refresh
 record plain-stream stream
 fresh killed

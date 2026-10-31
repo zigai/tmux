@@ -20,13 +20,13 @@ mkdir -m 700 "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" \
     "$XDG_RUNTIME_DIR" || { rm -rf "$tmp"; exit 1; }
 export TERM SHELL LC_ALL TMUX_TMPDIR XDG_CONFIG_HOME XDG_CACHE_HOME \
     XDG_DATA_HOME XDG_RUNTIME_DIR
+. ./regress-common.inc
 TMUX="$TEST_TMUX -Lrange-mouse-$$ -f/dev/null"
 TMUX2="$TEST_TMUX -Lrange-mouse-outer-$$ -f/dev/null"
 serial=0
 cleanup()
 {
-	$TMUX kill-server >/dev/null 2>&1
-	$TMUX2 kill-server >/dev/null 2>&1
+	stop_servers
 	rm -rf "$tmp"
 }
 fail()
