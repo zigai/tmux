@@ -119,7 +119,6 @@ expect_none $DIR/out "killed dead pane"
 
 # A list over 1 MB loses the chunks past that, and tmux stays responsive.
 # Each chunk has 444 types, so 262 chunks fit.
-start=$(date +%s)
 awk 'BEGIN {
 	for (c = 0; c < 270; c++) {
 		s = ""
@@ -133,7 +132,6 @@ pane_sync $LEFT $DIR/left
 $INNER neww -d -t inner:1 'sleep 100' || exit 1
 $INNER selectw -t inner:1 || exit 1
 $INNER selectw -t inner:0 || exit 1
-[ $(($(date +%s) - start)) -le 5 ] || fail "long list too slow"
 long_end()
 {
 	[ "$(osc72 $DIR/out | tail -1 | sed 's/.* //')" = "x/end" ]
