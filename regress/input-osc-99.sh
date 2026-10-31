@@ -78,6 +78,11 @@ emit "$A" '\033]99;i=x:a=-focus:u=2:f=YXBw;Hi\007'
 check "\033]99;i=$(oid $A ix):a=-focus,report:u=2:f=YXBw:p=title:e=1;SGk=\033\\\\" \
     "notification with keys"
 
+# Identifiers keep only the characters kitty allows.
+emit "$A" '\033]99;i=a/b!c;Id\033\\'
+check "\033]99;i=$(oid $A iabc):a=focus,report:p=title:e=1;SWQ=\033\\\\" \
+    "identifier with other characters"
+
 # Chunks from two panes do not mix and are sent together.
 emit "$A" '\033]99;i=a:d=0:u=2;Ti\033\\'
 emit "$A2" '\033]99;i=b;Other\033\\'
