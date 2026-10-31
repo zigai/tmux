@@ -136,6 +136,7 @@ escape_x()
 {
 	: >"$DIR/keys"
 	$TMUX2 send-keys -t "$1" -H 1b || exit 1
+	sleep 0.2
 	$TMUX2 send-keys -t "$1" -H 78 || exit 1
 	wait_for_output 1b5b32377578 hex "$DIR/keys" || exit 1
 }
