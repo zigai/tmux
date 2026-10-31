@@ -848,7 +848,7 @@ tty_force_cursor_colour(struct tty *tty, int c)
 static char *
 tty_diff_colours(struct tty *tty, struct screen *s)
 {
-	const char	*want, *name;
+	const char	*want;
 	char		*changes = NULL, *tmp;
 	u_int		 i;
 
@@ -863,22 +863,11 @@ tty_diff_colours(struct tty *tty, struct screen *s)
 		    strcmp(want, tty->colours[i]) == 0)
 			continue;
 
-		name = screen_colour_name(i);
-		if (changes == NULL) {
-			if (want == NULL)
-				changes = xstrdup(name);
-			else
-				xasprintf(&changes, "%s=%s", name, want);
-		} else {
-			tmp = changes;
-			if (want == NULL)
-				xasprintf(&changes, "%s;%s", tmp, name);
-			else {
-				xasprintf(&changes, "%s;%s=%s", tmp, name,
-				    want);
-			}
-			free(tmp);
-		}
+		tmp = changes;
+		xasprintf(&changes, "%s%s%s%s%s", tmp == NULL ? "" : tmp,
+		    tmp == NULL ? "" : ";", screen_colour_name(i),
+		    want == NULL ? "" : "=", want == NULL ? "" : want);
+		free(tmp);
 
 		free(tty->colours[i]);
 		tty->colours[i] = (want == NULL ? NULL : xstrdup(want));

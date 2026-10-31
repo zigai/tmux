@@ -3213,6 +3213,36 @@ input_get_fg(struct window_pane *wp)
 	return (c);
 }
 
+static int
+input_set_fg(struct input_ctx *ictx, int c)
+{
+	if (ictx->palette == NULL)
+		return (0);
+	ictx->palette->fg = c;
+	if (ictx->wp != NULL)
+		ictx->wp->flags |= PANE_STYLECHANGED;
+	return (1);
+}
+
+static int
+input_set_bg(struct input_ctx *ictx, int c)
+{
+	if (ictx->palette == NULL)
+		return (0);
+	ictx->palette->bg = c;
+	if (ictx->wp != NULL)
+		ictx->wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
+	return (1);
+}
+
+static int
+input_get_cursor(struct screen *s)
+{
+	if (s->ccolour == -1)
+		return (s->default_ccolour);
+	return (s->ccolour);
+}
+
 /* Handle the OSC 10 sequence for setting and querying foreground colour. */
 static void
 input_osc_10(struct input_ctx *ictx, const char *p)
@@ -3232,28 +3262,18 @@ input_osc_10(struct input_ctx *ictx, const char *p)
 		log_debug("bad OSC 10: %s", p);
 		return;
 	}
-	if (ictx->palette != NULL) {
-		ictx->palette->fg = c;
-		if (wp != NULL)
-			wp->flags |= PANE_STYLECHANGED;
+	if (input_set_fg(ictx, c))
 		screen_write_fullredraw(&ictx->ctx);
-	}
 }
 
 /* Handle the OSC 110 sequence for resetting foreground colour. */
 static void
 input_osc_110(struct input_ctx *ictx, const char *p)
 {
-	struct window_pane	*wp = ictx->wp;
-
 	if (*p != '\0')
 		return;
-	if (ictx->palette != NULL) {
-		ictx->palette->fg = 8;
-		if (wp != NULL)
-			wp->flags |= PANE_STYLECHANGED;
+	if (input_set_fg(ictx, 8))
 		screen_write_fullredraw(&ictx->ctx);
-	}
 }
 
 /* Handle the OSC 11 sequence for setting and querying background colour. */
@@ -3275,28 +3295,18 @@ input_osc_11(struct input_ctx *ictx, const char *p)
 		log_debug("bad OSC 11: %s", p);
 		return;
 	}
-	if (ictx->palette != NULL) {
-		ictx->palette->bg = c;
-		if (wp != NULL)
-			wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
+	if (input_set_bg(ictx, c))
 		screen_write_fullredraw(&ictx->ctx);
-	}
 }
 
 /* Handle the OSC 111 sequence for resetting background colour. */
 static void
 input_osc_111(struct input_ctx *ictx, const char *p)
 {
-	struct window_pane	*wp = ictx->wp;
-
 	if (*p != '\0')
 		return;
-	if (ictx->palette != NULL) {
-		ictx->palette->bg = 8;
-		if (wp != NULL)
-			wp->flags |= (PANE_STYLECHANGED|PANE_THEMECHANGED);
+	if (input_set_bg(ictx, 8))
 		screen_write_fullredraw(&ictx->ctx);
-	}
 }
 
 /* Handle the OSC 12 sequence for setting and querying cursor colour. */
@@ -3308,9 +3318,7 @@ input_osc_12(struct input_ctx *ictx, const char *p)
 
 	if (strcmp(p, "?") == 0) {
 		if (wp != NULL) {
-			c = ictx->ctx.s->ccolour;
-			if (c == -1)
-				c = ictx->ctx.s->default_ccolour;
+			c = input_get_cursor(ictx->ctx.s);
 			input_osc_colour_reply(ictx, 1, 12, 0, c,
 			    ictx->input_end);
 		}
@@ -3560,35 +3568,23 @@ input_osc_21(struct input_ctx *ictx, const char *p)
 			if (query) {
 				c = (wp == NULL ? -1 : input_get_fg(wp));
 				input_add_colours_colour(icr, key, c);
-			} else if (palette != NULL &&
-			    input_osc_21_colour(value, &c) == 0) {
-				palette->fg = (c == -1 ? 8 : c);
-				if (wp != NULL)
-					wp->flags |= PANE_STYLECHANGED;
+			} else if (input_osc_21_colour(value, &c) == 0 &&
+			    input_set_fg(ictx, c == -1 ? 8 : c))
 				redraw = 1;
-			}
 			continue;
 		}
 		if (strcmp(key, "background") == 0) {
 			if (query) {
 				c = (wp == NULL ? -1 : window_pane_get_bg(wp));
 				input_add_colours_colour(icr, key, c);
-			} else if (palette != NULL &&
-			    input_osc_21_colour(value, &c) == 0) {
-				palette->bg = (c == -1 ? 8 : c);
-				if (wp != NULL) {
-					wp->flags |= (PANE_STYLECHANGED|
-					    PANE_THEMECHANGED);
-				}
+			} else if (input_osc_21_colour(value, &c) == 0 &&
+			    input_set_bg(ictx, c == -1 ? 8 : c))
 				redraw = 1;
-			}
 			continue;
 		}
 		if (strcmp(key, "cursor") == 0) {
 			if (query) {
-				c = s->ccolour;
-				if (c == -1)
-					c = s->default_ccolour;
+				c = input_get_cursor(s);
 				input_add_colours_colour(icr, key, c);
 			} else if (input_osc_21_colour(value, &c) == 0)
 				screen_set_cursor_colour(s, c);
