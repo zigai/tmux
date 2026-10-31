@@ -179,6 +179,12 @@ struct pane_ranges {
 	size_t				  visible_len;
 	size_t				  visible_size;
 
+	struct pane_range		**sorted;
+	const char			 *searched;
+	size_t				 *starts;
+	u_int				  nstarts;
+	u_int				  starts_size;
+
 	u_int				  generation;
 	int				  enabled;
 	u_int				  enabled_generation;
@@ -500,6 +506,8 @@ pane_ranges_free(struct screen *s)
 	}
 	pane_ranges_free_rows(prs);
 	pane_ranges_free_text_rows(prs);
+	free(prs->sorted);
+	free(prs->starts);
 	for (i = 0; i < prs->nsets; i++) {
 		free(prs->sets[i]->ids);
 		free(prs->sets[i]);
@@ -1261,6 +1269,38 @@ pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
 	}
 }
 
+/*
+ * Find where text is found in the visible text, unless it was the text last
+ * searched for.
+ */
+static void
+pane_ranges_search(struct pane_ranges *prs, const char *match)
+{
+	const char	*p, *found_at, *last;
+	size_t		 len = strlen(match);
+
+	if (prs->searched != NULL && strcmp(prs->searched, match) == 0)
+		return;
+	prs->searched = match;
+	prs->nstarts = 0;
+
+	p = prs->visible;
+	last = prs->visible + prs->visible_len;
+	while (p != NULL && p < last) {
+		found_at = memmem(p, last - p, match, len);
+		if (found_at == NULL)
+			break;
+		if (prs->nstarts == prs->starts_size) {
+			prs->starts_size = prs->starts_size == 0 ? 16 :
+			    prs->starts_size * 2;
+			prs->starts = xreallocarray(prs->starts,
+			    prs->starts_size, sizeof *prs->starts);
+		}
+		prs->starts[prs->nstarts++] = found_at - prs->visible;
+		p = found_at + 1;
+	}
+}
+
 /* Find the text of a range on the screen and set its state and position. */
 static void
 pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
@@ -1270,9 +1310,8 @@ pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
 	struct grid_cell	 gc;
 	struct pane_range_match	 m, best;
 	struct pane_range_cell	*start, *end;
-	const char		*p, *found_at, *last;
 	size_t			 len = strlen(r->match);
-	u_int			 found = 0, x;
+	u_int			 found = 0, x, i;
 	int			 tie = 0;
 
 	if (r->alternate != SCREEN_IS_ALTERNATE(&wp->base)) {
@@ -1283,18 +1322,13 @@ pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
 
 	memset(&best, 0, sizeof best);
 	m.clipped = 0;
-	p = prs->visible;
-	last = prs->visible + prs->visible_len;
-	while (p != NULL && p < last) {
-		found_at = memmem(p, last - p, r->match, len);
-		if (found_at == NULL)
-			break;
-		m.start = found_at - prs->visible;
+	pane_ranges_search(prs, r->match);
+	for (i = 0; i < prs->nstarts; i++) {
+		m.start = prs->starts[i];
 		m.end = m.start + len;
 		if (pane_ranges_before(prs, m.start, r->before) &&
 		    pane_ranges_after(prs, m.end, r->after))
 			pane_ranges_consider(prs, r, &m, &best, &found, &tie);
-		p = found_at + 1;
 	}
 	if (found == 0)
 		pane_ranges_find_clipped(prs, r, &best, &found, &tie);
@@ -1328,9 +1362,20 @@ pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
 	r->last_x = r->span.start_x;
 }
 
+/* Compare two text ranges by the text they match. */
+static int
+pane_ranges_match_cmp(const void *a, const void *b)
+{
+	const struct pane_range	*r1 = *(struct pane_range *const *)a;
+	const struct pane_range	*r2 = *(struct pane_range *const *)b;
+
+	return (strcmp(r1->match, r2->match));
+}
+
 /*
  * Resolve the text ranges of a pane if the visible text has changed and no
- * synchronized update is in progress. Return whether any state or position
+ * synchronized update is in progress. The ranges are sorted by their text so
+ * each text is searched for once. Return whether any state or position
  * changed.
  */
 static int
@@ -1341,6 +1386,7 @@ pane_ranges_resolve_text(struct pane_ranges *prs)
 	struct pane_range_span	 span;
 	enum pane_range_state	 state;
 	int			 positioned, changed = 0;
+	u_int			 n = 0, i;
 
 	if (wp->base.mode & MODE_SYNC)
 		return (0);
@@ -1349,7 +1395,15 @@ pane_ranges_resolve_text(struct pane_ranges *prs)
 	prs->text_dirty = 0;
 	prs->text_rows_dirty = 1;
 
-	TAILQ_FOREACH(r, &prs->text, text_entry) {
+	prs->sorted = xreallocarray(prs->sorted, prs->ntext,
+	    sizeof *prs->sorted);
+	TAILQ_FOREACH(r, &prs->text, text_entry)
+		prs->sorted[n++] = r;
+	qsort(prs->sorted, n, sizeof *prs->sorted, pane_ranges_match_cmp);
+
+	prs->searched = NULL;
+	for (i = 0; i < n; i++) {
+		r = prs->sorted[i];
 		state = r->state;
 		positioned = r->positioned;
 		span = r->span;
@@ -1363,6 +1417,7 @@ pane_ranges_resolve_text(struct pane_ranges *prs)
 		    span.end_x != r->span.end_x))
 			changed = 1;
 	}
+	prs->searched = NULL;
 	return (changed);
 }
 
