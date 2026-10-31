@@ -162,9 +162,9 @@ EOF
 fresh sh "$tmp/app.sh"
 wait_format '#{mouse_any_flag}' 1
 : >"$tmp/app.in"
-beta=$(new -n beta -g words -r 0:6-0:9)
-gamma=$(new -n gamma -g other -r 0:11-0:15)
-overlap=$(new -n overlap -r 0:8-0:12)
+beta=$(new -n beta -g words -a text -r 0:6-0:9)
+gamma=$(new -n gamma -g other -a grid -r 0:11-0:15)
+overlap=$(new -n overlap -a grid -r 0:8-0:12)
 click 0 8 1
 wait_app 'E[<0;8;1ME[<0;8;1m' 'unbound range click'
 
@@ -178,6 +178,14 @@ click 0 11 1
 wait_got "$overlap|overlap||1|10" 'overlap click'
 click 0 15 1
 wait_got "$gamma|gamma|other|1|14" 'gamma click'
+
+# Where text and grid ranges overlap, the newest is under the mouse.
+click 0 9 1
+wait_got "$overlap|overlap||1|8" 'grid range over older text range'
+late=$(new -n late -m gamma)
+click 0 15 1
+wait_got "$late|late||1|14" 'text range over older grid range'
+$TMUX kill-range -t "$pane" "$late" || fail kill
 record -n MouseDown1Pane "$(recorder 'pane:#{mouse_range_id}')"
 click 0 3 2
 wait_got 'pane:' 'click outside ranges'

@@ -242,6 +242,16 @@ assert_line 2 "${E}[44m${e}t${e}${E}[49mond line" 'UTF-8 style'
 output '\033[2;1H\303\251'
 assert_line 2 "${E}[44m${e}t${e}${E}[49mond line" \
     'identical UTF-8 rewrite lost style'
+output '\033[?1049h\033[H\033[2Jalpha beta gamma'
+c=$(new -s 'bg=red' -m beta)
+assert_line 1 "alpha ${E}[41mbeta${E}[49m gamma" 'text style before rewrite'
+output '\033[1;7Hbeta'
+assert_line 1 "alpha ${E}[41mbeta${E}[49m gamma" \
+    'identical rewrite lost text style'
+output '\033[1;8He'
+assert_line 1 "alpha ${E}[41mbeta${E}[49m gamma" \
+    'identical cell lost text style'
+output '\033[?1049l'
 
 # Copy mode shows range styles below search matches and the selection, and
 # shows ranges created while it is active.
