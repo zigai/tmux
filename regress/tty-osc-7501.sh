@@ -214,6 +214,19 @@ counts()
 wait_for_output "$(printf '%s\n%s' '=blocked i=idle ' '=done ')" counts ||
     fail "dismissed the wrong records: $(counts)"
 
+# Keys for copy mode do not count, but bracketed paste does.
+emit "$p2" 'state=done:id=d'
+expect "state=done:id=$n2/d"
+$TMUX copy-mode -t "$p2" || exit 1
+$TMUX2 send-keys -t outer k q || exit 1
+wait_for_output 0 $TMUX display-message -p -t "$p2" '#{pane_in_mode}' ||
+    exit 1
+emit "$p2" 'state=idle:id=marker'
+expect "state=idle:id=$n2/marker"
+$TMUX2 send-keys -t outer -H 1b 5b 32 30 30 7e 68 69 1b 5b 32 30 31 7e ||
+    exit 1
+expect "state=clear:id=$n2/d"
+
 # A terminal holds at most 256 records, so only that many are sent: each
 # pane's own record first, then those updated most recently. What it holds
 # matches what was sent, even after an older record is updated.
@@ -272,10 +285,12 @@ expect 'state=clear'
 # support the protocol, and once the DA reply is in, an Escape is not held
 # back waiting for an answer.
 $TMUX new-session -d -s s3 -x80 -y24 'exec cat >/dev/null' || exit 1
+p5=$($TMUX new-window -d -P -F '#{pane_id}' -t s3 '') || exit 1
+emit "$p5" 'state=blocked:app=before'
 $TMUX set-option -s escape-time 50 || exit 1
 $TMUX bind-key -n Escape set-option -g @key E || exit 1
 $TMUX bind-key -n M-x set-option -g @key M || exit 1
-python3 - "$TEST_TMUX" "-LtestI$$" <<'EOF' || fail 'fake terminal failed'
+python3 - "$TEST_TMUX" "-LtestI$$" "$p5" <<'EOF' || fail 'fake terminal'
 import fcntl, os, pty, struct, subprocess, sys, termios, time
 
 tmux = [sys.argv[1], sys.argv[2], "-f/dev/null"]
@@ -334,6 +349,8 @@ for i in range(200):
     time.sleep(0.05)
 else:
     sys.exit("the replies were not read")
+subprocess.run(tmux + ["display-message", "-I", "-t", sys.argv[3]],
+    input=b"\033]7501;state=done:app=after\033\\")
 
 os.write(master, b"\033")
 time.sleep(0.3)
@@ -352,6 +369,11 @@ time.sleep(0.3)
 features = clients("#{client_termfeatures}")
 if "programstatus" in features:
     sys.exit("late reply was used: " + features)
+
+# Records were never sent to this terminal.
+out = read(out)
+if b"]7501;state" in out:
+    sys.exit("records were sent: %r" % out)
 os.kill(pid, 15)
 os.waitpid(pid, 0)
 EOF
