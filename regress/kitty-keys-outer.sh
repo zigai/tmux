@@ -135,8 +135,8 @@ wait_for_output 'Kitty 31' client_mode s1 || exit 1
 escape_x()
 {
 	: >"$DIR/keys"
-	$TMUX2 send-keys -t o6 -H 1b || exit 1
-	$TMUX2 send-keys -t o6 -H 78 || exit 1
+	$TMUX2 send-keys -t "$1" -H 1b || exit 1
+	$TMUX2 send-keys -t "$1" -H 78 || exit 1
 	wait_for_output 1b5b32377578 hex "$DIR/keys" || exit 1
 }
 $TMUX detach-client -s s1 || exit 1
@@ -151,8 +151,16 @@ wait_for_text tmux $TMUX list-clients -F '#{client_termtype}' \
     -f '#{==:#{client_session},s3}' || exit 1
 $TMUX set -g extended-keys on || exit 1
 wait_for_output 'Kitty 1' $TMUX display -p -t s3 '#{pane_key_mode}' || exit 1
-escape_x
+escape_x o6
 $TMUX set -g extended-keys on || exit 1
-escape_x
+escape_x o6
+
+# The same for a terminal attached while extended-keys is on: the primary DA
+# reply ends the wait for an answer to the query sent before it.
+$TMUX detach-client -s s3 || exit 1
+attach o7 s3
+wait_for_text tmux $TMUX list-clients -F '#{client_termtype}' \
+    -f '#{==:#{client_session},s3}' || exit 1
+escape_x o7
 
 exit 0

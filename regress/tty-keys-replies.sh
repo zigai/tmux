@@ -50,7 +50,8 @@ def matches(name, value):
             "256", "RGB", "bpaste", "clipboard", "mouse",
             "strikethrough", "title", "ccolour", "cstyle", "extkeys",
             "focus", "hyperlinks", "osc7", "usstyle", "kittyclipboard",
-            "kittycolours", "kittygraphics", "osc9", "osc777", "osc99"}
+            "kittycolours", "kittygraphics", "kittykeys", "osc9", "osc777",
+            "osc99", "pointershape"}
         if name == "XDA-kitty":
             required.add("sync")
         elif "sync" in features:
@@ -75,6 +76,8 @@ def matches(name, value):
         return "dnd" in features
     if name.startswith("kitty-graphics"):
         return "kittygraphics" in features
+    if name == "kitty-keys":
+        return "kittykeys" in features
     if name == "characters":
         return size == "61x17"
     if name == "pixels":
@@ -92,6 +95,7 @@ reports = [
     ("XDA-WezTerm", b"\033P>|WezTerm 20240203-110809-5046fc22\033\\"),
     ("sync", b"\033[?2026;2$y"),
     ("dnd", b"\033]72;t=q\033\\"),
+    ("kitty-keys", b"\033[?0u"),
     ("kitty-graphics", b"\033_Gi=31;OK\033\\"),
     ("kitty-graphics-disabled", b"\033_Gi=31;OK\033\\"),
     ("kitty-graphics-error", b"\033_Gi=31;EINVAL:invalid image data\033\\"),
@@ -141,6 +145,8 @@ for name, report in reports:
                 if name == "XDA-kitty-nosync":
                     setup += [";", "set-option", "-as", "terminal-features",
                         ",*:sync@"]
+                if name == "kitty-keys":
+                    setup += [";", "set-option", "-s", "extended-keys", "on"]
                 if name == "kitty-graphics-disabled":
                     setup += [";", "set-option", "-as", "terminal-features",
                         ",*:kittygraphics@"]
