@@ -64,6 +64,27 @@ replies '\033[>0u\033[?u' '\033[?0u'
 wait_for_output 'Ext 1' $TMUX display -p '#{pane_key_mode}' || exit 1
 $TMUX set -g extended-keys on || exit 1
 
+# While extended-keys is off, keys are sent as standard keys but the stack
+# still changes, so flags popped meanwhile are gone when it is turned on.
+$TMUX respawn-pane -k "stty raw -echo; printf '\\033[>1u'; exec cat >'$OUT'" ||
+    exit 1
+wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
+$TMUX set -g extended-keys off || exit 1
+$TMUX send-keys C-a || exit 1
+wait_for_output 01 hex "$OUT" || exit 1
+$TMUX set -g extended-keys on || exit 1
+wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
+
+$TMUX respawn-pane -k "stty raw -echo; printf '\\033[>1u'; head -c1 >/dev/null; printf '\\033[<u'; exec cat >'$OUT'" ||
+    exit 1
+wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
+$TMUX set -g extended-keys off || exit 1
+$TMUX send-keys x || exit 1
+$TMUX set -g extended-keys on || exit 1
+wait_for_output 'VT10x' $TMUX display -p '#{pane_key_mode}' || exit 1
+$TMUX send-keys C-a || exit 1
+wait_for_output 01 hex "$OUT" || exit 1
+
 $TMUX respawn-pane -k "printf '\033[>5u'; exec sleep 100" || exit 1
 wait_for_output 'Kitty 5' $TMUX display -p '#{pane_key_mode}' || exit 1
 

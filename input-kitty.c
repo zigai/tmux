@@ -164,9 +164,12 @@ input_kitty_alternate(struct screen *s)
 	s->saved_kitty_keys = tmp;
 }
 
+/* The flags in use, none while extended-keys is off. */
 u_int
 input_kitty_flags(struct screen *s)
 {
+	if (options_get_number(global_options, "extended-keys") == 0)
+		return (0);
 	return (s->kitty_keys.flags[s->kitty_keys.idx]);
 }
 

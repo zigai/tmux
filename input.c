@@ -1582,23 +1582,17 @@ input_csi_dispatch(struct input_ctx *ictx)
 		input_reply(ictx, 1, "\033[?%uu", input_kitty_flags(s));
 		break;
 	case INPUT_CSI_KITTY_SET:
-		if (options_get_number(global_options, "extended-keys") == 0)
-			break;
 		n = input_get(ictx, 0, 0, 0);
 		m = input_get(ictx, 1, 1, 1);
 		if (n >= 0 && n <= KITTY_KEY_FLAGS && m >= 1 && m <= 3)
 			input_kitty_set(s, n, m);
 		break;
 	case INPUT_CSI_KITTY_PUSH:
-		if (options_get_number(global_options, "extended-keys") == 0)
-			break;
 		n = input_get(ictx, 0, 0, 0);
 		if (n >= 0 && n <= KITTY_KEY_FLAGS)
 			input_kitty_push(s, n);
 		break;
 	case INPUT_CSI_KITTY_POP:
-		if (options_get_number(global_options, "extended-keys") == 0)
-			break;
 		n = input_get(ictx, 0, 0, 1);
 		if (n >= 0)
 			input_kitty_pop(s, n);
