@@ -412,6 +412,7 @@ server_destroy_pane(struct window_pane *wp, int notify)
 			screen_write_stop(&ctx);
 		}
 		wp->base.mode &= ~MODE_CURSOR;
+		screen_reset_pointer_shapes(&wp->base);
 
 		wp->flags |= PANE_REDRAW;
 		return;

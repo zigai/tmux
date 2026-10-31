@@ -121,6 +121,16 @@ $INNER set-option -g mouse on || exit 1
 check a 'pointer pointer'
 : >"$DIR/a"
 
+# The side status line is not part of any pane.
+$INNER set-option -g side-status left || exit 1
+move a 3 5
+check a 'reset'
+move a 30 5
+check a 'reset pointer'
+$INNER set-option -g side-status off || exit 1
+move a 10 5
+: >"$DIR/a"
+
 # Clients follow their own panes; a client without the feature gets nothing.
 attach b b tmux-256color 1
 attach c b screen 2
@@ -142,5 +152,16 @@ check a 'reset pointer reset'
 
 $INNER detach-client -s =b || exit 1
 check b 'crosshair reset'
+
+# A dead pane loses its shape and no longer needs motion events.
+$INNER new-session -d -s d -x80 -y24 'stty raw -echo; exec cat' || exit 1
+$INNER set-option -t =d: remain-on-exit on || exit 1
+attach d d tmux-256color 1
+emit =d: '\033]22;wait\033\\'
+check d 'wait'
+kill $($INNER display-message -p -t =d: '#{pane_pid}') || exit 1
+check d 'wait reset'
+mode=$(cat -v "$DIR/d" | grep -o '?1003[hl]' | tail -1)
+[ "$mode" = '?1003l' ] || fail "d: last motion mouse mode is '$mode'"
 
 exit 0

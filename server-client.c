@@ -949,8 +949,6 @@ server_client_window_position(struct client *c, u_int x, u_int y, u_int *px,
 		y = statusat - 1;
 
 	tty_window_offset(&c->tty, ox, oy, &sx, &sy);
-	log_debug("%s window @%u at %u,%u (%ux%u)", c->name,
-	    c->session->curw->window->id, *ox, *oy, sx, sy);
 	if (x > sx || y > sy)
 		return (-1);
 	*px = x + *ox;
@@ -968,7 +966,7 @@ server_client_check_mouse(struct client *c, struct key_event *event)
 	struct window_pane		*wp = NULL, *lwp = NULL;
 	u_int				 x, y, sx, sy, px, py, n, sl_mpos = 0;
 	u_int				 b, bn;
-	int				 ignore = 0;
+	int				 ignore = 0, outside;
 	int				 modal_drag = 0;
 	key_code			 key;
 	struct timeval			 tv;
@@ -1118,8 +1116,10 @@ have_event:
 			m->w = lwp->window->id;
 		}
 	} else if (loc == KEYC_MOUSE_LOCATION_NOWHERE) {
-		if (server_client_window_position(c, x, y, &px, &py, &m->ox,
-		    &m->oy) != 0) {
+		outside = server_client_window_position(c, x, y, &px, &py,
+		    &m->ox, &m->oy);
+		log_debug("mouse window @%u at %u,%u", w->id, m->ox, m->oy);
+		if (outside) {
 			server_client_update_scrollbar_hover(c, type, -1, -1);
 			return (KEYC_UNKNOWN);
 		}
@@ -3023,11 +3023,20 @@ server_client_pointer_pane(struct client *c)
 static void
 server_client_set_pointer_shape(struct client *c)
 {
+	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
 	u_int			 shape = 0;
 
 	if (!tty_term_has(c->tty.term, TTYC_SPTR))
 		return;
+	if (c->tty.pointer_shape == 0) {
+		TAILQ_FOREACH(wp, &w->panes, entry) {
+			if (screen_pointer_shape(wp->screen) != 0)
+				break;
+		}
+		if (wp == NULL)
+			return;
+	}
 	wp = server_client_pointer_pane(c);
 	if (wp != NULL)
 		shape = screen_pointer_shape(wp->screen);
