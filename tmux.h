@@ -319,7 +319,7 @@ enum key_code_mouse_location {
 	{ #s "ScrollbarSlider", KEYC_ ## name ## _SCROLLBAR_SLIDER }, \
 	{ #s "ScrollbarDown", KEYC_ ## name ## _SCROLLBAR_DOWN },     \
 	{ #s "Empty", KEYC_ ## name ## _EMPTY },		      \
-	{ #s "Range", KEYC_ ## name ## _RANGE },			      \
+	{ #s "Range", KEYC_ ## name ## _RANGE },		      \
 	{ #s "Border", KEYC_ ## name ## _BORDER },		      \
 	{ #s "Control0", KEYC_ ## name ## _CONTROL0 },		      \
 	{ #s "Control1", KEYC_ ## name ## _CONTROL1 },		      \
@@ -3712,15 +3712,16 @@ int			  pane_ranges_redraw_cells(struct tty *,
     const struct tty_ctx *, u_int);
 
 /* pane-ranges-find.c */
-struct pane_range	*pane_ranges_cell(struct window_pane *, struct grid *,
+struct pane_range	 *pane_ranges_cell(struct window_pane *, struct grid *,
     u_int, u_int);
-struct pane_range	*pane_ranges_visible(struct window_pane *, u_int,
+struct pane_range	 *pane_ranges_visible(struct window_pane *, u_int,
     u_int);
-struct pane_range	*pane_ranges_mouse(struct mouse_event *);
-key_code		 pane_ranges_mouse_key(struct window_pane *, key_code,
+struct pane_range	 *pane_ranges_mouse(struct mouse_event *);
+key_code		  pane_ranges_mouse_key(struct window_pane *, key_code,
     u_int, u_int);
-struct key_binding	*pane_ranges_key_binding(struct key_table *, key_code);
-int			 pane_ranges_find(struct window_pane *, struct grid *,
+struct key_binding	 *pane_ranges_key_binding(struct key_table *,
+    key_code);
+int			  pane_ranges_find(struct window_pane *, struct grid *,
     u_int *, u_int *, int, const char *);
 
 /* grid.c */

@@ -199,7 +199,8 @@ static struct pane_ranges_list pane_ranges_list =
 static u_int pane_range_next_id = 1;
 
 static const char *pane_range_states[] = {
-	"live", "modified", "suspended", "gone", "clipped", "ambiguous", "hidden"
+	"live", "modified", "suspended", "gone", "clipped", "ambiguous",
+	"hidden"
 };
 static const char *pane_range_anchors[] = { "grid", "text" };
 

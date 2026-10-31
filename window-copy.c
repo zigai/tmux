@@ -298,7 +298,7 @@ struct window_copy_mode_data {
 	u_int		 sync_generation;
 
 	int		 viewmode;	/* view mode entered */
-	u_int			 source;
+	u_int		 source;
 
 	u_int		 oy;		/* number of lines scrolled up */
 
@@ -1303,9 +1303,7 @@ window_copy_formats(struct window_mode_entry *wme, struct format_tree *ft)
 	    window_copy_cursor_hyperlink_cb);
 	format_add_cb(ft, "copy_command_state", window_copy_command_state_cb);
 	format_add_cb(ft, "copy_command_status", window_copy_command_status_cb);
-	if (data->viewmode == 0)
-		format_add_cb(ft, "copy_cursor_range_id",
-		    window_copy_cursor_range_cb);
+	format_add_cb(ft, "copy_cursor_range_id", window_copy_cursor_range_cb);
 }
 
 static struct screen *
