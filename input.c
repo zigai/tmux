@@ -4350,8 +4350,19 @@ input_cancel_requests(struct client *c)
 {
 	struct input_request	*ir, *ir1;
 
-	TAILQ_FOREACH_SAFE(ir, &c->input_requests, centry, ir1)
-		input_free_request(ir);
+	TAILQ_FOREACH_SAFE(ir, &c->input_requests, centry, ir1) {
+		if (ir->type != INPUT_REQUEST_COLOURS) {
+			input_free_request(ir);
+			continue;
+		}
+
+		/*
+		 * An OSC 21 query is always answered, so leave it for the
+		 * request timer to send in order with what has been filled in.
+		 */
+		TAILQ_REMOVE(&c->input_requests, ir, centry);
+		ir->c = NULL;
+	}
 }
 
 /* Report current theme. */
