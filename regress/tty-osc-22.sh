@@ -121,6 +121,16 @@ $INNER set-option -g mouse on || exit 1
 check a 'pointer pointer'
 : >"$DIR/a"
 
+# The side status line is not part of any pane.
+$INNER set-option -g side-status left || exit 1
+move a 3 5
+check a 'reset'
+move a 30 5
+check a 'reset pointer'
+$INNER set-option -g side-status off || exit 1
+move a 10 5
+: >"$DIR/a"
+
 # Clients follow their own panes; a client without the feature gets nothing.
 attach b b tmux-256color 1
 attach c b screen 2
