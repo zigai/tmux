@@ -519,9 +519,10 @@ dnd_find_client(struct window_pane *wp, enum dnd_role role)
 	return (NULL);
 }
 
-/* Cancel the drop or drag a pane has with every client but one. */
+/* Cancel the hover, drop or drag a pane has with every client but one. */
 static void
-dnd_cancel(struct window_pane *wp, struct client *except, int drop, int drag)
+dnd_cancel(struct window_pane *wp, struct client *except, int hover, int drop,
+    int drag)
 {
 	struct client	*c;
 	struct dnd_tty	*dt;
@@ -530,7 +531,7 @@ dnd_cancel(struct window_pane *wp, struct client *except, int drop, int drag)
 	TAILQ_FOREACH(c, &clients, entry) {
 		if (c == except || (dt = c->tty.dnd) == NULL)
 			continue;
-		if (drop && dt->hover_pane == (int)wp->id) {
+		if (hover && dt->hover_pane == (int)wp->id) {
 			dt->hover_pane = -1;
 			dnd_send_refuse(&c->tty, 'm');
 		}
@@ -546,7 +547,7 @@ dnd_cancel(struct window_pane *wp, struct client *except, int drop, int drag)
 			msg.y = -1;
 			dnd_send(&c->tty, &msg);
 		}
-		if (dt->chunk_pane == (int)wp->id)
+		if ((drop || drag) && dt->chunk_pane == (int)wp->id)
 			dt->chunk_pane = -1;
 	}
 }
@@ -696,13 +697,17 @@ dnd_tty_move(struct client *c, struct dnd_msg *msg, struct dnd_msg *raw)
 		dt->chunk_pane = wp->id;
 
 	if (msg->type == 'M') {
-		dnd_cancel(wp, c, 1, 0);
+		dnd_cancel(wp, c, 1, 1, 0);
 		dt->hover_pane = -1;
 		dt->drop_pane = wp->id;
 		dnd_send_machine(tty, 'a', &dt->accept_machine,
 		    dp->accept_machine);
-	} else
+	} else {
+		/* The pane answers moves only to the client last over it. */
+		if (changed)
+			dnd_cancel(wp, c, 1, 0, 0);
 		dt->hover_pane = wp->id;
+	}
 
 	dnd_translate(tty, raw, px, py);
 	if (changed && raw->payload == NULL && dt->hover_mimes != NULL)
@@ -725,7 +730,7 @@ dnd_tty_start_drag(struct client *c, struct dnd_msg *msg)
 	wp = dnd_pane_at(c, msg->x, msg->y, &px, &py);
 	if (wp == NULL || wp->dnd == NULL || !wp->dnd->offer)
 		return;
-	dnd_cancel(wp, c, 0, 1);
+	dnd_cancel(wp, c, 0, 0, 1);
 	dt->drag_pane = wp->id;
 	dnd_send_machine(tty, 'o', &dt->offer_machine, wp->dnd->offer_machine);
 	dnd_translate(tty, msg, px, py);
@@ -739,7 +744,7 @@ dnd_tty_input(struct tty *tty, const char *s)
 	struct client		*c = tty->client;
 	struct dnd_tty		*dt;
 	struct window_pane	*wp;
-	struct dnd_msg		 raw, msg;
+	struct dnd_msg		 raw, msg, part;
 	int			 continued;
 
 	if (dnd_parse(s, &raw) != 0) {
@@ -776,10 +781,14 @@ dnd_tty_input(struct tty *tty, const char *s)
 			dt->chunk_pane = -1;
 		if (wp == NULL || wp->dnd == NULL)
 			return;
+		memset(&part, 0, sizeof part);
+		part.flags = DND_HAS_M;
+		part.m = raw.m;
+		part.payload = raw.payload;
 		if (strchr("mMrR", msg.type) != NULL)
-			dnd_write(wp, &raw, wp->dnd->accept_id);
+			dnd_write(wp, &part, wp->dnd->accept_id);
 		else
-			dnd_write(wp, &raw, wp->dnd->offer_id);
+			dnd_write(wp, &part, wp->dnd->offer_id);
 		return;
 	}
 
@@ -828,6 +837,7 @@ dnd_pane_drop(struct window_pane *wp, struct input_ctx *ictx,
 {
 	struct dnd_pane	*dp = wp->dnd;
 	struct client	*c;
+	int		 finish;
 
 	switch (msg->type) {
 	case 'a':
@@ -846,7 +856,7 @@ dnd_pane_drop(struct window_pane *wp, struct input_ctx *ictx,
 		dnd_set_registered(dp, 1, dp->offer);
 		return;
 	case 'A':
-		dnd_cancel(wp, NULL, 1, 0);
+		dnd_cancel(wp, NULL, 1, 1, 0);
 		free(dp->accept_mimes);
 		dp->accept_mimes = NULL;
 		free(dp->accept_machine);
@@ -859,17 +869,17 @@ dnd_pane_drop(struct window_pane *wp, struct input_ctx *ictx,
 			dnd_send(&c->tty, raw);
 		return;
 	case 'r':
+		/* A request with no item, entry or directory finishes. */
+		finish = (msg->x == 0 && msg->y == 0 && msg->py == 0);
 		c = dnd_find_client(wp, DND_DROP);
 		if (c == NULL) {
-			if (!continued && (msg->flags & (DND_HAS_X|DND_HAS_PY)))
+			if (!continued && !finish)
 				dnd_reply_error(wp, ictx, msg, 'R', "EPERM",
 				    dp->accept_id);
 			return;
 		}
 		dnd_send(&c->tty, raw);
-
-		/* A request with no item or directory finishes the drop. */
-		if ((msg->flags & (DND_HAS_X|DND_HAS_PY)) == 0)
+		if (finish)
 			c->tty.dnd->drop_pane = -1;
 		return;
 	}
@@ -892,7 +902,7 @@ dnd_pane_drag(struct window_pane *wp, struct input_ctx *ictx,
 		return;
 	}
 	if (msg->type == 'o' && msg->x == 2) {
-		dnd_cancel(wp, NULL, 0, 1);
+		dnd_cancel(wp, NULL, 0, 0, 1);
 		free(dp->offer_machine);
 		dp->offer_machine = NULL;
 		dnd_set_registered(dp, dp->accept, 0);
@@ -994,7 +1004,7 @@ dnd_pane_free(struct window_pane *wp)
 
 	if (dp == NULL)
 		return;
-	dnd_cancel(wp, NULL, 1, 1);
+	dnd_cancel(wp, NULL, 1, 1, 1);
 	dnd_set_registered(dp, 0, 0);
 	free(dp->accept_mimes);
 	free(dp->accept_pending);
@@ -1136,6 +1146,7 @@ dnd_tty_stop(struct tty *tty)
 
 	if (dt == NULL || !tty_term_has(tty->term, TTYC_DND))
 		return;
+	dnd_leave(tty);
 	if (dt->accept != NULL)
 		tty_raw(tty, tty_term_string_s(tty->term, TTYC_DND, "t=A"));
 	if (dt->offer)

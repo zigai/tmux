@@ -23,6 +23,22 @@ at()
 }
 IN=$(at 4 3)
 
+# A move split across two reads, with a gap longer than escape-time, is still
+# one move and is not typed into the pane. The startup queries are answered
+# first, so keys are not held for them.
+$OUTER send-keys -t outer:0 -l "$(printf '\033]10;rgb:ffff/ffff/ffff\033\\')"
+$OUTER send-keys -t outer:0 -l "$(printf '\033]11;rgb:0000/0000/0000\033\\')"
+wait_for_text tmux $INNER display -p '#{client_termtype}' ||
+    fail "no terminal type"
+$OUTER send-keys -t outer:0 -l \
+    "$(printf '\033]72;t=m:%s:o=3;text/pl' "$(at $((OFF + 4)) 3)")"
+sleep 0.1
+$OUTER send-keys -t outer:0 -l "$(printf 'ain\033\\')"
+expect $DIR/right "t=m:$IN:o=3:i=7;text/plain" "split move"
+expect $DIR/out1 't=m:o=0' "split move refused"
+terminal outer:0 't=m:x=-1:y=-1'
+expect $DIR/right 't=m:x=-1:y=-1:i=7' "split move left window"
+
 # Moving over a pane that accepts drops: it gets the move relative to itself
 # and its answer goes to the terminal. Until then the drop is refused.
 terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3;text/plain text/uri-list"
@@ -72,18 +88,19 @@ terminal outer:0 't=r:x=1:m=0;'
 $OUTER send-keys -t outer:0 -l "$(printf '\033]72;t=R:x=2;ENOENT\007')"
 expect $DIR/right "$(printf '%s\n' 't=r:x=1:i=7:m=1;aGVs' 'i=7:m=0;bG8=' \
     't=r:x=1:i=7:m=0;' 't=R:x=2:i=7;ENOENT')" "data"
-pane $RIGHT 't=r:o=1'
-expect $DIR/out1 't=r:o=1' "finish"
+pane $RIGHT 't=r:x=0:y=0:Y=0:o=1'
+expect $DIR/out1 't=r:x=0:y=0:Y=0:o=1' "finish"
+pane $RIGHT 't=r:x=0:y=0:Y=0'
 pane $RIGHT 't=r:x=1'
 expect $DIR/right 't=R:x=1:i=7;EPERM' "request after finish"
 
 # A long chunked MIME list is kept, and given again in chunks when the drag
-# comes back to the pane.
+# comes back to the pane. Keys repeated on a later chunk are not passed on.
 long1=a/$(printf '%03000d' 0)
 long2=b/$(printf '%03000d' 0)
 list="$long1 $long2 text/plain"
 terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3:m=1;$long1 "
-terminal outer:0 "m=1;$long2 "
+terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3:m=1;$long2 "
 terminal outer:0 'm=0;text/plain'
 expect $DIR/right "$(printf '%s\n' "t=m:$IN:o=3:i=7:m=1;$long1 " \
     "i=7:m=1;$long2 " 'i=7:m=0;text/plain')" "long list"
@@ -114,6 +131,16 @@ expect $DIR/right "t=m:$IN:o=1:i=7;text/plain" "second client move"
 pane $RIGHT 't=m:o=1;text/plain'
 expect $DIR/out2 't=m:o=1;text/plain' "answer to second client"
 expect_none $DIR/out1 "answer sent to first client"
+
+# A client moving over the pane takes it from the other client, so the answer
+# goes only to the client that moved last.
+terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3;text/plain"
+expect $DIR/out1 't=m:o=0' "first client refused until the pane answers"
+expect $DIR/out2 't=m:o=0' "second client refused when first comes back"
+expect $DIR/right "t=m:$IN:o=3:i=7;text/plain" "first client move"
+pane $RIGHT 't=m:o=1;text/plain'
+expect $DIR/out1 't=m:o=1;text/plain' "answer to first client"
+expect_none $DIR/out2 "answer sent to second client"
 
 # Changing to a window with no drop targets unregisters both, and back.
 $INNER neww -d -t inner:1 'sleep 100' || exit 1
@@ -153,7 +180,15 @@ expect $DIR/out1 "$(printf '%s\n' 't=a:x=1;1:0123456789abcdef0123')" \
 expect $DIR/right "t=M:$IN:o=1:i=7;text/plain" "drop again"
 $INNER kill-pane -t $RIGHT || exit 1
 expect $DIR/out1 "$(printf '%s\n' 't=r:o=0' 't=A')" "pane killed"
-expect $DIR/out2 "$(printf '%s\n' 't=m:o=0' 't=A')" \
-    "pane killed, second client"
+expect $DIR/out2 't=A' "pane killed, second client"
+
+# A client that detaches while over a pane tells the pane the drag left.
+pane $LEFT 't=a:i=5;text/plain'
+pane_sync $LEFT $DIR/left
+expect $DIR/out2 't=a;text/plain' "registered again, second client"
+terminal outer:1 "t=m:$(at 3 3):o=3;text/plain"
+expect $DIR/left "t=m:$(at 3 3):o=3:i=5;text/plain" "move before detach"
+$INNER detach-client -s inner || exit 1
+expect $DIR/left 't=m:x=-1:y=-1:i=5' "detach"
 
 exit 0

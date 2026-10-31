@@ -987,6 +987,13 @@ partial_key:
 		if (delay < 500)
 			delay = 500;
 	}
+	if (len > 2 && tty_term_has(tty->term, TTYC_DND) &&
+	    tty_keys_dnd(tty, buf, len, &size, 0) == 1) {
+		log_debug("%s: increasing delay (partial drag and drop)",
+		    c->name);
+		if (delay < 500)
+			delay = 500;
+	}
 	tv.tv_sec = delay / 1000;
 	tv.tv_usec = (delay % 1000) * 1000L;
 
