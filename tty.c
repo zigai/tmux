@@ -506,12 +506,8 @@ tty_repeat_requests(struct tty *tty, int force)
 
 /* Ask about Kitty keyboard support if extended-keys was turned on later. */
 void
-tty_extended_keys_changed(struct tty *tty)
+tty_query_kitty_keys(struct tty *tty)
 {
-	if (~tty->flags & TTY_STARTED)
-		return;
-	tty_update_features(tty);
-
 	if (options_get_number(global_options, "extended-keys") == 0)
 		return;
 	if (~tty->term->flags & TERM_VT100LIKE)
@@ -520,8 +516,9 @@ tty_extended_keys_changed(struct tty *tty)
 		return;
 
 	/*
-	 * Ask only once. A DA request follows so its reply ends the wait,
-	 * which cannot work while the DA sent at attach is unanswered.
+	 * Ask only once. A DA request follows so its reply ends the wait;
+	 * while the DA sent at attach is unanswered, this is called again
+	 * when it is.
 	 */
 	if ((tty->flags & TTY_KKBQUERIED) || (~tty->flags & TTY_HAVEDA))
 		return;
@@ -529,6 +526,15 @@ tty_extended_keys_changed(struct tty *tty)
 	tty->flags &= ~(TTY_HAVEKKB|TTY_HAVEDA);
 	tty_puts(tty, "\033[?u\033[c");
 	tty_start_start_timer(tty);
+}
+
+void
+tty_extended_keys_changed(struct tty *tty)
+{
+	if (~tty->flags & TTY_STARTED)
+		return;
+	tty_update_features(tty);
+	tty_query_kitty_keys(tty);
 }
 
 void

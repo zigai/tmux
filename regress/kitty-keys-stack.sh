@@ -79,8 +79,9 @@ wait_for_output 01 hex "$OUT" || exit 1
 $TMUX set -g extended-keys on || exit 1
 wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
 
-$TMUX respawn-pane -k "stty raw -echo; printf '\\033[>1u'; head -c1 >/dev/null; printf '\\033[<u'; exec cat >'$OUT'" ||
-    exit 1
+pop="head -c1 >/dev/null; printf '\\033[<u'"
+$TMUX respawn-pane -k \
+    "stty raw -echo; printf '\\033[>1u'; $pop; exec cat >'$OUT'" || exit 1
 wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
 $TMUX set -g extended-keys off || exit 1
 $TMUX send-keys x || exit 1
