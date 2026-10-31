@@ -9,15 +9,16 @@ TERM=screen
 export TERM
 
 [ -z "$TEST_TMUX" ] && TEST_TMUX=$(readlink -f ../tmux)
+. ./regress-common.inc
 TMUX="$TEST_TMUX -Lpopup-drag-outer-$$ -f/dev/null"
 TMUX2="$TEST_TMUX -Lpopup-drag-runner-$$ -f/dev/null"
 INNER="$TEST_TMUX -Lpopup-drag-inner-$$ -f/dev/null"
 
 cleanup()
 {
-	$TMUX kill-server >/dev/null 2>&1
-	$TMUX2 kill-server >/dev/null 2>&1
-	$INNER kill-server >/dev/null 2>&1
+	stop_server $TMUX
+	stop_server $TMUX2
+	stop_server $INNER
 }
 trap cleanup 0 1 15
 
