@@ -78,10 +78,14 @@ emit "$A" '\033]99;i=x:a=-focus:u=2:f=YXBw;Hi\007'
 check "\033]99;i=$(oid $A ix):a=-focus,report:u=2:f=YXBw:p=title:e=1;SGk=\033\\\\" \
     "notification with keys"
 
-# Identifiers keep only the characters kitty allows.
+# Identifiers keep only the characters kitty allows and are short enough that
+# kitty does not truncate them once the pane is added.
 emit "$A" '\033]99;i=a/b!c;Id\033\\'
 check "\033]99;i=$(oid $A iabc):a=focus,report:p=title:e=1;SWQ=\033\\\\" \
     "identifier with other characters"
+emit "$A" "\033]99;i=$(printf '%0600d' 0);Long\033\\\\"
+check "\033]99;i=$(oid $A i$(printf '%0472d' 0)):a=focus,report:p=title:e=1;TG9uZw==\033\\\\" \
+    "long identifier"
 
 # Chunks from two panes do not mix and are sent together.
 emit "$A" '\033]99;i=a:d=0:u=2;Ti\033\\'

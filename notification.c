@@ -42,6 +42,12 @@
 /* Icons kept for later notifications with the same key. */
 #define NOTIFICATION_ICONS 16
 
+/*
+ * Kitty truncates identifiers to 512 characters, so keep them short enough to
+ * stay whole once the pane prefix is added.
+ */
+#define NOTIFICATION_ID (512 - 40)
+
 /* Largest chunk of payload before encoding allowed by the protocol. */
 #define NOTIFICATION_CHUNK 2048
 
@@ -822,6 +828,8 @@ notification_sanitize_id(const char *value)
 			*out++ = *value;
 	}
 	*out = '\0';
+	if (out - id > NOTIFICATION_ID)
+		id[NOTIFICATION_ID] = '\0';
 	if (*id == '\0') {
 		free(id);
 		return (NULL);
