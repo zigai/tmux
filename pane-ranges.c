@@ -1136,7 +1136,38 @@ pane_ranges_consider(struct pane_ranges *prs, struct pane_range *r,
 		*tie = 1;
 }
 
-/* Find the text of a range clipped by the top or bottom of the screen. */
+/* Check if a range was last shown touching the top or bottom of the screen. */
+static int
+pane_ranges_at_edge(struct pane_ranges *prs, struct pane_range *r, int top)
+{
+	struct grid	*gd = prs->wp->base.grid;
+
+	if (!r->positioned || r->visible_y == -1)
+		return (0);
+	if (top)
+		return (r->visible_y == 0);
+	return (r->visible_y + (r->span.end_line - r->span.start_line) ==
+	    gd->sy - 1);
+}
+
+/*
+ * Check if part of the text of a range may be shown clipped by the top or
+ * bottom of the screen: it must have more than one word, or the range must
+ * have been last shown touching that edge.
+ */
+static int
+pane_ranges_clipped_part(struct pane_ranges *prs, struct pane_range *r,
+    const char *part, size_t n, int top)
+{
+	if (memchr(part, ' ', n) != NULL)
+		return (1);
+	return (pane_ranges_at_edge(prs, r, top));
+}
+
+/*
+ * Find the text of a range clipped by the top or bottom of the screen. The
+ * part that is shown must end or start at a word boundary on the screen.
+ */
 static void
 pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
     struct pane_range_match *best, u_int *found, int *tie)
@@ -1157,7 +1188,10 @@ pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
 				continue;
 			n = len - i - 1;
 			if (n > vlen ||
+			    (n != vlen && prs->visible[n] != ' ') ||
 			    memcmp(prs->visible, match + i + 1, n) != 0 ||
+			    !pane_ranges_clipped_part(prs, r, match + i + 1, n,
+			    1) ||
 			    !pane_ranges_after(prs, n, r->after))
 				continue;
 			m.start = 0;
@@ -1173,7 +1207,9 @@ pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
 				continue;
 			n = i - 1;
 			if (n > vlen ||
+			    (n != vlen && prs->visible[vlen - n - 1] != ' ') ||
 			    memcmp(prs->visible + vlen - n, match, n) != 0 ||
+			    !pane_ranges_clipped_part(prs, r, match, n, 0) ||
 			    !pane_ranges_before(prs, vlen - n, r->before))
 				continue;
 			m.start = vlen - n;
