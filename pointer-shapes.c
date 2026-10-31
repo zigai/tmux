@@ -31,7 +31,7 @@
  * shape is set.
  */
 
-static const char *pointer_shape_names[] = {
+static const char *const pointer_shape_names[] = {
 	NULL,
 	"alias",
 	"cell",
