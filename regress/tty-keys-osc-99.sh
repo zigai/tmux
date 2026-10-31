@@ -130,8 +130,8 @@ $TMUX select-window -t one:0 || exit 1
 listen "$B" '\033]99;i=nf:a=-focus,report;Stay\033\\' nf
 wait_until has c1 "i=$(oid $B inf):a=-focus,report" ||
     fail "notification not sent"
-reply c1 "\033]99;i=$(oid $B inf);\033\\\\"
-check nf '^[]99;i=nf;^[\' "activation without focus"
+reply c1 "\033]99;i=$(oid $B inf);\007"
+check nf '^[]99;i=nf;^[\' "activation without focus with BEL"
 [ "$(window)" = 0 ] || fail "activation without focus changed window"
 
 listen "$B" '\033]99;i=f;Go\033\\' f
@@ -158,14 +158,24 @@ reply c1 "\033]99;i=$(oid $A iu):p=close;untracked\033\\\\"
 reply c2 "\033]99;i=$(oid $A iu):p=close;untracked\033\\\\"
 check u '^[]99;i=u:p=close;untracked^[\' "untracked close"
 
-# Alive queries are answered once with only the pane's own identifiers.
-listen "$A" '\033]99;i=live:p=alive;\033\\' live
+# Alive queries are answered once with only the identifiers of notifications
+# from the pane's process, not those of other panes or of the process before
+# respawn-pane.
+listen "$A" '\033]99;i=k2:c=1:a=-focus;K2\033\\\033]99;i=live:p=alive;\033\\' live
 wait_until has c2 "\033]99;i=$(oid $A ilive):p=alive;\033\\\\" ||
     fail "alive query not sent"
 ids="$(oid $A ik2),$(oid $B ix),$(oid $A n9),tmux-1-0-iy,$(oid $A iu)"
 reply c1 "\033]99;i=$(oid $A ilive):p=alive;$ids\033\\\\"
 reply c2 "\033]99;i=$(oid $A ilive):p=alive;$ids\033\\\\"
-check live '^[]99;i=live:p=alive;k2,u^[\' "alive"
+check live '^[]99;i=live:p=alive;k2^[\' "alive"
+
+# Each terminal knows only what it shows, so the answer has every client's.
+listen "$A" '\033]99;i=m1:c=1:a=-focus;M1\033\\\033]99;i=m2:c=1:a=-focus;M2\033\\\033]99;i=live2:p=alive;\033\\' live2
+wait_until has c2 "\033]99;i=$(oid $A ilive2):p=alive;\033\\\\" ||
+    fail "alive query not sent"
+reply c2 "\033]99;i=$(oid $A ilive2):p=alive;$(oid $A im2)\033\\\\"
+reply c1 "\033]99;i=$(oid $A ilive2):p=alive;$(oid $A im1),$(oid $A im2)\033\\\\"
+check live2 '^[]99;i=live2:p=alive;m2,m1^[\' "alive from two clients"
 
 # Replies for a process replaced by respawn-pane are not given to the new one.
 listen "$B" '\033]99;i=old:a=report,-focus;Old\033\\' old
@@ -186,5 +196,13 @@ reply c1 "\033]99;i=tmux-1-${A#%}-iz;1\033\\\\"
 reply c1 "\033]99;i=$(oid $A inothing);1\033\\\\"
 reply c1 "\033]99;i=$(oid $A iz);3\033\\\\"
 check z '^[]99;i=z;3^[\' "reply after ignored replies"
+
+# A client that goes away without answering is not waited for.
+listen "$A" '\033]99;i=w:c=1:a=-focus;W\033\\\033]99;i=live3:p=alive;\033\\' live3
+wait_until has c2 "\033]99;i=$(oid $A ilive3):p=alive;\033\\\\" ||
+    fail "alive query not sent"
+reply c1 "\033]99;i=$(oid $A ilive3):p=alive;$(oid $A iw)\033\\\\"
+$OUTER kill-session -t c2 || exit 1
+check live3 '^[]99;i=live3:p=alive;w^[\' "alive after client left"
 
 exit 0

@@ -55,6 +55,13 @@ check()
 	wait_until has full "$1" || fail "$2"
 }
 
+# Check if a client's terminal has said what type it is.
+has_type()
+{
+	$TMUX list-clients -F '#{client_termname}:#{client_termtype}' |
+	    grep -q "^$1:."
+}
+
 CAT="stty raw -echo; exec cat"
 A=$($TMUX new-session -d -P -F '#{pane_id}' -s one -x40 -y10 "$CAT") ||
     exit 1
@@ -65,18 +72,32 @@ $TMUX set -as terminal-features 'xterm-256color:osc99' || exit 1
 PID=$($TMUX display -p '#{pid}')
 
 attach full xterm-256color one
-attach plain screen one
-wait_for_clients 2 $TMUX || exit 1
+attach plain vt52 one
+attach nested screen one
+wait_for_clients 3 $TMUX || exit 1
 
 # The terminal is asked what it supports.
 check '\033]99;i=tmux:p=?;\033\\' "no query sent"
 
+# A tmux running in this tmux is known as tmux, which forwards notifications.
+wait_until has_type screen || fail "nested tmux not identified"
 emit "$A" '\033]99;;Hello\033\\'
 check "\033]99;i=$(oid $A n0):a=focus,report:p=title:e=1;SGVsbG8=\033\\\\" \
     "anonymous notification"
+wait_until has nested "\033]99;i=$(oid $A n0):a=focus,report:p=title:e=1;SGVsbG8=\033\\\\" ||
+    fail "not sent to nested tmux"
 emit "$A" '\033]99;i=x:a=-focus:u=2:f=YXBw;Hi\007'
 check "\033]99;i=$(oid $A ix):a=-focus,report:u=2:f=YXBw:p=title:e=1;SGk=\033\\\\" \
     "notification with keys"
+
+# Identifiers keep only the characters kitty allows and are short enough that
+# kitty does not truncate them once the pane is added.
+emit "$A" '\033]99;i=a/b!c;Id\033\\'
+check "\033]99;i=$(oid $A iabc):a=focus,report:p=title:e=1;SWQ=\033\\\\" \
+    "identifier with other characters"
+emit "$A" "\033]99;i=$(printf '%0600d' 0);Long\033\\\\"
+check "\033]99;i=$(oid $A i$(printf '%0472d' 0)):a=focus,report:p=title:e=1;TG9uZw==\033\\\\" \
+    "long identifier"
 
 # Chunks from two panes do not mix and are sent together.
 emit "$A" '\033]99;i=a:d=0:u=2;Ti\033\\'
@@ -133,6 +154,39 @@ emit "$A" '\033]99;i=i2:g=key1;Again\033\\'
 check "\033]99;i=$(oid $A ii2):a=focus,report:g=key1:p=title:e=1:d=0;QWdhaW4=\033\\\\\033]99;i=$(oid $A ii2):p=icon:e=1;iVBORw==\033\\\\" \
     "notification with kept icon"
 
+# Icons are kept for all panes together within a limit, so other panes' icons
+# replace them.
+cat >"$DIR/icons.sh" <<'EOF2'
+stty raw -echo
+a=$(head -c 900000 /dev/zero | tr '\0' A)
+for k in 1 2 3; do
+	printf '\033]99;i=b%s:g=big%s:d=0;Big\033\\' $k $k
+	for i in 1 2 3; do printf '\033]99;i=b%s:p=icon:d=0;%s\033\\' $k "$a"; done
+	printf '\033]99;i=b%s:p=icon;%s\033\\' $k "$a"
+done
+exec cat
+EOF2
+$TMUX respawn-pane -k -t "$A2" "sh '$DIR/icons.sh'" || exit 1
+check "\033]99;i=$(oid $A2 ib3):p=icon:e=1;QUFB" "big icons"
+emit "$A" '\033]99;i=i3:g=key1;Gone\033\\'
+check "\033]99;i=$(oid $A ii3):a=focus,report:g=key1:p=title:e=1;R29uZQ==\033\\\\" \
+    "notification with replaced icon"
+
+# Nothing is kept for a pane with no client that can show notifications.
+C=$($TMUX new-session -d -P -F '#{pane_id}' -s two -x40 -y10 "$CAT") ||
+    exit 1
+emit "$C" '\033]99;i=i4:g=key4:d=0;Icon\033\\\033]99;i=i4:p=icon:e=1;iVBORw==\033\\seen'
+wait_for_text seen $TMUX capture-pane -p -t "$C" || exit 1
+$TMUX switch-client -c "$($TMUX list-clients -F '#{client_name}' \
+    -f '#{==:#{client_termname},xterm-256color}')" -t two || exit 1
+wait_for_output two $TMUX list-clients -F '#{session_name}' \
+    -f '#{==:#{client_termname},xterm-256color}' || exit 1
+emit "$C" '\033]99;i=i5:g=key4;Later\033\\'
+check "\033]99;i=$(oid $C ii5):a=focus,report:g=key4:p=title:e=1;TGF0ZXI=\033\\\\" \
+    "notification after no client"
+$TMUX switch-client -c "$($TMUX list-clients -F '#{client_name}' \
+    -f '#{==:#{client_termname},xterm-256color}')" -t one || exit 1
+
 # A payload longer than kitty's limit is not sent with a gap: text is replaced
 # by a message and an icon is dropped.
 cat >"$DIR/long.sh" <<'EOF2'
@@ -151,6 +205,16 @@ check "\033]99;i=$(oid $A it):a=focus,report:p=title:e=1;IHRvbyBsb25nLCB0cnVuY2F
     "long title"
 check "\033]99;i=$(oid $A ig):a=focus,report:p=title:e=1;QmlnIGljb24=\033\\\\" \
     "long icon"
+
+# Nothing is sent from a pane where notifications are not allowed.
+$TMUX set -p -t "$A" allow-notifications off || exit 1
+emit "$A" '\033]99;i=na;Not allowed\033\\seen'
+wait_for_text seen $TMUX capture-pane -p -t "$A" || exit 1
+$TMUX set -p -t "$A" allow-notifications on || exit 1
+emit "$A" '\033]99;i=ya;Allowed\033\\'
+check "\033]99;i=$(oid $A iya):a=focus,report:p=title:e=1;QWxsb3dlZA==\033\\\\" \
+    "notification allowed again"
+has full "$(oid $A ina)" && fail "sent when not allowed"
 
 # The application can close its notification.
 emit "$A" '\033]99;i=x:p=close;\033\\'

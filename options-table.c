@@ -1406,6 +1406,14 @@ const struct options_table_entry options_table[] = {
 		  "linked to ('off')."
 	},
 
+	{ .name = "allow-notifications",
+	  .type = OPTIONS_TABLE_FLAG,
+	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,
+	  .default_num = 1,
+	  .text = "Whether applications are allowed to use escape sequences "
+		  "to send desktop notifications."
+	},
+
 	{ .name = "allow-passthrough",
 	  .type = OPTIONS_TABLE_CHOICE,
 	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,

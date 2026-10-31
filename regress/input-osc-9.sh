@@ -44,6 +44,13 @@ has()
 	grep -Fq "$(printf "$2")" "$DIR/$1"
 }
 
+# Check if a client's terminal has said what type it is.
+has_type()
+{
+	$TMUX list-clients -F '#{client_termname}:#{client_termtype}' |
+	    grep -q "^$1:."
+}
+
 # Check a notification is forwarded with ST.
 check()
 {
@@ -73,11 +80,16 @@ $TMUX set -g status off || exit 1
 $TMUX set -as terminal-features 'xterm-256color:osc9' || exit 1
 
 attach full xterm-256color one
-attach plain screen one
+attach plain vt52 one
 attach elsewhere xterm-256color other
-wait_for_clients 3 $TMUX || exit 1
+attach nested screen one
+wait_for_clients 4 $TMUX || exit 1
 
+# A tmux running in this tmux is known as tmux, which forwards notifications.
+wait_until has_type screen || fail "nested tmux not identified"
 check "$A" 'Build done'
+wait_until has nested '\033]9;Build done\033\\' ||
+    fail "not sent to nested tmux"
 check "$A" 'caf\303\251; 50%%'
 check "$B" 'From hidden window'
 
@@ -101,6 +113,14 @@ wait_for_output 40 $TMUX display -p -t "$A" '#{pane_pb_progress}' ||
 check_none "$A" '9;/tmp'
 wait_for_output "file://$(uname -n)/tmp" $TMUX display -p -t "$A" \
     '#{pane_path}' || fail "path not set"
+
+# Nothing is sent from a pane where notifications are not allowed.
+$TMUX set -p -t "$A" allow-notifications off || exit 1
+emit "$A" '\033]9;Not allowed\007seen'
+wait_for_text seen $TMUX capture-pane -p -t "$A" || exit 1
+$TMUX set -p -t "$A" allow-notifications on || exit 1
+check "$A" 'Allowed again'
+has full '\033]9;Not allowed' && fail "sent when not allowed"
 
 # Only clients of the pane's session with the feature get notifications.
 emit "$C" '\033]9;Other\007'
