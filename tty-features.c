@@ -685,7 +685,6 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "sync,"
 			      "usstyle,"
 			      "progressbar,"
-			      "programstatus,"
 			      "kittygraphics"
 		},
 		{ .name = "kitty",
