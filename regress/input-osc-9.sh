@@ -102,6 +102,14 @@ check_none "$A" '9;/tmp'
 wait_for_output "file://$(uname -n)/tmp" $TMUX display -p -t "$A" \
     '#{pane_path}' || fail "path not set"
 
+# Nothing is sent from a pane where notifications are not allowed.
+$TMUX set -p -t "$A" allow-notifications off || exit 1
+emit "$A" '\033]9;Not allowed\007seen'
+wait_for_text seen $TMUX capture-pane -p -t "$A" || exit 1
+$TMUX set -p -t "$A" allow-notifications on || exit 1
+check "$A" 'Allowed again'
+has full '\033]9;Not allowed' && fail "sent when not allowed"
+
 # Only clients of the pane's session with the feature get notifications.
 emit "$C" '\033]9;Other\007'
 wait_until has elsewhere '\033]9;Other\033\\' || fail "Other not forwarded"

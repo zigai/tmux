@@ -3159,7 +3159,9 @@ input_osc_9(struct input_ctx *ictx, const char *p)
 		return;
 	}
 	if (!input_osc_9_conemu(pb)) {
-		if (ictx->wp != NULL && utf8_isvalid(pb))
+		if (ictx->wp != NULL && utf8_isvalid(pb) &&
+		    options_get_number(ictx->wp->options,
+		    "allow-notifications"))
 			notification_osc9(ictx->wp, pb);
 		return;
 	}
@@ -3199,6 +3201,8 @@ input_osc_99(struct input_ctx *ictx, const char *p)
 
 	if (ictx->wp == NULL)
 		return;
+	if (!options_get_number(ictx->wp->options, "allow-notifications"))
+		return;
 	if (ictx->input_end == INPUT_END_BEL)
 		end = "\007";
 	else
@@ -3217,6 +3221,8 @@ input_osc_777(struct input_ctx *ictx, const char *p)
 	char	*copy, *body;
 
 	if (ictx->wp == NULL || strncmp(p, "notify;", 7) != 0)
+		return;
+	if (!options_get_number(ictx->wp->options, "allow-notifications"))
 		return;
 	if (!utf8_isvalid(p))
 		return;

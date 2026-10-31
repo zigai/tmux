@@ -152,6 +152,16 @@ check "\033]99;i=$(oid $A it):a=focus,report:p=title:e=1;IHRvbyBsb25nLCB0cnVuY2F
 check "\033]99;i=$(oid $A ig):a=focus,report:p=title:e=1;QmlnIGljb24=\033\\\\" \
     "long icon"
 
+# Nothing is sent from a pane where notifications are not allowed.
+$TMUX set -p -t "$A" allow-notifications off || exit 1
+emit "$A" '\033]99;i=na;Not allowed\033\\seen'
+wait_for_text seen $TMUX capture-pane -p -t "$A" || exit 1
+$TMUX set -p -t "$A" allow-notifications on || exit 1
+emit "$A" '\033]99;i=ya;Allowed\033\\'
+check "\033]99;i=$(oid $A iya):a=focus,report:p=title:e=1;QWxsb3dlZA==\033\\\\" \
+    "notification allowed again"
+has full "$(oid $A ina)" && fail "sent when not allowed"
+
 # The application can close its notification.
 emit "$A" '\033]99;i=x:p=close;\033\\'
 check "\033]99;i=$(oid $A ix):p=close;\033\\\\" "close not sent"

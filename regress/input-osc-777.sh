@@ -76,6 +76,16 @@ wait_until has full '\033]777;notify;after-bad;\033\\' ||
     fail "notification not forwarded"
 has full '\033]777;notify;bad' && fail "invalid UTF-8 forwarded"
 
+# Nothing is sent from a pane where notifications are not allowed.
+$TMUX set -p -t "$A" allow-notifications off || exit 1
+emit "$A" '\033]777;notify;Not;allowed\007seen'
+wait_for_text seen $TMUX capture-pane -p -t "$A" || exit 1
+$TMUX set -p -t "$A" allow-notifications on || exit 1
+emit "$A" '\033]777;notify;Allowed;again\007'
+wait_until has full '\033]777;notify;Allowed;again\033\\' ||
+    fail "notification not forwarded"
+has full '\033]777;notify;Not' && fail "sent when not allowed"
+
 sleep 0.5
 has plain '\033]777;' && fail "sent to client without osc777"
 
