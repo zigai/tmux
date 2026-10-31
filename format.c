@@ -6041,7 +6041,7 @@ format_loop_program_status(struct format_expand_state *es, const char *fmt)
 		fatalx("out of memory");
 
 	for (psr = program_status_first(ft->wp); psr != NULL; psr = psr_next) {
-		psr_next = program_status_next(psr);
+		psr_next = program_status_next(ft->wp, psr);
 		format_log(es, "program status loop: %s", psr->id);
 		nft = format_create(ft->client, ft->item, FORMAT_NONE,
 		    ft->flags);

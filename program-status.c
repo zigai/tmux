@@ -52,36 +52,54 @@
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+-"
 #define PROGRAM_STATUS_VALUE_CHARS PROGRAM_STATUS_SEGMENT_CHARS ",/="
 
-/* Delay before changes are forwarded to client terminals, in milliseconds. */
-#define PROGRAM_STATUS_FORWARD_DELAY 100
+/*
+ * Delay before changes run the hook and are forwarded to client terminals,
+ * in milliseconds.
+ */
+#define PROGRAM_STATUS_DELAY 100
 
 RB_HEAD(program_status_records, program_status_record);
 
 struct program_status {
+	struct window_pane		*wp;
 	struct program_status_records	 records;
 	u_int				 count;
-	uint64_t			 updated;
+
+	uint64_t			 generation;
+	struct event			 timer;
+	int				 pending;
 };
 
-/* A record as last written to a client terminal. */
+/* A record as last written to a client terminal, or one to write. */
 struct program_status_sent {
 	char				*id;
 	char				*report;
+	int				 cleared;
 
 	RB_ENTRY(program_status_sent)	 entry;
 };
 RB_HEAD(program_status_sent_tree, program_status_sent);
 
+/* The generation of a pane's records when they were last forwarded. */
+struct program_status_seen {
+	u_int				 id;
+	uint64_t			 generation;
+};
+
 struct program_status_forward {
 	struct client			*c;
 	struct event			 timer;
 	struct program_status_sent_tree	 sent;
+
+	struct program_status_seen	*seen;
+	u_int				 nseen;
 };
 
 /* A parsed report. Strings point into the copy of the report. */
 struct program_status_report {
 	const char	*state;
 	const char	*id;
+	int		 bad_id;
 	const char	*kind;
 	const char	*progress;
 	const char	*app;
@@ -102,6 +120,9 @@ static const char *program_status_kinds[] = {
 	"question",
 	"auth"
 };
+
+/* Orders record updates across every pane. */
+static uint64_t	program_status_clock;
 
 static int
 program_status_record_cmp(struct program_status_record *psr1,
@@ -131,59 +152,45 @@ program_status_state_name(enum program_status_state state)
 }
 
 /*
- * Decode one UTF-8 character. Returns its length or 0 if the bytes are not
+ * Read one UTF-8 character. Returns its length or 0 if the bytes are not
  * valid UTF-8.
  */
 static size_t
-program_status_decode_char(const u_char *s, size_t len, u_int *cp)
+program_status_char(const u_char *s, size_t len, wchar_t *wc)
 {
-	u_int	n, i, min;
+	struct utf8_data	ud;
+	u_int			i;
 
-	if (s[0] < 0x80) {
-		*cp = s[0];
+	if (*s < 0x80) {
+		*wc = *s;
 		return (1);
 	}
-	if (s[0] >= 0xc2 && s[0] <= 0xdf) {
-		n = 2;
-		min = 0x80;
-		*cp = s[0] & 0x1f;
-	} else if (s[0] >= 0xe0 && s[0] <= 0xef) {
-		n = 3;
-		min = 0x800;
-		*cp = s[0] & 0x0f;
-	} else if (s[0] >= 0xf0 && s[0] <= 0xf4) {
-		n = 4;
-		min = 0x10000;
-		*cp = s[0] & 0x07;
-	} else
+	if (utf8_open(&ud, *s) != UTF8_MORE || len < ud.size)
 		return (0);
-	if (len < n)
-		return (0);
-	for (i = 1; i < n; i++) {
-		if ((s[i] & 0xc0) != 0x80)
+	for (i = 1; i < ud.size; i++) {
+		if (utf8_append(&ud, s[i]) == UTF8_ERROR)
 			return (0);
-		*cp = (*cp << 6) | (s[i] & 0x3f);
 	}
-	if (*cp < min || *cp > 0x10ffff || (*cp >= 0xd800 && *cp <= 0xdfff))
+	if (utf8_towc(&ud, wc) != UTF8_DONE)
 		return (0);
-	return (n);
+	return (ud.size);
 }
 
 /* Is this a direction override or other invisible formatting character? */
 static int
-program_status_invisible(u_int cp)
+program_status_invisible(wchar_t wc)
 {
-	return (cp == 0xad ||
-	    cp == 0x61c ||
-	    cp == 0x180e ||
-	    cp == 0x200b ||
-	    cp == 0x200e ||
-	    cp == 0x200f ||
-	    (cp >= 0x202a && cp <= 0x202e) ||
-	    (cp >= 0x2060 && cp <= 0x2064) ||
-	    (cp >= 0x2066 && cp <= 0x206f) ||
-	    cp == 0xfeff ||
-	    (cp >= 0xfff9 && cp <= 0xfffb));
+	return (wc == 0xad ||
+	    wc == 0x61c ||
+	    wc == 0x180e ||
+	    wc == 0x200b ||
+	    wc == 0x200e ||
+	    wc == 0x200f ||
+	    (wc >= 0x202a && wc <= 0x202e) ||
+	    (wc >= 0x2060 && wc <= 0x2064) ||
+	    (wc >= 0x2066 && wc <= 0x206f) ||
+	    wc == 0xfeff ||
+	    (wc >= 0xfff9 && wc <= 0xfffb));
 }
 
 /*
@@ -196,7 +203,7 @@ program_status_decode_text(const char *value, size_t limit)
 	char	*copy, *out;
 	size_t	 len = strlen(value), step, i;
 	int	 n;
-	u_int	 cp;
+	wchar_t	 wc;
 
 	while (len != 0 && value[len - 1] == '=')
 		len--;
@@ -217,11 +224,8 @@ program_status_decode_text(const char *value, size_t limit)
 	out[n] = '\0';
 
 	for (i = 0; i < (size_t)n; i += step) {
-		if ((u_char)out[i] < 0x20 || (u_char)out[i] == 0x7f)
-			goto fail;
-		step = program_status_decode_char((u_char *)out + i, n - i,
-		    &cp);
-		if (step == 0 || (cp >= 0x80 && cp <= 0x9f))
+		step = program_status_char((u_char *)out + i, n - i, &wc);
+		if (step == 0 || wc < 0x20 || (wc >= 0x7f && wc <= 0x9f))
 			goto fail;
 	}
 	return (out);
@@ -229,19 +233,6 @@ program_status_decode_text(const char *value, size_t limit)
 fail:
 	free(out);
 	return (NULL);
-}
-
-/* Encode a text value as base64. */
-static char *
-program_status_encode_text(const char *text)
-{
-	size_t	 len = strlen(text), size = ((len + 2) / 3) * 4 + 1;
-	char	*out;
-
-	out = xmalloc(size);
-	if (b64_ntop((const u_char *)text, len, out, size) == -1)
-		fatalx("base64 encoding failed");
-	return (out);
 }
 
 /* Remove whitespace around a key or value. */
@@ -258,20 +249,24 @@ program_status_trim(char *s)
 	return (s);
 }
 
-/* Check an id for the grammar and limits. */
+/*
+ * Check an id. Returns -1 if it breaks a limit, 1 if it does not match the
+ * grammar, or 0 if it is valid.
+ */
 static int
-program_status_check_id(const char *id, int check_grammar)
+program_status_check_id(const char *id)
 {
 	const char	*cp;
 	size_t		 segment = 0;
 	u_int		 depth = 1;
+	int		 bad = 0;
 
 	if (strlen(id) > PROGRAM_STATUS_MAX_ID)
 		return (-1);
 	for (cp = id; *cp != '\0'; cp++) {
 		if (*cp == '/') {
-			if (check_grammar && segment == 0)
-				return (-1);
+			if (segment == 0)
+				bad = 1;
 			if (++depth > PROGRAM_STATUS_MAX_DEPTH)
 				return (-1);
 			segment = 0;
@@ -279,13 +274,12 @@ program_status_check_id(const char *id, int check_grammar)
 		}
 		if (++segment > PROGRAM_STATUS_MAX_SEGMENT)
 			return (-1);
-		if (check_grammar && strchr(PROGRAM_STATUS_SEGMENT_CHARS,
-		    *cp) == NULL)
-			return (-1);
+		if (strchr(PROGRAM_STATUS_SEGMENT_CHARS, *cp) == NULL)
+			bad = 1;
 	}
-	if (check_grammar && segment == 0)
-		return (-1);
-	return (0);
+	if (segment == 0)
+		bad = 1;
+	return (bad);
 }
 
 /*
@@ -297,6 +291,7 @@ program_status_parse(char *body, struct program_status_report *r)
 {
 	char		*next, *pair, *key, *value, *text;
 	const char	*cp;
+	int		 bad;
 
 	while ((next = strsep(&body, ":")) != NULL) {
 		pair = next;
@@ -322,9 +317,10 @@ program_status_parse(char *body, struct program_status_report *r)
 		if (strcmp(key, "state") == 0)
 			r->state = value;
 		else if (strcmp(key, "id") == 0) {
-			if (program_status_check_id(value, 0) != 0)
+			if ((bad = program_status_check_id(value)) == -1)
 				return (-1);
 			r->id = value;
+			r->bad_id = bad;
 		} else if (strcmp(key, "kind") == 0)
 			r->kind = value;
 		else if (strcmp(key, "progress") == 0)
@@ -356,6 +352,63 @@ program_status_parse(char *body, struct program_status_report *r)
 	return (0);
 }
 
+/* Add a text value to a report as base64. */
+static void
+program_status_add_text(struct evbuffer *evb, const char *key,
+    const char *text)
+{
+	size_t	 len = strlen(text), size = ((len + 2) / 3) * 4 + 1;
+	char	*out;
+
+	out = xmalloc(size);
+	if (b64_ntop((const u_char *)text, len, out, size) == -1)
+		fatalx("base64 encoding failed");
+	evbuffer_add_printf(evb, ":%s=%s", key, out);
+	free(out);
+}
+
+/*
+ * Build the report which forwards a record to a client terminal, with the
+ * pane id as the first id segment. The id is not set if it would break the
+ * terminal's limits.
+ */
+static void
+program_status_build_forward(struct window_pane *wp,
+    struct program_status_record *psr)
+{
+	struct evbuffer	*evb;
+	char		*id;
+
+	if (*psr->id == '\0')
+		xasprintf(&id, "%u", wp->id);
+	else
+		xasprintf(&id, "%u/%s", wp->id, psr->id);
+
+	evb = evbuffer_new();
+	if (evb == NULL)
+		fatalx("out of memory");
+	evbuffer_add_printf(evb, "\033]7501;state=%s:id=%s",
+	    program_status_state_name(psr->state), id);
+	if (psr->kind != NULL)
+		evbuffer_add_printf(evb, ":kind=%s", psr->kind);
+	if (psr->progress != -1)
+		evbuffer_add_printf(evb, ":progress=%d", psr->progress);
+	if (psr->app != NULL)
+		evbuffer_add_printf(evb, ":app=%s", psr->app);
+	if (psr->title != NULL)
+		program_status_add_text(evb, "title", psr->title);
+	if (psr->msg != NULL)
+		program_status_add_text(evb, "msg", psr->msg);
+	evbuffer_add(evb, "\033\\", 2);
+	psr->forward = xstrndup(EVBUFFER_DATA(evb), EVBUFFER_LENGTH(evb));
+	evbuffer_free(evb);
+
+	if (program_status_check_id(id) == 0)
+		psr->forward_id = id;
+	else
+		free(id);
+}
+
 /* Find a record. */
 static struct program_status_record *
 program_status_find(struct program_status *ps, const char *id)
@@ -366,17 +419,6 @@ program_status_find(struct program_status *ps, const char *id)
 	return (RB_FIND(program_status_records, &ps->records, &find));
 }
 
-/* Free a record. */
-static void
-program_status_free_record(struct program_status_record *psr)
-{
-	free(psr->id);
-	free(psr->app);
-	free(psr->title);
-	free(psr->msg);
-	free(psr);
-}
-
 /* Remove a record. */
 static void
 program_status_remove(struct program_status *ps,
@@ -384,16 +426,24 @@ program_status_remove(struct program_status *ps,
 {
 	RB_REMOVE(program_status_records, &ps->records, psr);
 	ps->count--;
-	program_status_free_record(psr);
+	ps->generation = ++program_status_clock;
+
+	free(psr->id);
+	free(psr->app);
+	free(psr->title);
+	free(psr->msg);
+	free(psr->forward_id);
+	free(psr->forward);
+	free(psr);
 }
 
-/* Free the record set if it is empty. */
+/* Free the record set of a pane if it is empty and has nothing to do. */
 static void
 program_status_check_empty(struct window_pane *wp)
 {
 	struct program_status	*ps = wp->program_status;
 
-	if (ps != NULL && ps->count == 0) {
+	if (ps != NULL && ps->count == 0 && !ps->pending) {
 		free(ps);
 		wp->program_status = NULL;
 	}
@@ -411,16 +461,38 @@ program_status_beneath(const char *id, const char *parent)
 	    (id[len] == '\0' || id[len] == '/'));
 }
 
-/* Records of a pane have changed. */
+/* Timer to redraw and run the hook after records have changed. */
 static void
-program_status_changed(struct window_pane *wp)
+program_status_changed_callback(__unused int fd, __unused short events,
+    void *data)
 {
-	log_debug("%s: %%%u", __func__, wp->id);
+	struct program_status	*ps = data;
+	struct window_pane	*wp = ps->wp;
 
-	program_status_check_empty(wp);
+	ps->pending = 0;
 	server_redraw_window_borders(wp->window);
 	server_status_window(wp->window);
 	events_fire_pane("pane-program-status-changed", wp);
+	program_status_check_empty(wp);
+}
+
+/*
+ * Records of a pane have changed. Redraws and the hook wait so a burst of
+ * reports runs them once.
+ */
+static void
+program_status_changed(struct window_pane *wp)
+{
+	struct program_status	*ps = wp->program_status;
+	struct timeval		 tv = { .tv_usec =
+				     PROGRAM_STATUS_DELAY * 1000L };
+
+	log_debug("%s: %%%u", __func__, wp->id);
+
+	if (!ps->pending) {
+		ps->pending = 1;
+		evtimer_add(&ps->timer, &tv);
+	}
 	program_status_forward_all();
 }
 
@@ -444,27 +516,6 @@ program_status_remove_states(struct window_pane *wp, int states)
 		}
 	}
 	return (changed);
-}
-
-/* Do two records hold the same keys? */
-static int
-program_status_same(struct program_status_record *psr1,
-    struct program_status_record *psr2)
-{
-	if (psr1->state != psr2->state ||
-	    psr1->kind != psr2->kind ||
-	    psr1->progress != psr2->progress)
-		return (0);
-	if ((psr1->app == NULL) != (psr2->app == NULL) ||
-	    (psr1->app != NULL && strcmp(psr1->app, psr2->app) != 0))
-		return (0);
-	if ((psr1->title == NULL) != (psr2->title == NULL) ||
-	    (psr1->title != NULL && strcmp(psr1->title, psr2->title) != 0))
-		return (0);
-	if ((psr1->msg == NULL) != (psr2->msg == NULL) ||
-	    (psr1->msg != NULL && strcmp(psr1->msg, psr2->msg) != 0))
-		return (0);
-	return (1);
 }
 
 /* Apply a valid report to the record set. Returns 1 if it changed. */
@@ -508,16 +559,18 @@ program_status_apply(struct window_pane *wp, struct program_status_report *r,
 	r->title = NULL;
 	new->msg = r->msg;
 	r->msg = NULL;
+	program_status_build_forward(wp, new);
 
 	if (ps == NULL) {
 		ps = wp->program_status = xcalloc(1, sizeof *ps);
+		ps->wp = wp;
 		RB_INIT(&ps->records);
+		evtimer_set(&ps->timer, program_status_changed_callback, ps);
 	}
-	new->updated = ++ps->updated;
 
 	psr = program_status_find(ps, id);
 	if (psr != NULL) {
-		changed = !program_status_same(psr, new);
+		changed = (strcmp(psr->forward, new->forward) != 0);
 		program_status_remove(ps, psr);
 	} else if (ps->count == PROGRAM_STATUS_MAX_RECORDS) {
 		oldest = NULL;
@@ -528,6 +581,8 @@ program_status_apply(struct window_pane *wp, struct program_status_report *r,
 		log_debug("%s: %%%u: evict %s", __func__, wp->id, oldest->id);
 		program_status_remove(ps, oldest);
 	}
+	new->updated = ++program_status_clock;
+	ps->generation = new->updated;
 	RB_INSERT(program_status_records, &ps->records, new);
 	ps->count++;
 	return (changed);
@@ -580,7 +635,7 @@ program_status_report(struct window_pane *wp, const char *body, size_t size)
 	}
 	if (r.state == NULL)
 		goto out;
-	if (r.id != NULL && program_status_check_id(r.id, 1) != 0) {
+	if (r.bad_id) {
 		log_debug("%s: %%%u: bad id: %s", __func__, wp->id, r.id);
 		goto out;
 	}
@@ -597,6 +652,10 @@ program_status_report(struct window_pane *wp, const char *body, size_t size)
 		if (state == nitems(program_status_state_names))
 			goto out;
 		changed = program_status_apply(wp, &r, state);
+
+		/* An unchanged record may still change what is forwarded. */
+		if (!changed)
+			program_status_forward_all();
 	}
 	if (changed)
 		program_status_changed(wp);
@@ -646,6 +705,7 @@ program_status_free(struct window_pane *wp)
 
 	if (ps == NULL)
 		return;
+	evtimer_del(&ps->timer);
 	RB_FOREACH_SAFE(psr, program_status_records, &ps->records, psr1)
 		program_status_remove(ps, psr);
 	free(ps);
@@ -673,9 +733,12 @@ program_status_first(struct window_pane *wp)
 
 /* Get the next record. */
 struct program_status_record *
-program_status_next(struct program_status_record *psr)
+program_status_next(struct window_pane *wp, struct program_status_record *psr)
 {
-	return (RB_NEXT(program_status_records, NULL, psr));
+	if (wp->program_status == NULL)
+		return (NULL);
+	return (RB_NEXT(program_status_records, &wp->program_status->records,
+	    psr));
 }
 
 /* Get the number of records in a pane. */
@@ -770,15 +833,15 @@ program_status_text(const char *text, int escape)
 	const u_char	*s = (const u_char *)text;
 	size_t		 len = strlen(text), n;
 	char		*out, *at;
-	u_int		 cp;
+	wchar_t		 wc;
 
 	at = out = xmalloc(len * 2 + 1);
 	while (len != 0) {
-		n = program_status_decode_char(s, len, &cp);
+		n = program_status_char(s, len, &wc);
 		if (n == 0)
 			fatalx("bad UTF-8 in program status");
-		if (!program_status_invisible(cp)) {
-			if (escape && cp == '#')
+		if (!program_status_invisible(wc)) {
+			if (escape && wc == '#')
 				*at++ = '#';
 			memcpy(at, s, n);
 			at += n;
@@ -788,36 +851,6 @@ program_status_text(const char *text, int escape)
 	}
 	*at = '\0';
 	return (out);
-}
-
-/* Build the report to forward a record to a client terminal. */
-static char *
-program_status_forward_report(struct program_status_record *psr,
-    const char *id)
-{
-	char	*report, *title = NULL, *msg = NULL, progress[16] = "";
-
-	if (psr->progress != -1)
-		xsnprintf(progress, sizeof progress, ":progress=%d",
-		    psr->progress);
-	if (psr->title != NULL)
-		title = program_status_encode_text(psr->title);
-	if (psr->msg != NULL)
-		msg = program_status_encode_text(psr->msg);
-	xasprintf(&report, "\033]7501;state=%s:id=%s%s%s%s%s%s%s%s%s%s\033\\",
-	    program_status_state_name(psr->state), id,
-	    psr->kind == NULL ? "" : ":kind=",
-	    psr->kind == NULL ? "" : psr->kind,
-	    progress,
-	    psr->app == NULL ? "" : ":app=",
-	    psr->app == NULL ? "" : psr->app,
-	    title == NULL ? "" : ":title=",
-	    title == NULL ? "" : title,
-	    msg == NULL ? "" : ":msg=",
-	    msg == NULL ? "" : msg);
-	free(title);
-	free(msg);
-	return (report);
 }
 
 /* Remove a sent record from a tree. */
@@ -841,92 +874,185 @@ program_status_free_sent(struct program_status_sent_tree *tree)
 		program_status_remove_sent(tree, pss);
 }
 
-/* Add the records of a pane to the set a client terminal should hold. */
-static void
-program_status_forward_pane(struct window_pane *wp,
-    struct program_status_sent_tree *want)
+/* Has an ancestor of this sent record been cleared? */
+static int
+program_status_ancestor_cleared(struct program_status_sent_tree *tree,
+    const char *id)
 {
-	struct program_status_record	*psr;
-	struct program_status_sent	*pss;
-	char				*id;
+	struct program_status_sent	 find, *found;
+	char				*copy, *cp;
+	int				 cleared = 0;
 
-	if (wp->program_status == NULL)
-		return;
-	RB_FOREACH(psr, program_status_records, &wp->program_status->records) {
-		if (*psr->id == '\0')
-			xasprintf(&id, "%u", wp->id);
-		else
-			xasprintf(&id, "%u/%s", wp->id, psr->id);
-		if (program_status_check_id(id, 1) != 0) {
-			free(id);
-			continue;
-		}
-		pss = xcalloc(1, sizeof *pss);
-		pss->id = id;
-		pss->report = program_status_forward_report(psr, id);
-		if (RB_INSERT(program_status_sent_tree, want, pss) != NULL) {
-			free(pss->id);
-			free(pss->report);
-			free(pss);
+	copy = xstrdup(id);
+	find.id = copy;
+	while (!cleared && (cp = strrchr(copy, '/')) != NULL) {
+		*cp = '\0';
+		found = RB_FIND(program_status_sent_tree, tree, &find);
+		cleared = (found != NULL && found->cleared);
+	}
+	free(copy);
+	return (cleared);
+}
+
+static int
+program_status_seen_cmp(const void *a, const void *b)
+{
+	const struct program_status_seen	*pss1 = a, *pss2 = b;
+
+	if (pss1->id < pss2->id)
+		return (-1);
+	return (pss1->id > pss2->id);
+}
+
+/*
+ * Order records for a client terminal, which holds at most 256: the root
+ * record of each pane first, then the most recently updated.
+ */
+static int
+program_status_priority_cmp(const void *a, const void *b)
+{
+	struct program_status_record	*psr1, *psr2;
+	int				 root1, root2;
+
+	psr1 = *(struct program_status_record *const *)a;
+	psr2 = *(struct program_status_record *const *)b;
+	root1 = (*psr1->id == '\0');
+	root2 = (*psr2->id == '\0');
+
+	if (root1 != root2)
+		return (root2 - root1);
+	if (psr1->updated > psr2->updated)
+		return (-1);
+	return (psr1->updated < psr2->updated);
+}
+
+/*
+ * Get the panes with records in a client's session and their generations,
+ * ordered by pane id. Returns 1 if they are the same as last time.
+ */
+static int
+program_status_forward_seen(struct program_status_forward *psf)
+{
+	struct program_status_seen	*seen = NULL;
+	struct winlink			*wl;
+	struct window_pane		*wp;
+	u_int				 n = 0, i, j;
+
+	RB_FOREACH(wl, winlinks, &psf->c->session->windows) {
+		TAILQ_FOREACH(wp, &wl->window->panes, entry) {
+			if (wp->program_status == NULL)
+				continue;
+			seen = xreallocarray(seen, n + 1, sizeof *seen);
+			seen[n].id = wp->id;
+			seen[n].generation = wp->program_status->generation;
+			n++;
 		}
 	}
+	if (n != 0)
+		qsort(seen, n, sizeof *seen, program_status_seen_cmp);
+	for (i = j = 0; i < n; i++) {
+		if (j == 0 || seen[i].id != seen[j - 1].id)
+			seen[j++] = seen[i];
+	}
+	n = j;
+
+	if (n == psf->nseen &&
+	    (n == 0 || memcmp(seen, psf->seen, n * sizeof *seen) == 0)) {
+		free(seen);
+		return (1);
+	}
+	free(psf->seen);
+	psf->seen = seen;
+	psf->nseen = n;
+	return (0);
+}
+
+/*
+ * Get the records a client terminal should hold, up to the number it can
+ * keep.
+ */
+static void
+program_status_forward_want(struct program_status_forward *psf,
+    struct program_status_sent_tree *want)
+{
+	struct program_status_record	**list = NULL, *psr;
+	struct program_status_sent	 *pss;
+	struct window_pane		 *wp;
+	u_int				  n = 0, i;
+
+	for (i = 0; i < psf->nseen; i++) {
+		wp = window_pane_find_by_id(psf->seen[i].id);
+		RB_FOREACH(psr, program_status_records,
+		    &wp->program_status->records) {
+			if (psr->forward_id == NULL)
+				continue;
+			list = xreallocarray(list, n + 1, sizeof *list);
+			list[n++] = psr;
+		}
+	}
+	if (n > PROGRAM_STATUS_MAX_RECORDS) {
+		qsort(list, n, sizeof *list, program_status_priority_cmp);
+		n = PROGRAM_STATUS_MAX_RECORDS;
+	}
+	for (i = 0; i < n; i++) {
+		pss = xcalloc(1, sizeof *pss);
+		pss->id = list[i]->forward_id;
+		pss->report = list[i]->forward;
+		RB_INSERT(program_status_sent_tree, want, pss);
+	}
+	free(list);
 }
 
 /* Bring a client terminal up to date with the records of its session. */
 static void
 program_status_forward_flush(struct program_status_forward *psf)
 {
-	struct client			*c = psf->c;
-	struct tty			*tty = &c->tty;
+	struct tty			*tty = &psf->c->tty;
 	struct program_status_sent_tree	 want;
 	struct program_status_sent	*pss, *pss1, *found;
-	struct winlink			*wl;
-	struct window_pane		*wp;
-	char				*clear, *id;
 
+	if (program_status_forward_seen(psf))
+		return;
 	RB_INIT(&want);
-	RB_FOREACH(wl, winlinks, &c->session->windows) {
-		TAILQ_FOREACH(wp, &wl->window->panes, entry)
-			program_status_forward_pane(wp, &want);
-	}
+	program_status_forward_want(psf, &want);
 
 	/*
 	 * Clearing a record also clears every record beneath it in the client
 	 * terminal, so forget those too and send them again if they are still
 	 * wanted.
 	 */
-	for (;;) {
-		RB_FOREACH(pss, program_status_sent_tree, &psf->sent) {
-			found = RB_FIND(program_status_sent_tree, &want, pss);
-			if (found == NULL)
-				break;
+	RB_FOREACH(pss, program_status_sent_tree, &psf->sent) {
+		if (RB_FIND(program_status_sent_tree, &want, pss) != NULL)
+			continue;
+		pss->cleared = 1;
+		if (!program_status_ancestor_cleared(&psf->sent, pss->id)) {
+			tty_puts(tty, "\033]7501;state=clear:id=");
+			tty_puts(tty, pss->id);
+			tty_puts(tty, "\033\\");
 		}
-		if (pss == NULL)
-			break;
-		xasprintf(&clear, "\033]7501;state=clear:id=%s\033\\", pss->id);
-		tty_puts(tty, clear);
-		free(clear);
-
-		id = xstrdup(pss->id);
-		RB_FOREACH_SAFE(found, program_status_sent_tree, &psf->sent,
-		    pss1) {
-			if (program_status_beneath(found->id, id))
-				program_status_remove_sent(&psf->sent, found);
-		}
-		free(id);
+	}
+	RB_FOREACH(pss, program_status_sent_tree, &psf->sent) {
+		if (program_status_ancestor_cleared(&psf->sent, pss->id))
+			pss->cleared = 1;
+	}
+	RB_FOREACH_SAFE(pss, program_status_sent_tree, &psf->sent, pss1) {
+		if (pss->cleared)
+			program_status_remove_sent(&psf->sent, pss);
 	}
 
 	RB_FOREACH_SAFE(pss, program_status_sent_tree, &want, pss1) {
-		found = RB_FIND(program_status_sent_tree, &psf->sent, pss);
-		if (found != NULL && strcmp(found->report, pss->report) == 0)
-			continue;
-		tty_puts(tty, pss->report);
-		if (found != NULL)
-			program_status_remove_sent(&psf->sent, found);
 		RB_REMOVE(program_status_sent_tree, &want, pss);
-		RB_INSERT(program_status_sent_tree, &psf->sent, pss);
+		found = RB_FIND(program_status_sent_tree, &psf->sent, pss);
+		if (found == NULL || strcmp(found->report, pss->report) != 0) {
+			tty_puts(tty, pss->report);
+			if (found != NULL)
+				program_status_remove_sent(&psf->sent, found);
+			pss->id = xstrdup(pss->id);
+			pss->report = xstrdup(pss->report);
+			RB_INSERT(program_status_sent_tree, &psf->sent, pss);
+		} else
+			free(pss);
 	}
-	program_status_free_sent(&want);
 }
 
 /* Is this client terminal ready for records? */
@@ -950,12 +1076,12 @@ program_status_forward_callback(__unused int fd, __unused short events,
 {
 	struct program_status_forward	*psf = data;
 	struct client			*c = psf->c;
-	struct timeval			 tv = { 0 };
+	struct timeval			 tv = { .tv_usec =
+					     PROGRAM_STATUS_DELAY * 1000L };
 
 	if (!program_status_forward_ready(c))
 		return;
 	if (c->tty.flags & TTY_BLOCK) {
-		tv.tv_usec = PROGRAM_STATUS_FORWARD_DELAY * 1000L;
 		evtimer_add(&psf->timer, &tv);
 		return;
 	}
@@ -967,7 +1093,8 @@ void
 program_status_forward_client(struct client *c)
 {
 	struct program_status_forward	*psf = c->tty.program_status;
-	struct timeval			 tv = { 0 };
+	struct timeval			 tv = { .tv_usec =
+					     PROGRAM_STATUS_DELAY * 1000L };
 
 	if (!program_status_forward_ready(c))
 		return;
@@ -977,10 +1104,8 @@ program_status_forward_client(struct client *c)
 		RB_INIT(&psf->sent);
 		evtimer_set(&psf->timer, program_status_forward_callback, psf);
 	}
-	if (evtimer_pending(&psf->timer, NULL))
-		return;
-	tv.tv_usec = PROGRAM_STATUS_FORWARD_DELAY * 1000L;
-	evtimer_add(&psf->timer, &tv);
+	if (!evtimer_pending(&psf->timer, NULL))
+		evtimer_add(&psf->timer, &tv);
 }
 
 /* Forward records to every client terminal soon. */
@@ -993,7 +1118,7 @@ program_status_forward_all(void)
 		program_status_forward_client(c);
 }
 
-/* Clear everything sent to a client terminal. */
+/* Forget everything sent to a client terminal, clearing it if needed. */
 static void
 program_status_forward_clear(struct tty *tty, int raw)
 {
@@ -1004,6 +1129,9 @@ program_status_forward_clear(struct tty *tty, int raw)
 	if (psf == NULL)
 		return;
 	evtimer_del(&psf->timer);
+	free(psf->seen);
+	psf->seen = NULL;
+	psf->nseen = 0;
 	if (RB_EMPTY(&psf->sent))
 		return;
 	if (raw)
@@ -1041,6 +1169,7 @@ program_status_free_tty(struct tty *tty)
 		return;
 	evtimer_del(&psf->timer);
 	program_status_free_sent(&psf->sent);
+	free(psf->seen);
 	free(psf);
 	tty->program_status = NULL;
 }

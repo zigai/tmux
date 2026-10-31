@@ -6752,6 +6752,7 @@ Run when a pane exits a mode.
 Run when a pane is moved to another window.
 .It pane\-program\-status\-changed
 Run when the program status records of a pane change.
+Changes close together run the hook once.
 .It pane\-prompt\-closed
 Run when a prompt in a pane is closed.
 .It pane\-prompt\-opened
@@ -8131,12 +8132,20 @@ format loop.
 The most urgent state is blocked, then error, done, working and idle.
 Working and blocked records are removed when the program exits or a new OSC 133
 shell prompt starts.
-Done and error records are removed when a key is typed into the pane.
+Done and error records are removed when a key is typed or text is pasted into
+the pane, but not by keys for a mode such as copy mode.
 Direction overrides and invisible formatting characters are removed from the
 message and title, and where they are drawn, such as in the status line, they
 are not treated as styles.
+.Pp
 If the terminal supports the sequence, the records of each pane in the attached
-session are passed on to it.
+session are passed on to it, with the pane ID number (without the
+.Ql % )
+as the first segment of each record ID.
+A record is not passed on if its ID would then be more than eight segments or
+128 bytes long.
+The terminal is sent at most 256 records: each pane's own record first, then
+those updated most recently.
 .Sh GLOBAL AND SESSION ENVIRONMENT
 When the server is started,
 .Nm

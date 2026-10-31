@@ -427,6 +427,7 @@ emit 'state=working:app=x'
 emit 'state=working:app=x:msg=S'
 emit 'state=clear:id=none'
 emit 'state=paused'
+sleep 0.3
 emit 'state=blocked:id=job'
 hooked 2 "$pane:2"
 raw "$(printf '\033]133;A\033\\')"
@@ -440,6 +441,23 @@ emit 'state=clear'
 raw "$(printf '\033c')"
 emit 'state=idle'
 hooked 6 "$pane:1"
+
+# A burst of reports runs the hook once, with the last state.
+$TMUX set-hook -ga pane-program-status-changed \
+    'set -gF @p "#{program_progress}"' || exit 1
+burst()
+{
+	wait_for_output "$1" $TMUX display-message -p '#{@n}|#{@last}|#{@p}' ||
+	    fail "hook is $($TMUX display-message -p '#{@n}|#{@last}|#{@p}'), not $1"
+}
+i=0
+while [ "$i" -le 500 ]; do
+	printf '\033]7501;state=working:progress=%d\033\\' $((i % 101))
+	i=$((i + 1))
+done | $TMUX display-message -I -t "$pane" || exit 1
+burst "7|$pane:1|96"
+emit 'state=idle'
+burst "8|$pane:1|"
 $TMUX set-hook -gu pane-program-status-changed || exit 1
 clear_all
 

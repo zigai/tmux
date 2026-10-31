@@ -1134,6 +1134,9 @@ struct program_status_record {
 	char				*title;
 	char				*msg;
 
+	char				*forward_id;
+	char				*forward;
+
 	uint64_t			 updated;
 	RB_ENTRY(program_status_record)	 entry;
 };
@@ -4396,7 +4399,7 @@ void		 program_status_reset(struct window_pane *);
 void		 program_status_free(struct window_pane *);
 struct program_status_record *program_status_root(struct window_pane *);
 struct program_status_record *program_status_first(struct window_pane *);
-struct program_status_record *program_status_next(
+struct program_status_record *program_status_next(struct window_pane *,
 		     struct program_status_record *);
 u_int		 program_status_count(struct window_pane *);
 const char	*program_status_app(struct window_pane *,

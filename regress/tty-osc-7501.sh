@@ -214,6 +214,55 @@ counts()
 wait_for_output "$(printf '%s\n%s' '=blocked i=idle ' '=done ')" counts ||
     fail "dismissed the wrong records: $(counts)"
 
+# A terminal holds at most 256 records, so only that many are sent: each
+# pane's own record first, then those updated most recently. What it holds
+# matches what was sent, even after an older record is updated.
+$TMUX new-session -d -s s4 -x80 -y24 'exec sleep 1000' || exit 1
+q1=$($TMUX new-window -P -F '#{pane_id}' -t s4 '') || exit 1
+q2=$($TMUX split-window -d -P -F '#{pane_id}' -t "$q1" '') || exit 1
+for q in "$q1" "$q2"; do
+	i=0
+	{
+		printf '\033]7501;state=idle\033\\'
+		while [ "$i" -lt 199 ]; do
+			printf '\033]7501;state=working:id=r%d\033\\' "$i"
+			i=$((i + 1))
+		done
+	} | $TMUX display-message -I -t "$q" || exit 1
+done
+m1=$(pane_number "$q1")
+m2=$(pane_number "$q2")
+held()
+{
+	$TMUX2 display-message -p -t outer '#{G:#{program_id} }' |
+	    tr ' ' '\n' | sed '/^$/d' | sort
+}
+wanted()
+{
+	{
+		echo "$m1"
+		echo "$m2"
+		i=0
+		while [ "$i" -lt 199 ]; do
+			echo "$m2/r$i"
+			[ "$i" -lt "$1" ] || echo "$m1/r$i"
+			i=$((i + 1))
+		done
+		[ -z "$2" ] || echo "$m1/$2"
+	} | sort
+}
+$TMUX switch-client -t s4 || exit 1
+wait_for_output "$(wanted 144)" held || fail "terminal holds $(held | wc -l)"
+mark
+emit "$q1" 'state=done:id=r0'
+expect "state=clear:id=$m1/r144" "state=done:id=$m1/r0"
+wait_for_output "$(wanted 145 r0)" held ||
+    fail "terminal holds $(held | wc -l) after an update"
+
+# The same report again still makes the record the most recent.
+emit "$q1" 'state=working:id=r1'
+expect "state=clear:id=$m1/r145" "state=working:id=$m1/r1"
+
 # Detaching clears everything.
 $TMUX detach-client || exit 1
 wait_for_output '' $TMUX list-clients || exit 1
