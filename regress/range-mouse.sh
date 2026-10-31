@@ -331,6 +331,7 @@ output '\r\033[2K\033[?1049h\033[Halpha beta gamma\r\ndelta beta'
 t1=$(new -a text -m 'alpha beta')
 t2=$(new -m delta)
 g=$(new -a grid -r 0:11-0:15)
+t3=$(new -m beta -b delta)
 $TMUX copy-mode -t "$pane" || fail 'copy mode'
 record -T copy-mode MouseDown1Range "$(recorder 'copy:#{mouse_range_id}')"
 click 0 3 1
@@ -340,6 +341,8 @@ wait_got "copy:$g" 'copy mode click on grid range'
 click 0 2 2
 wait_got "copy:$t2" 'copy mode click on second text range'
 click 0 9 2
+wait_got "copy:$t3" 'copy mode click on mid-line text range'
+click 0 6 2
 wait_got 'copy-pane:' 'copy mode click off text ranges'
 $TMUX send -t "$pane" -X history-top || fail top
 assert_cursor "0:0:$t1" 'cursor on text range'
@@ -347,6 +350,10 @@ $TMUX send -t "$pane" -X next-range || fail next
 assert_cursor "0:11:$g" 'next to grid range'
 $TMUX send -t "$pane" -X next-range || fail next
 assert_cursor "1:0:$t2" 'next to text range'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "1:6:$t3" 'next to mid-line text range'
+$TMUX send -t "$pane" -X previous-range || fail previous
+assert_cursor "1:0:$t2" 'previous to text range at line start'
 $TMUX send -t "$pane" -X previous-range || fail previous
 assert_cursor "0:11:$g" 'previous to grid range'
 $TMUX send -t "$pane" -X previous-range || fail previous
