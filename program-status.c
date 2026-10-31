@@ -484,13 +484,14 @@ static void
 program_status_changed(struct window_pane *wp)
 {
 	struct program_status	*ps = wp->program_status;
-	struct timeval		 tv = { .tv_usec =
-				     PROGRAM_STATUS_DELAY * 1000L };
+	struct timeval		 tv;
 
 	log_debug("%s: %%%u", __func__, wp->id);
 
 	if (!ps->pending) {
 		ps->pending = 1;
+		tv.tv_sec = 0;
+		tv.tv_usec = PROGRAM_STATUS_DELAY * 1000L;
 		evtimer_add(&ps->timer, &tv);
 	}
 	program_status_forward_all();
@@ -1076,12 +1077,13 @@ program_status_forward_callback(__unused int fd, __unused short events,
 {
 	struct program_status_forward	*psf = data;
 	struct client			*c = psf->c;
-	struct timeval			 tv = { .tv_usec =
-					     PROGRAM_STATUS_DELAY * 1000L };
+	struct timeval			 tv;
 
 	if (!program_status_forward_ready(c))
 		return;
 	if (c->tty.flags & TTY_BLOCK) {
+		tv.tv_sec = 0;
+		tv.tv_usec = PROGRAM_STATUS_DELAY * 1000L;
 		evtimer_add(&psf->timer, &tv);
 		return;
 	}
@@ -1093,8 +1095,7 @@ void
 program_status_forward_client(struct client *c)
 {
 	struct program_status_forward	*psf = c->tty.program_status;
-	struct timeval			 tv = { .tv_usec =
-					     PROGRAM_STATUS_DELAY * 1000L };
+	struct timeval			 tv;
 
 	if (!program_status_forward_ready(c))
 		return;
@@ -1104,8 +1105,11 @@ program_status_forward_client(struct client *c)
 		RB_INIT(&psf->sent);
 		evtimer_set(&psf->timer, program_status_forward_callback, psf);
 	}
-	if (!evtimer_pending(&psf->timer, NULL))
+	if (!evtimer_pending(&psf->timer, NULL)) {
+		tv.tv_sec = 0;
+		tv.tv_usec = PROGRAM_STATUS_DELAY * 1000L;
 		evtimer_add(&psf->timer, &tv);
+	}
 }
 
 /* Forward records to every client terminal soon. */
