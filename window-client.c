@@ -84,13 +84,18 @@ static const char *window_client_info_lines[] = {
 	"              #[#{E:tree-mode-border-style},acs]x#[default] "
 	WINDOW_CLIENT_FEATURE(clipboard) " "
 	WINDOW_CLIENT_FEATURE(cstyle) " "
-	WINDOW_CLIENT_FEATURE(extkeys) " "
-	WINDOW_CLIENT_FEATURE(focus),
+	WINDOW_CLIENT_FEATURE(dnd) " "
+	WINDOW_CLIENT_FEATURE(extkeys),
 	"              #[#{E:tree-mode-border-style},acs]x#[default] "
+	WINDOW_CLIENT_FEATURE(focus) " "
 	WINDOW_CLIENT_FEATURE(hyperlinks) " "
 	WINDOW_CLIENT_FEATURE(ignorefkeys) " "
-	WINDOW_CLIENT_FEATURE(imagescroll) " "
-	WINDOW_CLIENT_FEATURE(kittygraphics),
+	WINDOW_CLIENT_FEATURE(imagescroll),
+	"              #[#{E:tree-mode-border-style},acs]x#[default] "
+	WINDOW_CLIENT_FEATURE(kittyclipboard) " "
+	WINDOW_CLIENT_FEATURE(kittycolours) " "
+	WINDOW_CLIENT_FEATURE(kittygraphics) " "
+	WINDOW_CLIENT_FEATURE(kittykeys),
 	"              #[#{E:tree-mode-border-style},acs]x#[default] "
 	WINDOW_CLIENT_FEATURE(margins) " "
 	WINDOW_CLIENT_FEATURE(mouse) " "
