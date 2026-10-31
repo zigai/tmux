@@ -201,6 +201,22 @@ assert_line 2 "see ${E}[41mbeta${E}[49m here" 'text range moved'
 assert_line 1 'gamma' 'text range left style'
 output '\033[?1049l'
 
+# Text range styles are combined with each other and with grid range styles
+# in ID order, and the newest range wins where they conflict.
+fresh textoverlap
+output '\033[?1049h\033[H\033[2Jalpha beta gamma'
+a=$(new -s 'bg=red' -m beta)
+b=$(new -a grid -s 'bg=blue' -r 0:6-0:9)
+assert_line 1 "alpha ${E}[44mbeta${E}[49m gamma" 'newer grid range'
+c=$(new -s 'bg=green' -m beta)
+assert_line 1 "alpha ${E}[42mbeta${E}[49m gamma" 'newer text range'
+$TMUX kill-range -t "$pane" "$b" || fail kill
+$TMUX kill-range -t "$pane" "$c" || fail kill
+d=$(new -s 'fg=blue' -m 'alpha beta')
+assert_line 1 "${E}[34malpha ${E}[41mbeta${E}[39m${E}[49m gamma" \
+    'text ranges combined'
+output '\033[?1049l'
+
 # A style is a format that can depend on the range state.
 fresh state
 a=$(new -s '#{?#{==:#{range_state},live},bg=green,bg=yellow}' -r 1:0-1:5)

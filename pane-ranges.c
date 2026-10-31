@@ -2048,35 +2048,56 @@ pane_range_style(struct pane_ranges *prs, struct pane_range *r)
 	return (&r->style_cell);
 }
 
+/* Combine the style of a range with the styles of older ranges. */
+static void
+pane_ranges_combine(struct pane_ranges *prs, struct pane_range *r,
+    struct grid_cell *sc)
+{
+	const struct grid_cell	*gc = pane_range_style(prs, r);
+
+	if (gc->fg != 8)
+		sc->fg = gc->fg;
+	if (gc->bg != 8)
+		sc->bg = gc->bg;
+	if (gc->us != 8)
+		sc->us = gc->us;
+	if (gc->attr & GRID_ATTR_NOATTR)
+		sc->attr = gc->attr;
+	else
+		sc->attr |= gc->attr;
+}
+
+/* Check if a combined style changes anything. */
+static int
+pane_ranges_styled(const struct grid_cell *sc)
+{
+	return (sc->fg != 8 || sc->bg != 8 || sc->us != 8 || sc->attr != 0);
+}
+
+/* Get a range by ID. */
+static struct pane_range *
+pane_ranges_find_id(struct pane_ranges *prs, u_int id)
+{
+	struct pane_range	find;
+
+	find.id = id;
+	return (RB_FIND(pane_range_tree, &prs->tree, &find));
+}
+
 /* Combine the styles of the ranges in a set, newest last. */
 static void
 pane_ranges_set_style(struct pane_ranges *prs, struct pane_range_set *set)
 {
 	struct grid_cell	*sc = &set->style;
-	const struct grid_cell	*gc;
-	struct pane_range	*r, find;
+	struct pane_range	*r;
 	u_int			 i;
 
 	memcpy(sc, &grid_default_cell, sizeof *sc);
 	for (i = 0; i < set->count; i++) {
-		find.id = set->ids[i];
-		r = RB_FIND(pane_range_tree, &prs->tree, &find);
-		if (r == NULL)
-			continue;
-		gc = pane_range_style(prs, r);
-		if (gc->fg != 8)
-			sc->fg = gc->fg;
-		if (gc->bg != 8)
-			sc->bg = gc->bg;
-		if (gc->us != 8)
-			sc->us = gc->us;
-		if (gc->attr & GRID_ATTR_NOATTR)
-			sc->attr = gc->attr;
-		else
-			sc->attr |= gc->attr;
+		if ((r = pane_ranges_find_id(prs, set->ids[i])) != NULL)
+			pane_ranges_combine(prs, r, sc);
 	}
-	set->styled = (sc->fg != 8 || sc->bg != 8 || sc->us != 8 ||
-	    sc->attr != 0);
+	set->styled = pane_ranges_styled(sc);
 	set->style_generation = prs->generation;
 }
 
@@ -2234,6 +2255,58 @@ pane_ranges_draw_set(struct pane_ranges *prs, struct grid_cell *gc)
 }
 
 /*
+ * Apply the styles of the grid ranges of a cell and the text ranges on its
+ * line covering it to a copy of the cell, combined in ID order.
+ */
+static void
+pane_ranges_style_cell(struct pane_ranges *prs, struct grid_cell *gc,
+    struct pane_range_text_row *row, u_int x, uint64_t line)
+{
+	struct window_pane	*wp = prs->wp;
+	struct pane_range_set	*set;
+	struct pane_range	*r, *t;
+	struct grid_cell	 sc;
+	u_int			*ids = NULL, nids = 0, i = 0, j;
+
+	for (j = 0; j < row->n; j++) {
+		if (pane_range_text_covers(wp, row->list[j], x, line))
+			break;
+	}
+	if (j == row->n) {
+		pane_ranges_draw_set(prs, gc);
+		return;
+	}
+
+	if (gc->range != 0 && gc->range <= prs->nsets) {
+		set = prs->sets[gc->range - 1];
+		ids = set->ids;
+		nids = set->count;
+	}
+	memcpy(&sc, &grid_default_cell, sizeof sc);
+	while (i < nids || j < row->n) {
+		t = NULL;
+		if (j < row->n) {
+			t = row->list[j];
+			if (!pane_range_text_covers(wp, t, x, line)) {
+				j++;
+				continue;
+			}
+		}
+		if (i < nids && (t == NULL || ids[i] < t->id)) {
+			r = pane_ranges_find_id(prs, ids[i++]);
+			if (r == NULL)
+				continue;
+		} else {
+			r = t;
+			j++;
+		}
+		pane_ranges_combine(prs, r, &sc);
+	}
+	if (pane_ranges_styled(&sc))
+		pane_ranges_apply_style(&sc, gc);
+}
+
+/*
  * Apply the style of the ranges shown at a visible position of a pane to a copy
  * of its cell.
  */
@@ -2241,11 +2314,14 @@ void
 pane_ranges_draw_cell(struct pane_ranges *prs, struct grid_cell *gc, u_int x,
     u_int y)
 {
-	struct pane_range	*r;
+	struct pane_range_text_row	*row;
+	uint64_t			 line;
 
-	pane_ranges_draw_set(prs, gc);
-	if ((r = pane_ranges_text_at(prs->wp, x, y)) != NULL)
-		pane_ranges_apply_style(pane_range_style(prs, r), gc);
+	line = pane_ranges_line(prs->wp->base.grid, y);
+	if ((row = pane_ranges_text_row(prs, line)) == NULL)
+		pane_ranges_draw_set(prs, gc);
+	else
+		pane_ranges_style_cell(prs, gc, row, x, line);
 }
 
 /*
