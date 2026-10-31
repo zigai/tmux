@@ -158,14 +158,16 @@ reply c1 "\033]99;i=$(oid $A iu):p=close;untracked\033\\\\"
 reply c2 "\033]99;i=$(oid $A iu):p=close;untracked\033\\\\"
 check u '^[]99;i=u:p=close;untracked^[\' "untracked close"
 
-# Alive queries are answered once with only the pane's own identifiers.
-listen "$A" '\033]99;i=live:p=alive;\033\\' live
+# Alive queries are answered once with only the identifiers of notifications
+# from the pane's process, not those of other panes or of the process before
+# respawn-pane.
+listen "$A" '\033]99;i=k2:c=1:a=-focus;K2\033\\\033]99;i=live:p=alive;\033\\' live
 wait_until has c2 "\033]99;i=$(oid $A ilive):p=alive;\033\\\\" ||
     fail "alive query not sent"
 ids="$(oid $A ik2),$(oid $B ix),$(oid $A n9),tmux-1-0-iy,$(oid $A iu)"
 reply c1 "\033]99;i=$(oid $A ilive):p=alive;$ids\033\\\\"
 reply c2 "\033]99;i=$(oid $A ilive):p=alive;$ids\033\\\\"
-check live '^[]99;i=live:p=alive;k2,u^[\' "alive"
+check live '^[]99;i=live:p=alive;k2^[\' "alive"
 
 # Replies for a process replaced by respawn-pane are not given to the new one.
 listen "$B" '\033]99;i=old:a=report,-focus;Old\033\\' old

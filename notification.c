@@ -1062,6 +1062,10 @@ notification_closed(struct client *c, struct window_pane *wp,
 	}
 }
 
+/*
+ * Handle a reply to an alive query. Only notifications the pane's current
+ * process sent are given to it.
+ */
 static void
 notification_alive_reply(struct window_pane *wp, const char *rest,
     const char *payload)
@@ -1088,7 +1092,8 @@ notification_alive_reply(struct window_pane *wp, const char *rest,
 	copy = next = xstrdup(payload);
 	while ((cp = strsep(&next, ",")) != NULL) {
 		found = notification_find(cp, &id);
-		if (found != wp || *id != 'i')
+		if (found != wp || *id != 'i' ||
+		    notification_find_entry(ns, id) == NULL)
 			continue;
 		if (EVBUFFER_LENGTH(evb) != 0)
 			evbuffer_add(evb, ",", 1);
