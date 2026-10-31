@@ -288,7 +288,7 @@ window_tree_build_pane(struct session *s, struct winlink *wl,
 	item->winlink = wl->idx;
 	item->pane = wp->id;
 
-	ft = format_create(NULL, NULL, FORMAT_PANE|wp->id, 0);
+	ft = format_create(NULL, NULL, FORMAT_PANE|wp->id, FORMAT_DRAW);
 	format_defaults(ft, NULL, s, wl, wp);
 	text = format_expand(ft, data->format);
 	xasprintf(&name, "%u", idx);
@@ -341,7 +341,7 @@ window_tree_build_window(struct session *s, struct winlink *wl,
 
 	if (wl->window != NULL && wl->window->active != NULL)
 		tag = FORMAT_PANE|wl->window->active->id;
-	ft = format_create(NULL, NULL, tag, 0);
+	ft = format_create(NULL, NULL, tag, FORMAT_DRAW);
 	format_defaults(ft, NULL, s, wl, NULL);
 	text = format_expand(ft, data->format);
 	xasprintf(&name, "%u", wl->idx);
@@ -399,7 +399,7 @@ window_tree_build_session(struct session *s, void *modedata,
 
 	if (wl != NULL && wl->window != NULL && wl->window->active != NULL)
 		tag = FORMAT_PANE|wl->window->active->id;
-	ft = format_create(NULL, NULL, tag, 0);
+	ft = format_create(NULL, NULL, tag, FORMAT_DRAW);
 	format_defaults(ft, NULL, s, NULL, NULL);
 	text = format_expand(ft, data->format);
 	format_free(ft);
@@ -613,7 +613,8 @@ window_tree_draw_session(struct window_tree_modedata *data, struct session *s,
 		w = wl->window;
 		oo = w->options;
 
-		ft = format_create(NULL, NULL, FORMAT_WINDOW|w->id, 0);
+		ft = format_create(NULL, NULL, FORMAT_WINDOW|w->id,
+		    FORMAT_DRAW);
 		format_defaults(ft, NULL, s, wl, NULL);
 
 		window_tree_border_cell(&gc, oo, ft);
@@ -762,7 +763,7 @@ window_tree_draw_window(struct window_tree_modedata *data, struct session *s,
 		}
 		oo = wp->options;
 
-		ft = format_create(NULL, NULL, FORMAT_PANE|wp->id, 0);
+		ft = format_create(NULL, NULL, FORMAT_PANE|wp->id, FORMAT_DRAW);
 		format_defaults(ft, NULL, s, wl, wp);
 
 		window_tree_border_cell(&gc, oo, ft);
@@ -836,7 +837,7 @@ window_tree_draw_info(struct window_tree_modedata *data, void *itemdata,
 	lines[n] = window_tree_session_info_lines;
 	count[n++] = nitems(window_tree_session_info_lines);
 
-	ft = format_create(NULL, NULL, FORMAT_NONE, 0);
+	ft = format_create(NULL, NULL, FORMAT_NONE, FORMAT_DRAW);
 	format_defaults(ft, NULL, sp, wl, wp);
 
 	i = 0;
@@ -985,7 +986,7 @@ window_tree_get_key(void *modedata, void *itemdata, u_int line)
 	char				*expanded;
 	key_code			 key;
 
-	ft = format_create(NULL, NULL, FORMAT_NONE, 0);
+	ft = format_create(NULL, NULL, FORMAT_NONE, FORMAT_DRAW);
 	window_tree_pull_item(item, &s, &wl, &wp);
 	if (item->type == WINDOW_TREE_SESSION)
 		format_defaults(ft, NULL, s, NULL, NULL);

@@ -691,6 +691,7 @@ status_message_redraw(struct client *c)
 	status_message_area(c, &ax, &aw);
 
 	ft = format_create_defaults(NULL, c, NULL, NULL, NULL);
+	format_add_flags(ft, FORMAT_DRAW);
 	style_apply(&gc, s->options, "message-style", ft);
 
 	/*

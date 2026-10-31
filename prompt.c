@@ -407,6 +407,7 @@ prompt_format_tree(struct prompt *pr)
 		ft = format_create_from_state(NULL, NULL, &pr->state);
 	else
 		ft = format_create_defaults(NULL, NULL, NULL, NULL, NULL);
+	format_add_flags(ft, FORMAT_DRAW);
 	tmp = utf8_tocstr(pr->buffer);
 	format_add(ft, "prompt_input", "%s", tmp);
 	free(tmp);

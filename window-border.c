@@ -38,7 +38,8 @@ window_set_fill_cell(struct window *w, int inside, struct grid_cell *gc)
 	gc->attr |= GRID_ATTR_CHARSET;
 	utf8_set(&gc->data, CELL_BORDERS[CELL_NONE]);
 
-	ft = format_create(NULL, NULL, FORMAT_WINDOW|w->id, FORMAT_NOJOBS);
+	ft = format_create(NULL, NULL, FORMAT_WINDOW|w->id,
+	    FORMAT_NOJOBS|FORMAT_DRAW);
 	format_defaults(ft, NULL, NULL, NULL, w->active);
 	format_add(ft, "is_inside", "%d", inside);
 	format_add(ft, "is_outside", "%d", !inside);

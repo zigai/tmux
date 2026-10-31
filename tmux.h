@@ -2797,6 +2797,7 @@ struct key_binding	**sort_get_key_bindings_table(struct key_table *,
 #define FORMAT_NOJOBS 0x4
 #define FORMAT_VERBOSE 0x8
 #define FORMAT_LAST 0x10
+#define FORMAT_DRAW 0x20
 #define FORMAT_NONE 0
 #define FORMAT_PANE 0x80000000U
 #define FORMAT_WINDOW 0x40000000U
@@ -2822,6 +2823,7 @@ void		 format_each(struct format_tree *, void (*)(const char *,
 char		*format_pretty_time(time_t, int);
 char		*format_expand_time(struct format_tree *, const char *);
 char		*format_expand(struct format_tree *, const char *);
+void		 format_add_flags(struct format_tree *, int);
 char		*format_single(struct cmdq_item *, const char *,
 		     struct client *, struct session *, struct winlink *,
 		     struct window_pane *);

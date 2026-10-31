@@ -134,6 +134,9 @@ format_job_cmp(struct format_job *fj1, struct format_job *fj2)
 #define FORMAT_CYCLE 0x200000000ULL
 #define FORMAT_PROGRAM_STATUS 0x400000000ULL
 
+/* Tree flags for text which will be drawn, where # starts markup. */
+#define FORMAT_ESCAPE (FORMAT_STATUS|FORMAT_DRAW)
+
 /* Limit on recursion. */
 #define FORMAT_LOOP_LIMIT 100
 
@@ -2793,7 +2796,7 @@ format_cb_program_message(struct format_tree *ft)
 	psr = format_program_status_record(ft);
 	if (psr == NULL || psr->msg == NULL)
 		return (NULL);
-	return (program_status_text(psr->msg, ft->flags & FORMAT_STATUS));
+	return (program_status_text(psr->msg, ft->flags & FORMAT_ESCAPE));
 }
 
 /* Callback for program_name. */
@@ -2842,7 +2845,7 @@ format_cb_program_title(struct format_tree *ft)
 	psr = format_program_status_record(ft);
 	if (psr == NULL || psr->title == NULL)
 		return (NULL);
-	return (program_status_text(psr->title, ft->flags & FORMAT_STATUS));
+	return (program_status_text(psr->title, ft->flags & FORMAT_ESCAPE));
 }
 
 /* Callback for pane_right. */
@@ -7253,6 +7256,13 @@ format_single(struct cmdq_item *item, const char *fmt, struct client *c,
 	expanded = format_expand(ft, fmt);
 	format_free(ft);
 	return (expanded);
+}
+
+/* Add flags to a tree. */
+void
+format_add_flags(struct format_tree *ft, int flags)
+{
+	ft->flags |= flags;
 }
 
 /* Expand a single string using state. */

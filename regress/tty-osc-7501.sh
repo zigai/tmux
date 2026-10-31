@@ -26,6 +26,11 @@ fail()
 	exit 1
 }
 
+b64()
+{
+	printf '%s' "$1" | base64 | tr -d '\n'
+}
+
 repeat()
 {
 	printf "%$2s" '' | tr ' ' "$1"
@@ -165,14 +170,29 @@ expect "state=clear:id=$n3"
 $TMUX switch-client -t s2 || exit 1
 expect 'state=clear' "state=blocked:id=$n2:kind=question:app=other"
 
-# Text in a status line is not treated as markup.
-emit "$p2" 'state=blocked:kind=question:app=other:msg=I1tmZz1yZWRdbWFya3Vw'
-expect "state=blocked:id=$n2:kind=question:app=other:msg=I1tmZz1yZWRdbWFya3Vw"
+# Text that is drawn, in the status line, a message or a mode, is not
+# treated as markup.
+msg=$(b64 '#[fg=red]markup')
+title=$(b64 '#[fg=blue]title')
+emit "$p2" "state=blocked:kind=question:app=other:title=$title:msg=$msg"
+expect "state=blocked:id=$n2:kind=question:app=other:title=$title:msg=$msg"
 $TMUX set-option -g status on || exit 1
-$TMUX set-option -g status-left-length 40 || exit 1
-$TMUX set-option -g status-left '<#{program_message}>' || exit 1
-wait_for_text '<#[fg=red]markup>' $TMUX2 capture-pane -p -t outer || exit 1
+$TMUX set-option -g status-left-length 60 || exit 1
+$TMUX set-option -g status-left '<#{program_message}|#{program_title}>' ||
+    exit 1
+wait_for_text '<#[fg=red]markup|#[fg=blue]title>' \
+    $TMUX2 capture-pane -p -t outer || exit 1
+$TMUX set-option -g status-left '' || exit 1
+$TMUX display-message -d 0 '[#{program_message}|#{program_title}]' || exit 1
+wait_for_text '[#[fg=red]markup|#[fg=blue]title]' \
+    $TMUX2 capture-pane -p -t outer || exit 1
+$TMUX display-message -d 1 '' || exit 1
 $TMUX set-option -g status off || exit 1
+$TMUX choose-tree -t "$p2" -F '{#{program_message}|#{program_title}}' ||
+    exit 1
+wait_for_text '{#[fg=red]markup|#[fg=blue]title}' \
+    $TMUX2 capture-pane -p -t outer || exit 1
+$TMUX copy-mode -q -t "$p2" || exit 1
 
 # A key typed in a pane removes its done and error records only. Records in
 # other panes stay.

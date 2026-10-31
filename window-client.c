@@ -223,6 +223,7 @@ window_client_build(void *modedata, struct sort_criteria *sort_crit,
 	struct window_client_itemdata	*item;
 	u_int				 i, n;
 	struct client			*c, **l;
+	struct format_tree		*ft;
 	char				*text, *cp;
 
 	for (i = 0; i < data->item_size; i++)
@@ -257,7 +258,10 @@ window_client_build(void *modedata, struct sort_criteria *sort_crit,
 			free(cp);
 		}
 
-		text = format_single(NULL, data->format, c, NULL, NULL, NULL);
+		ft = format_create_defaults(NULL, c, NULL, NULL, NULL);
+		format_add_flags(ft, FORMAT_DRAW);
+		text = format_expand(ft, data->format);
+		format_free(ft);
 		mode_tree_add(data->data, NULL, item, (uint64_t)c, c->name,
 		    text, -1);
 		free(text);
@@ -278,6 +282,7 @@ window_client_draw_info(__unused void *modedata, void *itemdata,
 	char				*expanded;
 
 	ft = format_create_defaults(NULL, c, NULL, NULL, NULL);
+	format_add_flags(ft, FORMAT_DRAW);
 	if (c->tty.term->flags & TERM_INVALIDMS)
 		format_add(ft, "clipboard_invalid", "1");
 	else
