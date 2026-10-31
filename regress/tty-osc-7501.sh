@@ -195,6 +195,28 @@ $TMUX choose-tree -t "$p2" -F '{#{program_message}|#{program_title}}' ||
 wait_for_text '{#[fg=red]markup|#[fg=blue]title}' \
     $TMUX2 capture-pane -p -t outer || exit 1
 $TMUX copy-mode -q -t "$p2" || exit 1
+$TMUX display-popup -t "$p2" -T '(#{program_message}|#{program_title})' \
+    -w 50 -h 6 'exec sleep 1000' &
+wait_for_text '(#[fg=red]markup|#[fg=blue]title)' \
+    $TMUX2 capture-pane -p -t outer || exit 1
+$TMUX display-popup -C -t "$p2" || exit 1
+wait
+
+# The status line is redrawn at once, before the hook runs.
+$TMUX set-hook -g pane-program-status-changed 'set-option -g @hook 1' ||
+    exit 1
+$TMUX set-option -g status on || exit 1
+$TMUX set-option -g status-left '/#{?@hook,hook,none}:#{program_state}/' ||
+    exit 1
+emit "$p2" 'state=working'
+wait_for_text '/hook:working/' $TMUX2 capture-pane -p -t outer || exit 1
+grep -q '/none:working/' "$DIR/out" ||
+    fail 'the status line waited for the hook'
+$TMUX set-hook -gu pane-program-status-changed || exit 1
+$TMUX set-option -g status off || exit 1
+expect "state=working:id=$n2"
+emit "$p2" "state=blocked:kind=question:app=other:title=$title:msg=$msg"
+expect "state=blocked:id=$n2:kind=question:app=other:title=$title:msg=$msg"
 
 # A key typed in a pane removes its done and error records only. Records in
 # other panes stay.

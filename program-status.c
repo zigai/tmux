@@ -409,6 +409,27 @@ program_status_build_forward(struct window_pane *wp,
 		free(id);
 }
 
+static int
+program_status_equal(const char *s1, const char *s2)
+{
+	if (s1 == NULL || s2 == NULL)
+		return (s1 == s2);
+	return (strcmp(s1, s2) == 0);
+}
+
+/* Do two records with the same id have the same contents? */
+static int
+program_status_same(struct program_status_record *psr1,
+    struct program_status_record *psr2)
+{
+	return (psr1->state == psr2->state &&
+	    psr1->kind == psr2->kind &&
+	    psr1->progress == psr2->progress &&
+	    program_status_equal(psr1->app, psr2->app) &&
+	    program_status_equal(psr1->title, psr2->title) &&
+	    program_status_equal(psr1->msg, psr2->msg));
+}
+
 /* Find a record. */
 static struct program_status_record *
 program_status_find(struct program_status *ps, const char *id)
@@ -461,7 +482,7 @@ program_status_beneath(const char *id, const char *parent)
 	    (id[len] == '\0' || id[len] == '/'));
 }
 
-/* Timer to redraw and run the hook after records have changed. */
+/* Timer to run the hook after records have changed. */
 static void
 program_status_changed_callback(__unused int fd, __unused short events,
     void *data)
@@ -470,27 +491,28 @@ program_status_changed_callback(__unused int fd, __unused short events,
 	struct window_pane	*wp = ps->wp;
 
 	ps->pending = 0;
-	server_redraw_window_borders(wp->window);
-	server_status_window(wp->window);
 	events_fire_pane("pane-program-status-changed", wp);
 	program_status_check_empty(wp);
 }
 
 /*
- * Records of a pane have changed. Redraws and the hook wait so a burst of
- * reports runs them once.
+ * Records of a pane have changed. The hook waits so a burst of reports runs
+ * it once.
  */
 static void
 program_status_changed(struct window_pane *wp)
 {
 	struct program_status	*ps = wp->program_status;
-	struct timeval		 tv = { .tv_usec =
-				     PROGRAM_STATUS_DELAY * 1000L };
+	struct timeval		 tv;
 
 	log_debug("%s: %%%u", __func__, wp->id);
 
+	server_redraw_window_borders(wp->window);
+	server_status_window(wp->window);
 	if (!ps->pending) {
 		ps->pending = 1;
+		tv.tv_sec = 0;
+		tv.tv_usec = PROGRAM_STATUS_DELAY * 1000L;
 		evtimer_add(&ps->timer, &tv);
 	}
 	program_status_forward_all();
@@ -559,7 +581,6 @@ program_status_apply(struct window_pane *wp, struct program_status_report *r,
 	r->title = NULL;
 	new->msg = r->msg;
 	r->msg = NULL;
-	program_status_build_forward(wp, new);
 
 	if (ps == NULL) {
 		ps = wp->program_status = xcalloc(1, sizeof *ps);
@@ -570,7 +591,7 @@ program_status_apply(struct window_pane *wp, struct program_status_report *r,
 
 	psr = program_status_find(ps, id);
 	if (psr != NULL) {
-		changed = (strcmp(psr->forward, new->forward) != 0);
+		changed = !program_status_same(psr, new);
 		program_status_remove(ps, psr);
 	} else if (ps->count == PROGRAM_STATUS_MAX_RECORDS) {
 		oldest = NULL;
@@ -956,10 +977,16 @@ program_status_forward_seen(struct program_status_forward *psf)
 	}
 	n = j;
 
-	if (n == psf->nseen &&
-	    (n == 0 || memcmp(seen, psf->seen, n * sizeof *seen) == 0)) {
-		free(seen);
-		return (1);
+	if (n == psf->nseen) {
+		for (i = 0; i < n; i++) {
+			if (seen[i].id != psf->seen[i].id ||
+			    seen[i].generation != psf->seen[i].generation)
+				break;
+		}
+		if (i == n) {
+			free(seen);
+			return (1);
+		}
 	}
 	free(psf->seen);
 	psf->seen = seen;
@@ -984,6 +1011,8 @@ program_status_forward_want(struct program_status_forward *psf,
 		wp = window_pane_find_by_id(psf->seen[i].id);
 		RB_FOREACH(psr, program_status_records,
 		    &wp->program_status->records) {
+			if (psr->forward == NULL)
+				program_status_build_forward(wp, psr);
 			if (psr->forward_id == NULL)
 				continue;
 			list = xreallocarray(list, n + 1, sizeof *list);
@@ -1076,12 +1105,13 @@ program_status_forward_callback(__unused int fd, __unused short events,
 {
 	struct program_status_forward	*psf = data;
 	struct client			*c = psf->c;
-	struct timeval			 tv = { .tv_usec =
-					     PROGRAM_STATUS_DELAY * 1000L };
+	struct timeval			 tv;
 
 	if (!program_status_forward_ready(c))
 		return;
 	if (c->tty.flags & TTY_BLOCK) {
+		tv.tv_sec = 0;
+		tv.tv_usec = PROGRAM_STATUS_DELAY * 1000L;
 		evtimer_add(&psf->timer, &tv);
 		return;
 	}
@@ -1093,8 +1123,7 @@ void
 program_status_forward_client(struct client *c)
 {
 	struct program_status_forward	*psf = c->tty.program_status;
-	struct timeval			 tv = { .tv_usec =
-					     PROGRAM_STATUS_DELAY * 1000L };
+	struct timeval			 tv;
 
 	if (!program_status_forward_ready(c))
 		return;
@@ -1104,8 +1133,11 @@ program_status_forward_client(struct client *c)
 		RB_INIT(&psf->sent);
 		evtimer_set(&psf->timer, program_status_forward_callback, psf);
 	}
-	if (!evtimer_pending(&psf->timer, NULL))
+	if (!evtimer_pending(&psf->timer, NULL)) {
+		tv.tv_sec = 0;
+		tv.tv_usec = PROGRAM_STATUS_DELAY * 1000L;
 		evtimer_add(&psf->timer, &tv);
+	}
 }
 
 /* Forward records to every client terminal soon. */
