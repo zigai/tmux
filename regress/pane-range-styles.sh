@@ -137,6 +137,10 @@ stream()
 {
 	output '\033[3;1H\033[31mred\033[0m text\r\n\033[1mbold\033[0m\033[K\r\nmore\033[5;3Hx'
 }
+stream_inside()
+{
+	output '\033[1;1Hh\033[1;8Ho'
+}
 
 trap cleanup EXIT HUP INT TERM
 $TMUX new-session -d -s styles -x 30 -y 6 'sleep 10000' || fail start
@@ -350,6 +354,8 @@ record empty true
     fail "empty recording: $(cat -v "$tmp/record-empty")"
 record plain-refresh refresh
 record plain-stream stream
+fresh plain-inside
+record plain-inside stream_inside
 fresh killed
 a=$(new -r 0:0-0:4)
 $TMUX kill-range -t "$pane" "$a" || fail kill
@@ -366,5 +372,11 @@ fresh styled
 a=$(new -r 0:0-0:4)
 record styled-stream stream
 same_bytes plain-stream styled-stream 'output beside a range differs'
+fresh unstyled
+$TMUX setw pane-range-style default || fail 'unstyled option'
+a=$(new -r 0:0-0:4)
+b=$(new -m world)
+record unstyled-inside stream_inside
+same_bytes plain-inside unstyled-inside 'output inside unstyled ranges differs'
 
 exit 0

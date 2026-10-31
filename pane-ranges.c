@@ -2361,19 +2361,52 @@ pane_ranges_apply_style(const struct grid_cell *sc, struct grid_cell *gc)
 		gc->attr |= sc->attr;
 }
 
+/* Get a range set with its combined style, or NULL if it draws none. */
+static struct pane_range_set *
+pane_ranges_styled_set(struct pane_ranges *prs, u_int number)
+{
+	struct pane_range_set	*set;
+
+	if (number == 0 || number > prs->nsets)
+		return (NULL);
+	set = prs->sets[number - 1];
+	if (set->style_generation != prs->generation)
+		pane_ranges_set_style(prs, set);
+	if (!set->styled)
+		return (NULL);
+	return (set);
+}
+
 /* Apply the style of the grid ranges of a cell to a copy of it. */
 static void
 pane_ranges_draw_set(struct pane_ranges *prs, struct grid_cell *gc)
 {
 	struct pane_range_set	*set;
 
-	if (gc->range == 0 || gc->range > prs->nsets)
-		return;
-	set = prs->sets[gc->range - 1];
-	if (set->style_generation != prs->generation)
-		pane_ranges_set_style(prs, set);
-	if (set->styled)
+	if ((set = pane_ranges_styled_set(prs, gc->range)) != NULL)
 		pane_ranges_apply_style(&set->style, gc);
+}
+
+/* Check if any text range covering a cell of a pane draws a style. */
+static int
+pane_ranges_text_styled(struct pane_ranges *prs, u_int x, u_int y)
+{
+	struct window_pane		*wp = prs->wp;
+	struct pane_range_text_row	*row;
+	struct pane_range		*r;
+	uint64_t			 line;
+	u_int				 i;
+
+	row = pane_ranges_grid_row(wp, wp->base.grid, y, &line);
+	if (row == NULL)
+		return (0);
+	for (i = 0; i < row->n; i++) {
+		r = row->list[i];
+		if (pane_range_text_covers(wp, r, x, line) &&
+		    pane_ranges_styled(pane_range_style(prs, r)))
+			return (1);
+	}
+	return (0);
 }
 
 /*
@@ -2486,14 +2519,14 @@ pane_ranges_copy_cell(struct window_mode_entry *wme, struct grid_cell *gc,
 }
 
 /*
- * Redraw cells just written to the terminal if any of them is in a range, so
- * a cell rewritten without change keeps its range style.
+ * Redraw cells just written to the terminal if any of them is in a range that
+ * draws a style, so a cell rewritten without change keeps its range style.
  */
 int
 pane_ranges_redraw_cells(struct tty *tty, const struct tty_ctx *ctx, u_int n)
 {
+	struct pane_ranges	*prs = ctx->style_ctx.ranges;
 	struct grid		*gd = ctx->s->grid;
-	struct window_pane	*wp = ctx->style_ctx.ranges->wp;
 	struct grid_line	*gl;
 	struct tty_ctx		 rctx;
 	u_int			 x, end, limit;
@@ -2505,13 +2538,13 @@ pane_ranges_redraw_cells(struct tty *tty, const struct tty_ctx *ctx, u_int n)
 		limit = end;
 		if (limit > gl->cellsize)
 			limit = gl->cellsize;
-		for (x = ctx->ocx; !found && x < limit; x++)
-			found = (pane_ranges_cell_set(gl, x) != 0);
+		for (x = ctx->ocx; !found && x < limit; x++) {
+			found = (pane_ranges_styled_set(prs,
+			    pane_ranges_cell_set(gl, x)) != NULL);
+		}
 	}
-	for (x = ctx->ocx; !found && x < end; x++) {
-		found = (pane_ranges_text_cell(wp, gd, x,
-		    gd->hsize + ctx->ocy) != NULL);
-	}
+	for (x = ctx->ocx; !found && x < end; x++)
+		found = pane_ranges_text_styled(prs, x, gd->hsize + ctx->ocy);
 	if (!found)
 		return (0);
 
