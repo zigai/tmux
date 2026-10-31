@@ -3213,6 +3213,7 @@ input_get_fg(struct window_pane *wp)
 	return (c);
 }
 
+/* Set the default foreground colour of a pane. */
 static int
 input_set_fg(struct input_ctx *ictx, int c)
 {
@@ -3224,6 +3225,7 @@ input_set_fg(struct input_ctx *ictx, int c)
 	return (1);
 }
 
+/* Set the default background colour of a pane. */
 static int
 input_set_bg(struct input_ctx *ictx, int c)
 {
@@ -3235,6 +3237,7 @@ input_set_bg(struct input_ctx *ictx, int c)
 	return (1);
 }
 
+/* Get the cursor colour of a screen. */
 static int
 input_get_cursor(struct screen *s)
 {
