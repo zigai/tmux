@@ -116,6 +116,12 @@ struct pane_range_match {
 	int			 clipped;
 };
 
+/* The positioned text ranges on one visible row, oldest first. */
+struct pane_range_text_row {
+	struct pane_range	**list;
+	u_int			  n;
+};
+
 /* Pane and grid state that decides whether a scan is needed. */
 struct pane_ranges_signature {
 	uint64_t		 output;
@@ -154,22 +160,35 @@ struct pane_ranges {
 	int				  index_dirty;
 	struct pane_range_records	  live;
 
+	struct pane_range_list		  text;
 	u_int				  ntext;
 	int				  text_dirty;
+	struct pane_range_text_row	 *text_rows;
+	u_int				  ntext_rows;
+	uint64_t			  text_base;
+	int				  text_rows_dirty;
 	int				  changed;
 	struct pane_ranges_signature	  text_signature;
 	struct pane_range_row		 *rows;
 	u_int				  nrows;
 	u_int				  rows_sx;
 	int				  rows_alternate;
+	uint64_t			  rows_base;
 	char				 *visible;
 	struct pane_range_cell		 *visible_cells;
 	size_t				  visible_len;
 	size_t				  visible_size;
 
+	struct pane_range		**sorted;
+	const char			 *searched;
+	size_t				 *starts;
+	u_int				  nstarts;
+	u_int				  starts_size;
+
 	u_int				  generation;
 	int				  enabled;
 	u_int				  enabled_generation;
+	int				  drawn;
 
 	int				  listed;
 	TAILQ_ENTRY(pane_ranges)	  entry;
@@ -181,7 +200,8 @@ static struct pane_ranges_list pane_ranges_list =
 static u_int pane_range_next_id = 1;
 
 static const char *pane_range_states[] = {
-	"live", "modified", "suspended", "gone", "clipped", "ambiguous", "hidden"
+	"live", "modified", "suspended", "gone", "clipped", "ambiguous",
+	"hidden"
 };
 static const char *pane_range_anchors[] = { "grid", "text" };
 
@@ -379,16 +399,46 @@ pane_ranges_get(struct window_pane *wp)
 	prs->wp = wp;
 	prs->generation = 1;
 	TAILQ_INIT(&prs->list);
+	TAILQ_INIT(&prs->text);
 	RB_INIT(&prs->tree);
 	RB_INIT(&prs->by_ids);
 	return (prs);
 }
 
-/* Redraw a pane with new range styles. */
+/*
+ * Check if any range of a pane may draw a style: a range with its own style,
+ * or a pane-range-style that is not the default.
+ */
+static int
+pane_ranges_may_style(struct pane_ranges *prs)
+{
+	struct window_pane	*wp = prs->wp;
+	struct pane_range	*r;
+	const char		*style;
+
+	if (!options_get_number(wp->options, "pane-ranges"))
+		return (0);
+	style = options_get_string(wp->options, "pane-range-style");
+	if (strcmp(style, "default") != 0)
+		return (1);
+	TAILQ_FOREACH(r, &prs->list, entry) {
+		if (r->style != NULL)
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * Redraw a pane with new range styles, unless no range style has been drawn
+ * since the last redraw and none may be drawn now.
+ */
 static void
 pane_ranges_restyle(struct pane_ranges *prs)
 {
 	prs->generation++;
+	if (!prs->drawn && !pane_ranges_may_style(prs))
+		return;
+	prs->drawn = 0;
 	prs->wp->flags |= (PANE_REDRAW|PANE_STYLECHANGED);
 }
 
@@ -455,6 +505,19 @@ pane_ranges_free_rows(struct pane_ranges *prs)
 	prs->visible_len = prs->visible_size = 0;
 }
 
+/* Free the positioned text ranges of each visible row. */
+static void
+pane_ranges_free_text_rows(struct pane_ranges *prs)
+{
+	u_int	i;
+
+	for (i = 0; i < prs->ntext_rows; i++)
+		free(prs->text_rows[i].list);
+	free(prs->text_rows);
+	prs->text_rows = NULL;
+	prs->ntext_rows = 0;
+}
+
 /* Free the ranges of a screen. */
 void
 pane_ranges_free(struct screen *s)
@@ -473,6 +536,9 @@ pane_ranges_free(struct screen *s)
 		pane_range_free(r);
 	}
 	pane_ranges_free_rows(prs);
+	pane_ranges_free_text_rows(prs);
+	free(prs->sorted);
+	free(prs->starts);
 	for (i = 0; i < prs->nsets; i++) {
 		free(prs->sets[i]->ids);
 		free(prs->sets[i]);
@@ -871,6 +937,13 @@ pane_range_normalize(const char *s)
 	return (out);
 }
 
+/* Get the history line of a visible row. */
+static uint64_t
+pane_ranges_line(struct grid *gd, u_int y)
+{
+	return (gd->scroll_collected + gd->hsize + y);
+}
+
 /* Add a value to a hash. */
 static uint64_t
 pane_ranges_hash(uint64_t hash, u_int value)
@@ -891,7 +964,11 @@ pane_ranges_row_limit(struct grid *gd, struct grid_line *gl)
 	return (limit);
 }
 
-/* Get a hash of the characters of a line. */
+/*
+ * Get a hash of the characters of a line. Only what changes the text is
+ * hashed, not how a cell is stored, so a line hashes the same in the pane and
+ * in a copy of it whose cells carry different ranges.
+ */
 static uint64_t
 pane_ranges_row_hash(struct grid *gd, u_int y)
 {
@@ -899,25 +976,34 @@ pane_ranges_row_hash(struct grid *gd, u_int y)
 	struct grid_cell_entry	*gce;
 	struct grid_extd_entry	*gee;
 	uint64_t		 hash = 14695981039346656037ULL;
-	u_int			 x, limit;
+	utf8_char		 data;
+	u_int			 x, limit, flags, attr;
 
 	limit = pane_ranges_row_limit(gd, gl);
 	hash = pane_ranges_hash(hash, gl->flags & GRID_LINE_WRAPPED);
 	hash = pane_ranges_hash(hash, limit);
 	for (x = 0; x < limit; x++) {
 		gce = &gl->celldata[x];
-		hash = pane_ranges_hash(hash, gce->flags);
 		if (~gce->flags & GRID_FLAG_EXTENDED) {
-			hash = pane_ranges_hash(hash, gce->data.data);
-			hash = pane_ranges_hash(hash,
-			    gce->data.attr & GRID_ATTR_CHARSET);
+			flags = gce->flags;
+			data = utf8_build_one(gce->data.data);
+			attr = gce->data.attr;
 		} else if (gce->offset < gl->extdsize) {
 			gee = &gl->extddata[gce->offset];
-			hash = pane_ranges_hash(hash, gee->data);
-			hash = pane_ranges_hash(hash, gee->flags);
-			hash = pane_ranges_hash(hash,
-			    gee->attr & GRID_ATTR_CHARSET);
+			flags = gee->flags;
+			data = gee->data;
+			attr = gee->attr;
+		} else {
+			flags = 0;
+			data = utf8_build_one(' ');
+			attr = 0;
 		}
+		flags &= (GRID_FLAG_PADDING|GRID_FLAG_TAB);
+		if (flags & GRID_FLAG_PADDING)
+			data = 0;
+		hash = pane_ranges_hash(hash, flags);
+		hash = pane_ranges_hash(hash, data);
+		hash = pane_ranges_hash(hash, attr & GRID_ATTR_CHARSET);
 	}
 	return (hash);
 }
@@ -1008,6 +1094,7 @@ pane_ranges_visible_update(struct pane_ranges *prs)
 		prs->rows_alternate = alternate;
 		changed = 1;
 	}
+	prs->rows_base = pane_ranges_line(gd, 0);
 	for (y = 0; y < gd->sy; y++) {
 		row = &prs->rows[y];
 		hash = pane_ranges_row_hash(gd, gd->hsize + y);
@@ -1082,13 +1169,6 @@ pane_ranges_after(struct pane_ranges *prs, size_t end, const char *after)
 	return (memcmp(prs->visible + end, after, len) == 0);
 }
 
-/* Get the history line of a visible row. */
-static uint64_t
-pane_ranges_line(struct grid *gd, u_int y)
-{
-	return (gd->scroll_collected + gd->hsize + y);
-}
-
 /* Get the distance of a match from the last position of a range. */
 static void
 pane_ranges_distance(struct pane_ranges *prs, struct pane_range *r,
@@ -1136,7 +1216,38 @@ pane_ranges_consider(struct pane_ranges *prs, struct pane_range *r,
 		*tie = 1;
 }
 
-/* Find the text of a range clipped by the top or bottom of the screen. */
+/* Check if a range was last shown touching the top or bottom of the screen. */
+static int
+pane_ranges_at_edge(struct pane_ranges *prs, struct pane_range *r, int top)
+{
+	struct grid	*gd = prs->wp->base.grid;
+
+	if (!r->positioned || r->visible_y == -1)
+		return (0);
+	if (top)
+		return (r->visible_y == 0);
+	return (r->visible_y + (r->span.end_line - r->span.start_line) ==
+	    gd->sy - 1);
+}
+
+/*
+ * Check if part of the text of a range may be shown clipped by the top or
+ * bottom of the screen: it must have more than one word, or the range must
+ * have been last shown touching that edge.
+ */
+static int
+pane_ranges_clipped_part(struct pane_ranges *prs, struct pane_range *r,
+    const char *part, size_t n, int top)
+{
+	if (memchr(part, ' ', n) != NULL)
+		return (1);
+	return (pane_ranges_at_edge(prs, r, top));
+}
+
+/*
+ * Find the text of a range clipped by the top or bottom of the screen. The
+ * part that is shown must end or start at a word boundary on the screen.
+ */
 static void
 pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
     struct pane_range_match *best, u_int *found, int *tie)
@@ -1157,7 +1268,10 @@ pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
 				continue;
 			n = len - i - 1;
 			if (n > vlen ||
+			    (n != vlen && prs->visible[n] != ' ') ||
 			    memcmp(prs->visible, match + i + 1, n) != 0 ||
+			    !pane_ranges_clipped_part(prs, r, match + i + 1, n,
+			    1) ||
 			    !pane_ranges_after(prs, n, r->after))
 				continue;
 			m.start = 0;
@@ -1173,7 +1287,9 @@ pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
 				continue;
 			n = i - 1;
 			if (n > vlen ||
+			    (n != vlen && prs->visible[vlen - n - 1] != ' ') ||
 			    memcmp(prs->visible + vlen - n, match, n) != 0 ||
+			    !pane_ranges_clipped_part(prs, r, match, n, 0) ||
 			    !pane_ranges_before(prs, vlen - n, r->before))
 				continue;
 			m.start = vlen - n;
@@ -1181,6 +1297,38 @@ pane_ranges_find_clipped(struct pane_ranges *prs, struct pane_range *r,
 			pane_ranges_consider(prs, r, &m, best, found, tie);
 			break;
 		}
+	}
+}
+
+/*
+ * Find where text is found in the visible text, unless it was the text last
+ * searched for.
+ */
+static void
+pane_ranges_search(struct pane_ranges *prs, const char *match)
+{
+	const char	*p, *found_at, *last;
+	size_t		 len = strlen(match);
+
+	if (prs->searched != NULL && strcmp(prs->searched, match) == 0)
+		return;
+	prs->searched = match;
+	prs->nstarts = 0;
+
+	p = prs->visible;
+	last = prs->visible + prs->visible_len;
+	while (p != NULL && p < last) {
+		found_at = memmem(p, last - p, match, len);
+		if (found_at == NULL)
+			break;
+		if (prs->nstarts == prs->starts_size) {
+			prs->starts_size = prs->starts_size == 0 ? 16 :
+			    prs->starts_size * 2;
+			prs->starts = xreallocarray(prs->starts,
+			    prs->starts_size, sizeof *prs->starts);
+		}
+		prs->starts[prs->nstarts++] = found_at - prs->visible;
+		p = found_at + 1;
 	}
 }
 
@@ -1193,9 +1341,8 @@ pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
 	struct grid_cell	 gc;
 	struct pane_range_match	 m, best;
 	struct pane_range_cell	*start, *end;
-	const char		*p, *found_at, *last;
 	size_t			 len = strlen(r->match);
-	u_int			 found = 0, x;
+	u_int			 found = 0, x, i;
 	int			 tie = 0;
 
 	if (r->alternate != SCREEN_IS_ALTERNATE(&wp->base)) {
@@ -1206,18 +1353,13 @@ pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
 
 	memset(&best, 0, sizeof best);
 	m.clipped = 0;
-	p = prs->visible;
-	last = prs->visible + prs->visible_len;
-	while (p != NULL && p < last) {
-		found_at = memmem(p, last - p, r->match, len);
-		if (found_at == NULL)
-			break;
-		m.start = found_at - prs->visible;
+	pane_ranges_search(prs, r->match);
+	for (i = 0; i < prs->nstarts; i++) {
+		m.start = prs->starts[i];
 		m.end = m.start + len;
 		if (pane_ranges_before(prs, m.start, r->before) &&
 		    pane_ranges_after(prs, m.end, r->after))
 			pane_ranges_consider(prs, r, &m, &best, &found, &tie);
-		p = found_at + 1;
 	}
 	if (found == 0)
 		pane_ranges_find_clipped(prs, r, &best, &found, &tie);
@@ -1251,9 +1393,20 @@ pane_ranges_resolve(struct pane_ranges *prs, struct pane_range *r)
 	r->last_x = r->span.start_x;
 }
 
+/* Compare two text ranges by the text they match. */
+static int
+pane_ranges_match_cmp(const void *a, const void *b)
+{
+	const struct pane_range	*r1 = *(struct pane_range *const *)a;
+	const struct pane_range	*r2 = *(struct pane_range *const *)b;
+
+	return (strcmp(r1->match, r2->match));
+}
+
 /*
  * Resolve the text ranges of a pane if the visible text has changed and no
- * synchronized update is in progress. Return whether any state or position
+ * synchronized update is in progress. The ranges are sorted by their text so
+ * each text is searched for once. Return whether any state or position
  * changed.
  */
 static int
@@ -1264,16 +1417,24 @@ pane_ranges_resolve_text(struct pane_ranges *prs)
 	struct pane_range_span	 span;
 	enum pane_range_state	 state;
 	int			 positioned, changed = 0;
+	u_int			 n = 0, i;
 
 	if (wp->base.mode & MODE_SYNC)
 		return (0);
 	if (!pane_ranges_visible_update(prs) && !prs->text_dirty)
 		return (0);
 	prs->text_dirty = 0;
+	prs->text_rows_dirty = 1;
 
-	TAILQ_FOREACH(r, &prs->list, entry) {
-		if (r->anchor != PANE_RANGE_TEXT)
-			continue;
+	prs->sorted = xreallocarray(prs->sorted, prs->ntext,
+	    sizeof *prs->sorted);
+	TAILQ_FOREACH(r, &prs->text, text_entry)
+		prs->sorted[n++] = r;
+	qsort(prs->sorted, n, sizeof *prs->sorted, pane_ranges_match_cmp);
+
+	prs->searched = NULL;
+	for (i = 0; i < n; i++) {
+		r = prs->sorted[i];
 		state = r->state;
 		positioned = r->positioned;
 		span = r->span;
@@ -1287,6 +1448,7 @@ pane_ranges_resolve_text(struct pane_ranges *prs)
 		    span.end_x != r->span.end_x))
 			changed = 1;
 	}
+	prs->searched = NULL;
 	return (changed);
 }
 
@@ -1661,7 +1823,6 @@ pane_range_apply(struct pane_ranges *prs, struct pane_range *r,
 	r->positioned = 1;
 	r->span = found;
 	r->visible_y = visible_y;
-	pane_ranges_restyle(prs);
 	return (1);
 }
 
@@ -1705,6 +1866,7 @@ pane_range_set_text(struct pane_ranges *prs, struct pane_range *r,
 	r->positioned = 0;
 	r->visible_y = -1;
 	prs->text_dirty = 1;
+	prs->text_rows_dirty = 1;
 	return (1);
 }
 
@@ -1776,10 +1938,14 @@ pane_range_create(struct window_pane *wp, const struct pane_range_span *span,
 	RB_INSERT(pane_range_tree, &prs->tree, r);
 	prs->count++;
 	if (anchor == PANE_RANGE_TEXT) {
+		TAILQ_INSERT_TAIL(&prs->text, r, text_entry);
 		prs->ntext++;
 		pane_ranges_resolve_now(prs);
-	} else if (prs->count - prs->ntext == 1)
-		pane_ranges_signature(wp, &prs->signature);
+	} else {
+		if (prs->count - prs->ntext == 1)
+			pane_ranges_signature(wp, &prs->signature);
+		pane_ranges_restyle(prs);
+	}
 	pane_ranges_list_add(prs);
 	return (r);
 }
@@ -1805,7 +1971,10 @@ pane_range_move(struct window_pane *wp, struct pane_range *r,
 		return (0);
 	}
 	pane_ranges_untag(prs, &r->id, 1);
-	return (pane_range_apply(prs, r, span, cause));
+	if (!pane_range_apply(prs, r, span, cause))
+		return (0);
+	pane_ranges_restyle(prs);
+	return (1);
 }
 
 /* Change the text before or after a text range, if not NULL. */
@@ -1830,8 +1999,11 @@ pane_range_remove(struct pane_ranges *prs, struct pane_range *r)
 {
 	TAILQ_REMOVE(&prs->list, r, entry);
 	RB_REMOVE(pane_range_tree, &prs->tree, r);
-	if (r->anchor == PANE_RANGE_TEXT)
+	if (r->anchor == PANE_RANGE_TEXT) {
+		TAILQ_REMOVE(&prs->text, r, text_entry);
 		prs->ntext--;
+		prs->text_rows_dirty = 1;
+	}
 	pane_range_free(r);
 
 	if (--prs->count == 0 && prs->listed) {
@@ -1841,6 +2013,7 @@ pane_range_remove(struct pane_ranges *prs, struct pane_range *r)
 		memset(&prs->index, 0, sizeof prs->index);
 		prs->index_dirty = 1;
 		pane_ranges_free_rows(prs);
+		pane_ranges_free_text_rows(prs);
 	}
 }
 
@@ -1981,35 +2154,56 @@ pane_range_style(struct pane_ranges *prs, struct pane_range *r)
 	return (&r->style_cell);
 }
 
+/* Combine the style of a range with the styles of older ranges. */
+static void
+pane_ranges_combine(struct pane_ranges *prs, struct pane_range *r,
+    struct grid_cell *sc)
+{
+	const struct grid_cell	*gc = pane_range_style(prs, r);
+
+	if (gc->fg != 8)
+		sc->fg = gc->fg;
+	if (gc->bg != 8)
+		sc->bg = gc->bg;
+	if (gc->us != 8)
+		sc->us = gc->us;
+	if (gc->attr & GRID_ATTR_NOATTR)
+		sc->attr = gc->attr;
+	else
+		sc->attr |= gc->attr;
+}
+
+/* Check if a combined style changes anything. */
+static int
+pane_ranges_styled(const struct grid_cell *sc)
+{
+	return (sc->fg != 8 || sc->bg != 8 || sc->us != 8 || sc->attr != 0);
+}
+
+/* Get a range by ID. */
+static struct pane_range *
+pane_ranges_find_id(struct pane_ranges *prs, u_int id)
+{
+	struct pane_range	find;
+
+	find.id = id;
+	return (RB_FIND(pane_range_tree, &prs->tree, &find));
+}
+
 /* Combine the styles of the ranges in a set, newest last. */
 static void
 pane_ranges_set_style(struct pane_ranges *prs, struct pane_range_set *set)
 {
 	struct grid_cell	*sc = &set->style;
-	const struct grid_cell	*gc;
-	struct pane_range	*r, find;
+	struct pane_range	*r;
 	u_int			 i;
 
 	memcpy(sc, &grid_default_cell, sizeof *sc);
 	for (i = 0; i < set->count; i++) {
-		find.id = set->ids[i];
-		r = RB_FIND(pane_range_tree, &prs->tree, &find);
-		if (r == NULL)
-			continue;
-		gc = pane_range_style(prs, r);
-		if (gc->fg != 8)
-			sc->fg = gc->fg;
-		if (gc->bg != 8)
-			sc->bg = gc->bg;
-		if (gc->us != 8)
-			sc->us = gc->us;
-		if (gc->attr & GRID_ATTR_NOATTR)
-			sc->attr = gc->attr;
-		else
-			sc->attr |= gc->attr;
+		if ((r = pane_ranges_find_id(prs, set->ids[i])) != NULL)
+			pane_ranges_combine(prs, r, sc);
 	}
-	set->styled = (sc->fg != 8 || sc->bg != 8 || sc->us != 8 ||
-	    sc->attr != 0);
+	set->styled = pane_ranges_styled(sc);
 	set->style_generation = prs->generation;
 }
 
@@ -2033,21 +2227,21 @@ pane_ranges_drawing(struct window_pane *wp, struct screen *s)
 	return (prs);
 }
 
-/* Check if a text range is shown at a visible position of its pane. */
+/* Check if a text range is shown where its text was last found. */
+static int
+pane_range_text_shown(struct pane_range *r)
+{
+	if (!r->positioned)
+		return (0);
+	return (r->state == PANE_RANGE_LIVE || r->state == PANE_RANGE_CLIPPED);
+}
+
+/* Check if a text range shown on a row covers a position. */
 static int
 pane_range_text_covers(struct window_pane *wp, struct pane_range *r, u_int x,
-    u_int y)
+    uint64_t line)
 {
-	uint64_t	line;
-
-	if (r->anchor != PANE_RANGE_TEXT || !r->positioned)
-		return (0);
-	if (r->state != PANE_RANGE_LIVE && r->state != PANE_RANGE_CLIPPED)
-		return (0);
 	if (r->alternate != SCREEN_IS_ALTERNATE(&wp->base))
-		return (0);
-	line = pane_ranges_line(wp->base.grid, y);
-	if (line < r->span.start_line || line > r->span.end_line)
 		return (0);
 	if (line == r->span.start_line && x < r->span.start_x)
 		return (0);
@@ -2056,20 +2250,133 @@ pane_range_text_covers(struct window_pane *wp, struct pane_range *r, u_int x,
 	return (1);
 }
 
-/* Get the newest text range shown at a visible position of a pane. */
-struct pane_range *
-pane_ranges_text_at(struct window_pane *wp, u_int x, u_int y)
+/* Build the lists of positioned text ranges on each visible row. */
+static void
+pane_ranges_build_text_rows(struct pane_ranges *prs)
 {
-	struct pane_ranges	*prs = wp->base.ranges;
-	struct pane_range	*r;
+	struct window_pane		*wp = prs->wp;
+	struct grid			*gd = wp->base.grid;
+	struct pane_range		*r;
+	struct pane_range_text_row	*row;
+	uint64_t			 line, first, last;
+
+	pane_ranges_free_text_rows(prs);
+	prs->text_rows_dirty = 0;
+	prs->text_base = pane_ranges_line(gd, 0);
+
+	TAILQ_FOREACH(r, &prs->text, text_entry) {
+		if (!pane_range_text_shown(r))
+			continue;
+		first = r->span.start_line;
+		if (first < prs->text_base)
+			first = prs->text_base;
+		last = r->span.end_line;
+		if (last >= prs->text_base + gd->sy)
+			last = prs->text_base + gd->sy - 1;
+		if (first > last)
+			continue;
+		if (prs->text_rows == NULL) {
+			prs->text_rows = xcalloc(gd->sy,
+			    sizeof *prs->text_rows);
+			prs->ntext_rows = gd->sy;
+		}
+		for (line = first; line <= last; line++) {
+			row = &prs->text_rows[line - prs->text_base];
+			row->list = xreallocarray(row->list, row->n + 1,
+			    sizeof *row->list);
+			row->list[row->n++] = r;
+		}
+	}
+}
+
+/* Get the positioned text ranges on a line of a pane. */
+static struct pane_range_text_row *
+pane_ranges_text_row(struct pane_ranges *prs, uint64_t line)
+{
+	struct pane_range_text_row	*row;
+
+	if (prs->ntext == 0)
+		return (NULL);
+	if (prs->text_rows_dirty)
+		pane_ranges_build_text_rows(prs);
+	if (line < prs->text_base || line - prs->text_base >= prs->ntext_rows)
+		return (NULL);
+	row = &prs->text_rows[line - prs->text_base];
+	if (row->n == 0)
+		return (NULL);
+	return (row);
+}
+
+/*
+ * Get the positioned text ranges on a line of a grid holding the cells of a
+ * pane. This is the pane's own grid, or the copy mode copy of it if that line
+ * shows the same text as the visible row the ranges were found on.
+ */
+static struct pane_range_text_row *
+pane_ranges_grid_row(struct window_pane *wp, struct grid *gd, u_int y,
+    uint64_t *line)
+{
+	struct pane_ranges		*prs = wp->base.ranges;
+	struct pane_range_text_row	*row;
+	struct grid			*copy;
+	uint64_t			 collected;
+	int				 current;
 
 	if (prs == NULL || prs->ntext == 0)
 		return (NULL);
-	TAILQ_FOREACH_REVERSE(r, &prs->list, pane_range_list, entry) {
-		if (pane_range_text_covers(wp, r, x, y))
-			return (r);
+	if (gd == wp->base.grid) {
+		*line = gd->scroll_collected + y;
+		return (pane_ranges_text_row(prs, *line));
+	}
+
+	copy = window_copy_get_backing(wp, &collected, &current);
+	if (copy != gd || !current || gd->sx != prs->rows_sx)
+		return (NULL);
+	*line = collected + y;
+	if ((row = pane_ranges_text_row(prs, *line)) == NULL)
+		return (NULL);
+	if (*line < prs->rows_base || *line - prs->rows_base >= prs->nrows)
+		return (NULL);
+	if (pane_ranges_row_hash(gd, y) !=
+	    prs->rows[*line - prs->rows_base].hash)
+		return (NULL);
+	return (row);
+}
+
+/* Get the newest text range shown at a cell of a grid holding pane cells. */
+struct pane_range *
+pane_ranges_text_cell(struct window_pane *wp, struct grid *gd, u_int x,
+    u_int y)
+{
+	struct pane_range_text_row	*row;
+	uint64_t			 line;
+	u_int				 i;
+
+	if ((row = pane_ranges_grid_row(wp, gd, y, &line)) == NULL)
+		return (NULL);
+	for (i = row->n; i > 0; i--) {
+		if (pane_range_text_covers(wp, row->list[i - 1], x, line))
+			return (row->list[i - 1]);
 	}
 	return (NULL);
+}
+
+/*
+ * Get the text ranges shown on a line of a grid holding pane cells, oldest
+ * first, and the pane line it shows.
+ */
+struct pane_range **
+pane_ranges_text_line(struct window_pane *wp, struct grid *gd, u_int y,
+    uint64_t *line, u_int *n)
+{
+	struct pane_range_text_row	*row;
+
+	if ((row = pane_ranges_grid_row(wp, gd, y, line)) == NULL) {
+		*n = 0;
+		return (NULL);
+	}
+	*n = row->n;
+	return (row->list);
 }
 
 /* Apply a range style to a copy of a cell. */
@@ -2089,19 +2396,108 @@ pane_ranges_apply_style(const struct grid_cell *sc, struct grid_cell *gc)
 		gc->attr |= sc->attr;
 }
 
+/* Get a range set with its combined style, or NULL if it draws none. */
+static struct pane_range_set *
+pane_ranges_styled_set(struct pane_ranges *prs, u_int number)
+{
+	struct pane_range_set	*set;
+
+	if (number == 0 || number > prs->nsets)
+		return (NULL);
+	set = prs->sets[number - 1];
+	if (set->style_generation != prs->generation)
+		pane_ranges_set_style(prs, set);
+	if (!set->styled)
+		return (NULL);
+	return (set);
+}
+
 /* Apply the style of the grid ranges of a cell to a copy of it. */
 static void
 pane_ranges_draw_set(struct pane_ranges *prs, struct grid_cell *gc)
 {
 	struct pane_range_set	*set;
 
-	if (gc->range == 0 || gc->range > prs->nsets)
-		return;
-	set = prs->sets[gc->range - 1];
-	if (set->style_generation != prs->generation)
-		pane_ranges_set_style(prs, set);
-	if (set->styled)
+	if ((set = pane_ranges_styled_set(prs, gc->range)) != NULL) {
 		pane_ranges_apply_style(&set->style, gc);
+		prs->drawn = 1;
+	}
+}
+
+/* Check if any text range covering a cell of a pane draws a style. */
+static int
+pane_ranges_text_styled(struct pane_ranges *prs, u_int x, u_int y)
+{
+	struct window_pane		*wp = prs->wp;
+	struct pane_range_text_row	*row;
+	struct pane_range		*r;
+	uint64_t			 line;
+	u_int				 i;
+
+	row = pane_ranges_grid_row(wp, wp->base.grid, y, &line);
+	if (row == NULL)
+		return (0);
+	for (i = 0; i < row->n; i++) {
+		r = row->list[i];
+		if (pane_range_text_covers(wp, r, x, line) &&
+		    pane_ranges_styled(pane_range_style(prs, r)))
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * Apply the styles of the grid ranges of a cell and the text ranges on its
+ * line covering it to a copy of the cell, combined in ID order.
+ */
+static void
+pane_ranges_style_cell(struct pane_ranges *prs, struct grid_cell *gc,
+    struct pane_range_text_row *row, u_int x, uint64_t line)
+{
+	struct window_pane	*wp = prs->wp;
+	struct pane_range_set	*set;
+	struct pane_range	*r, *t;
+	struct grid_cell	 sc;
+	u_int			*ids = NULL, nids = 0, i = 0, j;
+
+	for (j = 0; j < row->n; j++) {
+		if (pane_range_text_covers(wp, row->list[j], x, line))
+			break;
+	}
+	if (j == row->n) {
+		pane_ranges_draw_set(prs, gc);
+		return;
+	}
+
+	if (gc->range != 0 && gc->range <= prs->nsets) {
+		set = prs->sets[gc->range - 1];
+		ids = set->ids;
+		nids = set->count;
+	}
+	memcpy(&sc, &grid_default_cell, sizeof sc);
+	while (i < nids || j < row->n) {
+		t = NULL;
+		if (j < row->n) {
+			t = row->list[j];
+			if (!pane_range_text_covers(wp, t, x, line)) {
+				j++;
+				continue;
+			}
+		}
+		if (i < nids && (t == NULL || ids[i] < t->id)) {
+			r = pane_ranges_find_id(prs, ids[i++]);
+			if (r == NULL)
+				continue;
+		} else {
+			r = t;
+			j++;
+		}
+		pane_ranges_combine(prs, r, &sc);
+	}
+	if (pane_ranges_styled(&sc)) {
+		pane_ranges_apply_style(&sc, gc);
+		prs->drawn = 1;
+	}
 }
 
 /*
@@ -2112,41 +2508,64 @@ void
 pane_ranges_draw_cell(struct pane_ranges *prs, struct grid_cell *gc, u_int x,
     u_int y)
 {
-	struct pane_range	*r;
+	struct pane_range_text_row	*row;
+	uint64_t			 line;
 
-	pane_ranges_draw_set(prs, gc);
-	if ((r = pane_ranges_text_at(prs->wp, x, y)) != NULL)
-		pane_ranges_apply_style(pane_range_style(prs, r), gc);
+	line = pane_ranges_line(prs->wp->base.grid, y);
+	if ((row = pane_ranges_text_row(prs, line)) == NULL)
+		pane_ranges_draw_set(prs, gc);
+	else
+		pane_ranges_style_cell(prs, gc, row, x, line);
+}
+
+/*
+ * Check if text ranges may be drawn on a line of the grid of a mode showing a
+ * copy of its pane's cells.
+ */
+int
+pane_ranges_copy_line(struct window_mode_entry *wme, struct grid *gd, u_int y,
+    uint64_t *line)
+{
+	if (wme->swp != wme->wp ||
+	    pane_ranges_drawing(wme->wp, &wme->wp->base) == NULL)
+		return (0);
+	return (pane_ranges_grid_row(wme->wp, gd, y, line) != NULL);
 }
 
 /*
  * Apply the style of the ranges of a cell copied from a pane into a mode
- * screen and remove the ranges from it. Cells copied from another pane are
- * not kept in step with its ranges, and that pane may be gone, so only the
- * ranges are removed.
+ * screen and remove the ranges from it. The line is given if text ranges may
+ * be shown on it. Cells copied from another pane are not kept in step with
+ * its ranges, and that pane may be gone, so only the ranges are removed.
  */
 void
-pane_ranges_copy_cell(struct window_mode_entry *wme, struct grid_cell *gc)
+pane_ranges_copy_cell(struct window_mode_entry *wme, struct grid_cell *gc,
+    u_int x, const uint64_t *line)
 {
-	struct pane_ranges	*prs;
+	struct pane_ranges		*prs;
+	struct pane_range_text_row	*row = NULL;
 
 	if (wme->swp == wme->wp) {
 		prs = pane_ranges_drawing(wme->wp, &wme->wp->base);
-		if (prs != NULL)
+		if (prs != NULL && line != NULL)
+			row = pane_ranges_text_row(prs, *line);
+		if (row != NULL)
+			pane_ranges_style_cell(prs, gc, row, x, *line);
+		else if (prs != NULL)
 			pane_ranges_draw_set(prs, gc);
 	}
 	gc->range = 0;
 }
 
 /*
- * Redraw cells just written to the terminal if any of them is in a range, so
- * a cell rewritten without change keeps its range style.
+ * Redraw cells just written to the terminal if any of them is in a range that
+ * draws a style, so a cell rewritten without change keeps its range style.
  */
 int
 pane_ranges_redraw_cells(struct tty *tty, const struct tty_ctx *ctx, u_int n)
 {
+	struct pane_ranges	*prs = ctx->style_ctx.ranges;
 	struct grid		*gd = ctx->s->grid;
-	struct window_pane	*wp = ctx->style_ctx.ranges->wp;
 	struct grid_line	*gl;
 	struct tty_ctx		 rctx;
 	u_int			 x, end, limit;
@@ -2158,11 +2577,13 @@ pane_ranges_redraw_cells(struct tty *tty, const struct tty_ctx *ctx, u_int n)
 		limit = end;
 		if (limit > gl->cellsize)
 			limit = gl->cellsize;
-		for (x = ctx->ocx; !found && x < limit; x++)
-			found = (pane_ranges_cell_set(gl, x) != 0);
+		for (x = ctx->ocx; !found && x < limit; x++) {
+			found = (pane_ranges_styled_set(prs,
+			    pane_ranges_cell_set(gl, x)) != NULL);
+		}
 	}
 	for (x = ctx->ocx; !found && x < end; x++)
-		found = (pane_ranges_text_at(wp, x, ctx->ocy) != NULL);
+		found = pane_ranges_text_styled(prs, x, gd->hsize + ctx->ocy);
 	if (!found)
 		return (0);
 

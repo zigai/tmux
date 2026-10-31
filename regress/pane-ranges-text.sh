@@ -16,11 +16,12 @@ mkdir -m 700 "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" \
     "$XDG_RUNTIME_DIR" || { rm -rf "$tmp"; exit 1; }
 export TERM SHELL LC_ALL TMUX_TMPDIR XDG_CONFIG_HOME XDG_CACHE_HOME \
     XDG_DATA_HOME XDG_RUNTIME_DIR
+. ./regress-common.inc
 TMUX="$TEST_TMUX -Lranges-text-$$ -f/dev/null"
 serial=0
 cleanup()
 {
-	$TMUX kill-server >/dev/null 2>&1
+	stop_server $TMUX
 	rm -rf "$tmp"
 }
 fail()
@@ -159,6 +160,37 @@ output '\033[12;1Hhere'
 assert_field "$a" "$span" 'live|10:0-11:3|10'
 output '\033[2J\033[1;20Hwords here'
 assert_field "$a" "$span" 'clipped|0:19-0:28|0'
+
+# Text clipped by the top or bottom of the screen is only matched at a word
+# boundary on the screen, and by a single word only if the range was last
+# shown touching that edge.
+fresh clipped
+output '\033[?1049h\033[5;1Hsee error in a file'
+a=$(new -m 'error in a')
+assert_field "$a" "$span" 'live|4:4-4:13|4'
+output '\033[2J\033[Happle pie\r\nnothing else here'
+assert_field "$a" "$span" 'hidden|:-:|'
+output '\033[2J\033[Ha pie'
+assert_field "$a" "$span" 'hidden|:-:|'
+output '\033[2J\033[Hin apple'
+assert_field "$a" "$span" 'hidden|:-:|'
+output '\033[2J\033[Hin a pie'
+assert_field "$a" "$span" 'clipped|0:0-0:3|0'
+output '\033[2J\033[Herror in\r\na pie'
+assert_field "$a" "$span" 'live|0:0-1:0|0'
+output '\033[S'
+assert_field "$a" "$span" 'clipped|0:0-0:0|0'
+output '\033[2J\033[12;1Hmy terror in'
+assert_field "$a" "$span" 'hidden|:-:|'
+output '\033[2J\033[11;1Hsee error\r\nin a'
+assert_field "$a" "$span" 'live|10:4-11:3|10'
+output '\033[T'
+assert_field "$a" "$span" 'clipped|11:4-11:8|11'
+output '\033[2J\033[Hreadyness check'
+b=$(new -m 'status line ready')
+assert_field "$b" "$span" 'hidden|:-:|'
+output '\033[2J\033[Hready check'
+assert_field "$b" "$span" 'hidden|:-:|'
 
 # Unrelated changes raise no event.
 count_events

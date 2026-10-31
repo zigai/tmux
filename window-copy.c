@@ -298,7 +298,7 @@ struct window_copy_mode_data {
 	u_int		 sync_generation;
 
 	int		 viewmode;	/* view mode entered */
-	u_int			 source;
+	u_int		 source;
 
 	u_int		 oy;		/* number of lines scrolled up */
 
@@ -1303,9 +1303,7 @@ window_copy_formats(struct window_mode_entry *wme, struct format_tree *ft)
 	    window_copy_cursor_hyperlink_cb);
 	format_add_cb(ft, "copy_command_state", window_copy_command_state_cb);
 	format_add_cb(ft, "copy_command_status", window_copy_command_status_cb);
-	if (data->viewmode == 0)
-		format_add_cb(ft, "copy_cursor_range_id",
-		    window_copy_cursor_range_cb);
+	format_add_cb(ft, "copy_cursor_range_id", window_copy_cursor_range_cb);
 }
 
 static struct screen *
@@ -5836,12 +5834,17 @@ window_copy_write_one(struct window_mode_entry *wme,
 	struct grid			*gd = data->backing->grid;
 	struct grid_cell		 gc;
 	u_int		 		 fx, i, width;
+	uint64_t			 line;
+	int				 text;
 
+	text = pane_ranges_copy_line(wme, gd, fy, &line);
 	screen_write_cursormove(ctx, px, py, 0);
 	for (fx = 0; fx < nx; fx++) {
 		grid_get_cell(gd, fx, fy, &gc);
-		if (gc.range != 0)
-			pane_ranges_copy_cell(wme, &gc);
+		if (gc.range != 0 || text) {
+			pane_ranges_copy_cell(wme, &gc, fx,
+			    text ? &line : NULL);
+		}
 		if (fx + gc.data.width <= nx) {
 #ifdef ENABLE_IMAGES
 			if (image_grid_area_has_images(gd, fx, fy,

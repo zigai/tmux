@@ -20,13 +20,13 @@ mkdir -m 700 "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" \
     "$XDG_RUNTIME_DIR" || { rm -rf "$tmp"; exit 1; }
 export TERM SHELL LC_ALL TMUX_TMPDIR XDG_CONFIG_HOME XDG_CACHE_HOME \
     XDG_DATA_HOME XDG_RUNTIME_DIR
+. ./regress-common.inc
 TMUX="$TEST_TMUX -Lrange-mouse-$$ -f/dev/null"
 TMUX2="$TEST_TMUX -Lrange-mouse-outer-$$ -f/dev/null"
 serial=0
 cleanup()
 {
-	$TMUX kill-server >/dev/null 2>&1
-	$TMUX2 kill-server >/dev/null 2>&1
+	stop_servers
 	rm -rf "$tmp"
 }
 fail()
@@ -162,9 +162,9 @@ EOF
 fresh sh "$tmp/app.sh"
 wait_format '#{mouse_any_flag}' 1
 : >"$tmp/app.in"
-beta=$(new -n beta -g words -r 0:6-0:9)
-gamma=$(new -n gamma -g other -r 0:11-0:15)
-overlap=$(new -n overlap -r 0:8-0:12)
+beta=$(new -n beta -g words -a text -r 0:6-0:9)
+gamma=$(new -n gamma -g other -a grid -r 0:11-0:15)
+overlap=$(new -n overlap -a grid -r 0:8-0:12)
 click 0 8 1
 wait_app 'E[<0;8;1ME[<0;8;1m' 'unbound range click'
 
@@ -178,6 +178,14 @@ click 0 11 1
 wait_got "$overlap|overlap||1|10" 'overlap click'
 click 0 15 1
 wait_got "$gamma|gamma|other|1|14" 'gamma click'
+
+# Where text and grid ranges overlap, the newest is under the mouse.
+click 0 9 1
+wait_got "$overlap|overlap||1|8" 'grid range over older text range'
+late=$(new -n late -m gamma)
+click 0 15 1
+wait_got "$late|late||1|14" 'text range over older grid range'
+$TMUX kill-range -t "$pane" "$late" || fail kill
 record -n MouseDown1Pane "$(recorder 'pane:#{mouse_range_id}')"
 click 0 3 2
 wait_got 'pane:' 'click outside ranges'
@@ -313,6 +321,53 @@ $TMUX send -t "$pane" -X next-range g || fail next
 assert_cursor "20:2:$c" 'next after move'
 $TMUX send -t "$pane" -X next-range g || fail next
 assert_cursor "30:1:$a" 'moved range'
+$TMUX send -t "$pane" -X cancel || fail cancel
+
+# Copy mode finds text ranges on the lines that show the text they were found
+# on, with the mouse and the range commands.
+fresh sh -c 'stty raw -echo; printf READY; exec cat'
+wait_format '#{cursor_x}' 5
+output '\r\033[2K\033[?1049h\033[Halpha beta gamma\r\ndelta beta'
+t1=$(new -a text -m 'alpha beta')
+t2=$(new -m delta)
+g=$(new -a grid -r 0:11-0:15)
+t3=$(new -m beta -b delta)
+$TMUX copy-mode -t "$pane" || fail 'copy mode'
+record -T copy-mode MouseDown1Range "$(recorder 'copy:#{mouse_range_id}')"
+click 0 3 1
+wait_got "copy:$t1" 'copy mode click on text range'
+click 0 13 1
+wait_got "copy:$g" 'copy mode click on grid range'
+click 0 2 2
+wait_got "copy:$t2" 'copy mode click on second text range'
+click 0 9 2
+wait_got "copy:$t3" 'copy mode click on mid-line text range'
+click 0 6 2
+wait_got 'copy-pane:' 'copy mode click off text ranges'
+$TMUX send -t "$pane" -X history-top || fail top
+assert_cursor "0:0:$t1" 'cursor on text range'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "0:11:$g" 'next to grid range'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "1:0:$t2" 'next to text range'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "1:6:$t3" 'next to mid-line text range'
+$TMUX send -t "$pane" -X previous-range || fail previous
+assert_cursor "1:0:$t2" 'previous to text range at line start'
+$TMUX send -t "$pane" -X previous-range || fail previous
+assert_cursor "0:11:$g" 'previous to grid range'
+$TMUX send -t "$pane" -X previous-range || fail previous
+assert_cursor "0:0:$t1" 'previous to text range'
+output '\033[2J\033[Hdelta'
+$TMUX send -t "$pane" -X history-top || fail top
+assert_cursor '0:0:' 'text range on old text'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "0:11:$g" 'next found text range on old text'
+$TMUX send -t "$pane" -X next-range || fail next
+assert_cursor "0:11:$g" 'next found moved text range'
+click 0 2 1
+wait_got 'copy-pane:' 'click on text range on old text'
+$TMUX unbind -T copy-mode MouseDown1Range || fail unbind
 $TMUX send -t "$pane" -X cancel || fail cancel
 
 # Copy mode of another pane finds the ranges of that pane until it is

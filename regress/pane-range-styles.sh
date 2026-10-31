@@ -20,14 +20,15 @@ mkdir -m 700 "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" \
     "$XDG_RUNTIME_DIR" || { rm -rf "$tmp"; exit 1; }
 export TERM SHELL LC_ALL TMUX_TMPDIR XDG_CONFIG_HOME XDG_CACHE_HOME \
     XDG_DATA_HOME XDG_RUNTIME_DIR
+. ./regress-common.inc
 TMUX="$TEST_TMUX -Lrange-styles-$$ -f/dev/null"
 OUTER="$TEST_TMUX -Lrange-styles-outer-$$ -f/dev/null"
 E=$(printf '\033')
 serial=0
 cleanup()
 {
-	$TMUX kill-server >/dev/null 2>&1
-	$OUTER kill-server >/dev/null 2>&1
+	stop_server $TMUX
+	stop_server $OUTER
 	rm -rf "$tmp"
 }
 fail()
@@ -86,15 +87,28 @@ assert_line()
 	fail "$3"
 }
 
-# Record the bytes the inner client sends while a command runs.
+# Have the application set the clipboard to some text, which the inner client
+# passes to the outer tmux as a buffer, and wait for it, so everything the
+# inner client sent before has been read. The second argument is the text in
+# base64.
+mark()
+{
+	printf '\033]52;c;%s\007' "$2" >"$tmp/mark.bin"
+	$TMUX load-buffer -b mark "$tmp/mark.bin" || fail 'load mark'
+	$TMUX paste-buffer -S -r -d -b mark -t "$pane" || fail 'paste mark'
+	wait_for_output "$1" $OUTER show-buffer || fail "mark $1 not seen"
+}
+
+# Record the bytes the inner client sends while a command runs, ending with
+# the end mark.
 record()
 {
 	file=$tmp/record-$1
 	shift
-	sleep 0.3
+	mark start c3RhcnQ=
 	$OUTER pipe-pane -O "cat >$file; touch $file.done" || fail pipe
 	"$@"
-	sleep 0.3
+	mark end ZW5k
 	$OUTER pipe-pane || fail 'close pipe'
 	attempt=0
 	while [ ! -f "$file.done" ]; do
@@ -112,7 +126,8 @@ same_bytes()
 		echo >&2
 		fail "$3"
 	}
-	[ -s "$tmp/record-$1" ] || fail "nothing recorded: $3"
+	cmp -s "$tmp/record-$1" "$tmp/record-empty" &&
+	    fail "nothing recorded: $3"
 }
 refresh()
 {
@@ -122,13 +137,24 @@ stream()
 {
 	output '\033[3;1H\033[31mred\033[0m text\r\n\033[1mbold\033[0m\033[K\r\nmore\033[5;3Hx'
 }
+stream_inside()
+{
+	output '\033[1;1Hh\033[1;8Ho'
+}
+stream_change()
+{
+	output '\033[1;1HJ\033[1;8Hp'
+}
 
 trap cleanup EXIT HUP INT TERM
 $TMUX new-session -d -s styles -x 30 -y 6 'sleep 10000' || fail start
 $TMUX set -g status off || fail status
+$TMUX set -g set-clipboard on || fail clipboard
+$TMUX set -as terminal-features 'tmux*:clipboard' || fail features
 $OUTER new-session -d -x 30 -y 6 || fail 'outer start'
 $OUTER set -g status off || fail 'outer status'
 $OUTER set -g default-terminal tmux-256color || fail 'outer terminal'
+$OUTER set -g set-clipboard on || fail 'outer clipboard'
 $OUTER send -l "$TMUX attach" || fail 'outer send'
 $OUTER send Enter || fail 'outer enter'
 attempt=0
@@ -138,16 +164,18 @@ while [ -z "$($TMUX list-clients -F x)" ]; do
 	sleep 0.01
 done
 
-# The default style comes from pane-range-style and covers exactly the cells
-# of the range.
+# By default a range is drawn unchanged. The style of a range without its own
+# comes from pane-range-style and covers exactly the cells of the range.
 fresh default
 a=$(new -r 0:0-0:4)
-assert_line 1 "${E}[4mhello${E}[0m world" 'default style'
-assert_line 2 'second line' 'unranged line styled'
+assert_line 1 'hello world' 'range styled by default'
 $TMUX setw pane-range-style 'fg=blue' || fail 'set style option'
 assert_line 1 "${E}[34mhello${E}[39m world" 'pane-range-style not applied'
+assert_line 2 'second line' 'unranged line styled'
 $TMUX setw -u pane-range-style || fail 'unset style option'
-assert_line 1 "${E}[4mhello${E}[0m world" 'default style not restored'
+assert_line 1 'hello world' 'default style not restored'
+$TMUX setw -g pane-range-style underscore || fail 'set global style option'
+assert_line 1 "${E}[4mhello${E}[0m world" 'global pane-range-style'
 
 # The style is not stored: captures and copied text are unchanged.
 [ "$($TMUX capture-pane -pe -t "$pane" | sed -n 1p)" = 'hello world' ] ||
@@ -201,6 +229,22 @@ assert_line 2 "see ${E}[41mbeta${E}[49m here" 'text range moved'
 assert_line 1 'gamma' 'text range left style'
 output '\033[?1049l'
 
+# Text range styles are combined with each other and with grid range styles
+# in ID order, and the newest range wins where they conflict.
+fresh textoverlap
+output '\033[?1049h\033[H\033[2Jalpha beta gamma'
+a=$(new -s 'bg=red' -m beta)
+b=$(new -a grid -s 'bg=blue' -r 0:6-0:9)
+assert_line 1 "alpha ${E}[44mbeta${E}[49m gamma" 'newer grid range'
+c=$(new -s 'bg=green' -m beta)
+assert_line 1 "alpha ${E}[42mbeta${E}[49m gamma" 'newer text range'
+$TMUX kill-range -t "$pane" "$b" || fail kill
+$TMUX kill-range -t "$pane" "$c" || fail kill
+d=$(new -s 'fg=blue' -m 'alpha beta')
+assert_line 1 "${E}[34malpha ${E}[41mbeta${E}[39m${E}[49m gamma" \
+    'text ranges combined'
+output '\033[?1049l'
+
 # A style is a format that can depend on the range state.
 fresh state
 a=$(new -s '#{?#{==:#{range_state},live},bg=green,bg=yellow}' -r 1:0-1:5)
@@ -226,6 +270,16 @@ assert_line 2 "${E}[44m${e}t${e}${E}[49mond line" 'UTF-8 style'
 output '\033[2;1H\303\251'
 assert_line 2 "${E}[44m${e}t${e}${E}[49mond line" \
     'identical UTF-8 rewrite lost style'
+output '\033[?1049h\033[H\033[2Jalpha beta gamma'
+c=$(new -s 'bg=red' -m beta)
+assert_line 1 "alpha ${E}[41mbeta${E}[49m gamma" 'text style before rewrite'
+output '\033[1;7Hbeta'
+assert_line 1 "alpha ${E}[41mbeta${E}[49m gamma" \
+    'identical rewrite lost text style'
+output '\033[1;8He'
+assert_line 1 "alpha ${E}[41mbeta${E}[49m gamma" \
+    'identical cell lost text style'
+output '\033[?1049l'
 
 # Copy mode shows range styles below search matches and the selection, and
 # shows ranges created while it is active.
@@ -253,6 +307,23 @@ $TMUX send -t "$pane" -X cursor-right || fail right
 assert_line 1 "${E}[45mhe${E}[41mllo${E}[49m world" 'selection precedence'
 $TMUX send -t "$pane" -X cancel || fail cancel
 assert_line 1 "${E}[41mhello${E}[49m world" 'style after copy mode'
+
+# Copy mode shows text ranges on the lines that show the text they were found
+# on, and not on old text it still shows after the pane changes.
+fresh copytext
+output '\033[?1049h\033[H\033[2Jalpha beta\r\ngamma'
+a=$(new -s 'bg=red' -m beta)
+$TMUX copy-mode -t "$pane" || fail 'copy mode'
+assert_line 1 "alpha ${E}[41mbeta${E}[49m" 'text range in copy mode'
+b=$(new -s 'bg=blue' -m gamma)
+assert_line 2 "${E}[44mgamma${E}[49m" 'text range created in copy mode'
+output '\033[H\033[2Jgamma beta'
+assert_line 1 'alpha beta' 'text range drawn on old text in copy mode'
+assert_line 2 'gamma' 'moved text range left style in copy mode'
+$TMUX send -t "$pane" -X cancel || fail cancel
+assert_line 1 "${E}[44mgamma${E}[49m ${E}[41mbeta${E}[49m" \
+    'text style after copy mode'
+output '\033[?1049l'
 
 # A range made after the text changed under copy mode is not drawn on the old
 # text copy mode still shows.
@@ -282,8 +353,15 @@ $TMUX display -t "$pane" -p ok >/dev/null || fail 'server died'
 # With no range styles drawn, the client gets the same bytes as for a pane
 # without ranges, both for a full redraw and for output.
 fresh plain
+record empty true
+[ "$(cat -v "$tmp/record-empty")" = '^[]52;c;ZW5k^G' ] ||
+    fail "empty recording: $(cat -v "$tmp/record-empty")"
 record plain-refresh refresh
 record plain-stream stream
+fresh plain-inside
+record plain-inside stream_inside
+fresh plain-change
+record plain-change stream_change
 fresh killed
 a=$(new -r 0:0-0:4)
 $TMUX kill-range -t "$pane" "$a" || fail kill
@@ -300,5 +378,26 @@ fresh styled
 a=$(new -r 0:0-0:4)
 record styled-stream stream
 same_bytes plain-stream styled-stream 'output beside a range differs'
+fresh unstyled
+$TMUX setw pane-range-style default || fail 'unstyled option'
+a=$(new -r 0:0-0:4)
+b=$(new -m world)
+record unstyled-inside stream_inside
+same_bytes plain-inside unstyled-inside 'output inside unstyled ranges differs'
+
+# Ranges that draw no style change state without the pane being redrawn, but
+# a styled range is still redrawn when it is killed.
+fresh unstyled-change
+$TMUX setw pane-range-style default || fail 'unstyled option'
+a=$(new -r 0:0-0:4)
+b=$(new -m world)
+record unstyled-change stream_change
+states=$($TMUX list-ranges -t "$pane" -F '#{range_state}' | tr '\n' ' ')
+[ "$states" = 'modified hidden ' ] || fail "ranges did not change: $states"
+same_bytes plain-change unstyled-change 'unstyled range change redrew pane'
+c=$(new -s 'bg=red' -r 1:0-1:5)
+assert_line 2 "${E}[41msecond${E}[49m line" 'own style with default option'
+$TMUX kill-range -t "$pane" "$c" || fail kill
+assert_line 2 'second line' 'killed styled range still drawn'
 
 exit 0

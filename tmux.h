@@ -327,7 +327,7 @@ enum key_code_mouse_location {
 	{ #s "ScrollbarSlider", KEYC_ ## name ## _SCROLLBAR_SLIDER }, \
 	{ #s "ScrollbarDown", KEYC_ ## name ## _SCROLLBAR_DOWN },     \
 	{ #s "Empty", KEYC_ ## name ## _EMPTY },		      \
-	{ #s "Range", KEYC_ ## name ## _RANGE },			      \
+	{ #s "Range", KEYC_ ## name ## _RANGE },		      \
 	{ #s "Border", KEYC_ ## name ## _BORDER },		      \
 	{ #s "Control0", KEYC_ ## name ## _CONTROL0 },		      \
 	{ #s "Control1", KEYC_ ## name ## _CONTROL1 },		      \
@@ -1377,6 +1377,7 @@ struct pane_range {
 	struct pane_range_span	 seen;
 
 	TAILQ_ENTRY(pane_range)	 entry;
+	TAILQ_ENTRY(pane_range)	 text_entry;
 	RB_ENTRY(pane_range)	 tree_entry;
 };
 
@@ -3952,25 +3953,30 @@ void			  pane_range_set_style(struct window_pane *,
 void			  pane_ranges_style_changed(struct window_pane *);
 struct pane_ranges	 *pane_ranges_drawing(struct window_pane *,
     struct screen *);
-struct pane_range	 *pane_ranges_text_at(struct window_pane *, u_int,
-    u_int);
+struct pane_range	 *pane_ranges_text_cell(struct window_pane *,
+    struct grid *, u_int, u_int);
+struct pane_range	**pane_ranges_text_line(struct window_pane *,
+    struct grid *, u_int, uint64_t *, u_int *);
 void			  pane_ranges_draw_cell(struct pane_ranges *,
     struct grid_cell *, u_int, u_int);
+int			  pane_ranges_copy_line(struct window_mode_entry *,
+    struct grid *, u_int, uint64_t *);
 void			  pane_ranges_copy_cell(struct window_mode_entry *,
-    struct grid_cell *);
+    struct grid_cell *, u_int, const uint64_t *);
 int			  pane_ranges_redraw_cells(struct tty *,
     const struct tty_ctx *, u_int);
 
 /* pane-ranges-find.c */
-struct pane_range	*pane_ranges_cell(struct window_pane *, struct grid *,
+struct pane_range	 *pane_ranges_cell(struct window_pane *, struct grid *,
     u_int, u_int);
-struct pane_range	*pane_ranges_visible(struct window_pane *, u_int,
+struct pane_range	 *pane_ranges_visible(struct window_pane *, u_int,
     u_int);
-struct pane_range	*pane_ranges_mouse(struct mouse_event *);
-key_code		 pane_ranges_mouse_key(struct window_pane *, key_code,
+struct pane_range	 *pane_ranges_mouse(struct mouse_event *);
+key_code		  pane_ranges_mouse_key(struct window_pane *, key_code,
     u_int, u_int);
-struct key_binding	*pane_ranges_key_binding(struct key_table *, key_code);
-int			 pane_ranges_find(struct window_pane *, struct grid *,
+struct key_binding	 *pane_ranges_key_binding(struct key_table *,
+    key_code);
+int			  pane_ranges_find(struct window_pane *, struct grid *,
     u_int *, u_int *, int, const char *);
 
 /* grid.c */

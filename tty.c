@@ -3165,7 +3165,6 @@ tty_style_changed(struct window_pane *wp)
 
 	log_debug("%%%u: style changed", wp->id);
 	wp->flags &= ~PANE_STYLECHANGED;
-	pane_ranges_style_changed(wp);
 
 	ft = format_create(NULL, NULL, FORMAT_PANE|wp->id, FORMAT_NOJOBS);
 	format_defaults(ft, NULL, NULL, NULL, wp);

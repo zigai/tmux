@@ -4557,7 +4557,10 @@ The text is shown in full.
 Part of the text is the first text on the screen and starts on the top row, or
 the last text on the screen and ends on the bottom row, with the rest off the
 screen.
-The part ends or starts at a space in the text.
+The part ends or starts at a space in the text and at a space or the end of
+the text on the screen.
+A part of only one word is used only if the range was last shown touching
+that edge.
 Only
 .Fl e
 is checked for text clipped at the top and only
@@ -4595,6 +4598,8 @@ where they conflict.
 In copy mode, the selection, search matches and the current line style are
 drawn over range styles; copy mode showing another pane does not draw its
 range styles.
+Copy mode draws and finds a text range only on lines that show the same text
+as the screen did when the range was found.
 .Ic pane\-ranges
 hides all range styles.
 .Tg set-range
@@ -6670,6 +6675,9 @@ Attributes are ignored.
 Set the style of pane ranges that do not have their own; see
 .Ic new\-range .
 The style is expanded as a format for each range.
+The default,
+.Ql default ,
+draws ranges unchanged.
 For how to specify
 .Ar style ,
 see the
