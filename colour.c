@@ -1173,13 +1173,12 @@ colour_byname(const char *name)
 
 /*
  * Parse one component of an X11 colour: one to four hex digits, or an
- * intensity clipped to between 0 and 1. Hex digits after # are the most
- * significant bits, other values are scaled to 16 bits as XParseColor does.
- * The top eight bits are returned.
+ * intensity clipped to between 0 and 1. Values are scaled to 16 bits and the
+ * top eight bits returned. Unlike XParseColor, hex digits after # are scaled
+ * too, so #fff is white as it is in kitty and Ghostty.
  */
 static int
-colour_parseX11_component(const char *p, size_t len, int intensity, int msb,
-    u_int *v)
+colour_parseX11_component(const char *p, size_t len, int intensity, u_int *v)
 {
 	char	 tmp[32], *end;
 	double	 d;
@@ -1211,12 +1210,7 @@ colour_parseX11_component(const char *p, size_t len, int intensity, int msb,
 	}
 	x = strtoul(tmp, NULL, 16);
 	max = (1UL << (4 * len)) - 1;
-	if (!msb)
-		*v = (x * 65535 / max) >> 8;
-	else if (len <= 2)
-		*v = x << (8 - 4 * len);
-	else
-		*v = x >> (4 * len - 8);
+	*v = (x * 65535 / max) >> 8;
 	return (0);
 }
 
@@ -1234,10 +1228,9 @@ colour_parseX11_rgb(const char *p, size_t len)
 		if (len != 3 && len != 6 && len != 9 && len != 12)
 			return (-1);
 		n = len / 3;
-		if (colour_parseX11_component(p + 1, n, 0, 1, &r) != 0 ||
-		    colour_parseX11_component(p + 1 + n, n, 0, 1, &g) != 0 ||
-		    colour_parseX11_component(p + 1 + 2 * n, n, 0, 1,
-		    &b) != 0)
+		if (colour_parseX11_component(p + 1, n, 0, &r) != 0 ||
+		    colour_parseX11_component(p + 1 + n, n, 0, &g) != 0 ||
+		    colour_parseX11_component(p + 1 + 2 * n, n, 0, &b) != 0)
 			return (-1);
 		return (colour_join_rgb(r, g, b));
 	}
@@ -1253,11 +1246,11 @@ colour_parseX11_rgb(const char *p, size_t len)
 		return (-1);
 	if ((slash2 = strchr(slash1 + 1, '/')) == NULL)
 		return (-1);
-	if (colour_parseX11_component(s, slash1 - s, intensity, 0, &r) != 0 ||
+	if (colour_parseX11_component(s, slash1 - s, intensity, &r) != 0 ||
 	    colour_parseX11_component(slash1 + 1, slash2 - slash1 - 1,
-	    intensity, 0, &g) != 0 ||
+	    intensity, &g) != 0 ||
 	    colour_parseX11_component(slash2 + 1, p + len - slash2 - 1,
-	    intensity, 0, &b) != 0)
+	    intensity, &b) != 0)
 		return (-1);
 	return (colour_join_rgb(r, g, b));
 }

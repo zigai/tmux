@@ -147,6 +147,7 @@ screen_reinit(struct screen *s)
 	screen_set_progress_bar(s, PROGRESS_BAR_HIDDEN, 0);
 	screen_reset_pointer_shapes(s);
 	screen_reset_hyperlinks(s);
+	screen_clear_colours(s);
 }
 
 /* Reset hyperlinks of a screen. */

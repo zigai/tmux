@@ -707,7 +707,8 @@ tty_default_features(struct client *c, const char *name, u_int version)
 			      "usstyle,"
 			      "hyperlinks,"
 			      "pointershape,"
-			      "progressbar"
+			      "progressbar,"
+			      "kittycolours"
 		},
 		{ .name = "rxvt-unicode",
 		  .features = "256,"
