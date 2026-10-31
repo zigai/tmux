@@ -183,10 +183,12 @@ $TMUX set-option -g status-left '<#{program_message}|#{program_title}>' ||
 wait_for_text '<#[fg=red]markup|#[fg=blue]title>' \
     $TMUX2 capture-pane -p -t outer || exit 1
 $TMUX set-option -g status-left '' || exit 1
-$TMUX display-message -d 0 '[#{program_message}|#{program_title}]' || exit 1
+client=$($TMUX list-clients -F '#{client_name}')
+$TMUX display-message -c "$client" -t "$p2" -d 0 \
+    '[#{program_message}|#{program_title}]' || exit 1
 wait_for_text '[#[fg=red]markup|#[fg=blue]title]' \
     $TMUX2 capture-pane -p -t outer || exit 1
-$TMUX display-message -d 1 '' || exit 1
+$TMUX display-message -c "$client" -d 1 '' || exit 1
 $TMUX set-option -g status off || exit 1
 $TMUX choose-tree -t "$p2" -F '{#{program_message}|#{program_title}}' ||
     exit 1
