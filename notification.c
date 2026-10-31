@@ -779,6 +779,30 @@ notification_close(struct window_pane *wp, const char *id)
 }
 
 static int
+notification_supports(struct client *c, const char *type)
+{
+	char	*copy, *next, *cp, *types;
+	int	 found = 0;
+
+	if (c->tty.notification_caps == NULL)
+		return (0);
+	copy = next = xstrdup(c->tty.notification_caps);
+	while (!found && (cp = strsep(&next, ":")) != NULL) {
+		if (strncmp(cp, "p=", 2) != 0)
+			continue;
+		types = cp + 2;
+		while ((cp = strsep(&types, ",")) != NULL) {
+			if (strcmp(cp, type) == 0) {
+				found = 1;
+				break;
+			}
+		}
+	}
+	free(copy);
+	return (found);
+}
+
+static int
 notification_query_has(struct notification_query *nq, struct client *c)
 {
 	u_int	i;
@@ -843,9 +867,9 @@ notification_query_add(struct notification_query *nq, const char *id)
 }
 
 /*
- * Ask every client that has answered the support query, because each terminal
- * knows only about the notifications it is showing. The pane is answered with
- * all their identifiers once they have all replied or gone.
+ * Ask every client whose terminal supports alive queries, because each
+ * terminal knows only about the notifications it is showing. The pane is
+ * answered with all their identifiers once they have all replied or gone.
  */
 static void
 notification_alive(struct window_pane *wp, const char *id)
@@ -859,7 +883,7 @@ notification_alive(struct window_pane *wp, const char *id)
 	TAILQ_FOREACH(c, &clients, entry) {
 		if (!notification_client_ok(c, wp, TTYC_SNOT99))
 			continue;
-		if (c->tty.notification_caps == NULL)
+		if (!notification_supports(c, "alive"))
 			continue;
 		nq->clients = xreallocarray(nq->clients, nq->nclients + 1,
 		    sizeof *nq->clients);

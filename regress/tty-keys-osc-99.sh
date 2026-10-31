@@ -95,24 +95,25 @@ listen "$A" '\033]99;i=q:p=?;\033\\' q1
 sleep 0.5
 [ -z "$(read_file q1)" ] || fail "query answered without support"
 # Keys typed after the reply show it has been handled.
-reply c1 '\033]99;i=tmux:p=?;a=focus,report:c=1:p=title,body\033\\sync'
+reply c1 '\033]99;i=tmux:p=?;a=focus,report:c=1:p=title,body,alive\033\\sync'
 wait_for_output sync read_file q1 || fail "reply not handled"
 listen "$A" '\033]99;i=q:p=?;\033\\' q2
-check q2 '^[]99;i=q:p=?;a=focus,report:c=1:p=title,body^[\' "query"
+check q2 '^[]99;i=q:p=?;a=focus,report:c=1:p=title,body,alive^[\' "query"
 listen "$A" '\033]99;p=?;\007' q3
-check q3 '^[]99;i=0:p=?;a=focus,report:c=1:p=title,body^G' "query with BEL"
+check q3 '^[]99;i=0:p=?;a=focus,report:c=1:p=title,body,alive^G' \
+    "query with BEL"
 
 # The answer comes from the client used most recently.
-reply c2 '\033]99;i=tmux:p=?;a=focus:p=title\033\\k2'
-wait_for_output '^[]99;i=0:p=?;a=focus,report:c=1:p=title,body^Gk2' \
+reply c2 '\033]99;i=tmux:p=?;a=focus:p=title,alive\033\\k2'
+wait_for_output '^[]99;i=0:p=?;a=focus,report:c=1:p=title,body,alive^Gk2' \
     read_file q3 || fail "reply not handled"
 listen "$A" '\033]99;i=q:p=?;\033\\' q4
-check q4 '^[]99;i=q:p=?;a=focus:p=title^[\' "query after using c2"
+check q4 '^[]99;i=q:p=?;a=focus:p=title,alive^[\' "query after using c2"
 reply c1 k1
-wait_for_output '^[]99;i=q:p=?;a=focus:p=title^[\k1' read_file q4 ||
+wait_for_output '^[]99;i=q:p=?;a=focus:p=title,alive^[\k1' read_file q4 ||
     fail "key not handled"
 listen "$A" '\033]99;i=q:p=?;\033\\' q5
-check q5 '^[]99;i=q:p=?;a=focus,report:c=1:p=title,body^[\' \
+check q5 '^[]99;i=q:p=?;a=focus,report:c=1:p=title,body,alive^[\' \
     "query after using c1"
 
 # Activation is reported, focuses the pane and closes other copies.
@@ -176,6 +177,20 @@ wait_until has c2 "\033]99;i=$(oid $A ilive2):p=alive;\033\\\\" ||
 reply c2 "\033]99;i=$(oid $A ilive2):p=alive;$(oid $A im2)\033\\\\"
 reply c1 "\033]99;i=$(oid $A ilive2):p=alive;$(oid $A im1),$(oid $A im2)\033\\\\"
 check live2 '^[]99;i=live2:p=alive;m2,m1^[\' "alive from two clients"
+
+# A terminal that does not support alive queries is not waited for.
+attach c3 xterm-256color one
+wait_until has c3 '\033]99;i=tmux:p=?;\033\\' || fail "no query sent"
+listen "$B" '' s3
+reply c3 '\033]99;i=tmux:p=?;a=focus:p=title,body\033\\s3'
+wait_for_output s3 read_file s3 || fail "reply not handled"
+listen "$A" '\033]99;i=v:c=1:a=-focus;V\033\\\033]99;i=live4:p=alive;\033\\' live4
+wait_until has c2 "\033]99;i=$(oid $A ilive4):p=alive;\033\\\\" ||
+    fail "alive query not sent"
+reply c1 "\033]99;i=$(oid $A ilive4):p=alive;$(oid $A iv)\033\\\\"
+reply c2 "\033]99;i=$(oid $A ilive4):p=alive;\033\\\\"
+check live4 '^[]99;i=live4:p=alive;v^[\' \
+    "alive with a terminal without support"
 
 # Replies for a process replaced by respawn-pane are not given to the new one.
 listen "$B" '\033]99;i=old:a=report,-focus;Old\033\\' old
