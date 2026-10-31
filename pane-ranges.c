@@ -188,6 +188,7 @@ struct pane_ranges {
 	u_int				  generation;
 	int				  enabled;
 	u_int				  enabled_generation;
+	int				  drawn;
 
 	int				  listed;
 	TAILQ_ENTRY(pane_ranges)	  entry;
@@ -404,11 +405,40 @@ pane_ranges_get(struct window_pane *wp)
 	return (prs);
 }
 
-/* Redraw a pane with new range styles. */
+/*
+ * Check if any range of a pane may draw a style: a range with its own style,
+ * or a pane-range-style that is not the default.
+ */
+static int
+pane_ranges_may_style(struct pane_ranges *prs)
+{
+	struct window_pane	*wp = prs->wp;
+	struct pane_range	*r;
+	const char		*style;
+
+	if (!options_get_number(wp->options, "pane-ranges"))
+		return (0);
+	style = options_get_string(wp->options, "pane-range-style");
+	if (strcmp(style, "default") != 0)
+		return (1);
+	TAILQ_FOREACH(r, &prs->list, entry) {
+		if (r->style != NULL)
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * Redraw a pane with new range styles, unless no range style has been drawn
+ * since the last redraw and none may be drawn now.
+ */
 static void
 pane_ranges_restyle(struct pane_ranges *prs)
 {
 	prs->generation++;
+	if (!prs->drawn && !pane_ranges_may_style(prs))
+		return;
+	prs->drawn = 0;
 	prs->wp->flags |= (PANE_REDRAW|PANE_STYLECHANGED);
 }
 
@@ -1793,7 +1823,6 @@ pane_range_apply(struct pane_ranges *prs, struct pane_range *r,
 	r->positioned = 1;
 	r->span = found;
 	r->visible_y = visible_y;
-	pane_ranges_restyle(prs);
 	return (1);
 }
 
@@ -1912,8 +1941,11 @@ pane_range_create(struct window_pane *wp, const struct pane_range_span *span,
 		TAILQ_INSERT_TAIL(&prs->text, r, text_entry);
 		prs->ntext++;
 		pane_ranges_resolve_now(prs);
-	} else if (prs->count - prs->ntext == 1)
-		pane_ranges_signature(wp, &prs->signature);
+	} else {
+		if (prs->count - prs->ntext == 1)
+			pane_ranges_signature(wp, &prs->signature);
+		pane_ranges_restyle(prs);
+	}
 	pane_ranges_list_add(prs);
 	return (r);
 }
@@ -1939,7 +1971,10 @@ pane_range_move(struct window_pane *wp, struct pane_range *r,
 		return (0);
 	}
 	pane_ranges_untag(prs, &r->id, 1);
-	return (pane_range_apply(prs, r, span, cause));
+	if (!pane_range_apply(prs, r, span, cause))
+		return (0);
+	pane_ranges_restyle(prs);
+	return (1);
 }
 
 /* Change the text before or after a text range, if not NULL. */
@@ -2383,8 +2418,10 @@ pane_ranges_draw_set(struct pane_ranges *prs, struct grid_cell *gc)
 {
 	struct pane_range_set	*set;
 
-	if ((set = pane_ranges_styled_set(prs, gc->range)) != NULL)
+	if ((set = pane_ranges_styled_set(prs, gc->range)) != NULL) {
 		pane_ranges_apply_style(&set->style, gc);
+		prs->drawn = 1;
+	}
 }
 
 /* Check if any text range covering a cell of a pane draws a style. */
@@ -2457,8 +2494,10 @@ pane_ranges_style_cell(struct pane_ranges *prs, struct grid_cell *gc,
 		}
 		pane_ranges_combine(prs, r, &sc);
 	}
-	if (pane_ranges_styled(&sc))
+	if (pane_ranges_styled(&sc)) {
 		pane_ranges_apply_style(&sc, gc);
+		prs->drawn = 1;
+	}
 }
 
 /*

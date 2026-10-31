@@ -141,6 +141,10 @@ stream_inside()
 {
 	output '\033[1;1Hh\033[1;8Ho'
 }
+stream_change()
+{
+	output '\033[1;1HJ\033[1;8Hp'
+}
 
 trap cleanup EXIT HUP INT TERM
 $TMUX new-session -d -s styles -x 30 -y 6 'sleep 10000' || fail start
@@ -356,6 +360,8 @@ record plain-refresh refresh
 record plain-stream stream
 fresh plain-inside
 record plain-inside stream_inside
+fresh plain-change
+record plain-change stream_change
 fresh killed
 a=$(new -r 0:0-0:4)
 $TMUX kill-range -t "$pane" "$a" || fail kill
@@ -378,5 +384,20 @@ a=$(new -r 0:0-0:4)
 b=$(new -m world)
 record unstyled-inside stream_inside
 same_bytes plain-inside unstyled-inside 'output inside unstyled ranges differs'
+
+# Ranges that draw no style change state without the pane being redrawn, but
+# a styled range is still redrawn when it is killed.
+fresh unstyled-change
+$TMUX setw pane-range-style default || fail 'unstyled option'
+a=$(new -r 0:0-0:4)
+b=$(new -m world)
+record unstyled-change stream_change
+states=$($TMUX list-ranges -t "$pane" -F '#{range_state}' | tr '\n' ' ')
+[ "$states" = 'modified hidden ' ] || fail "ranges did not change: $states"
+same_bytes plain-change unstyled-change 'unstyled range change redrew pane'
+c=$(new -s 'bg=red' -r 1:0-1:5)
+assert_line 2 "${E}[41msecond${E}[49m line" 'own style with default option'
+$TMUX kill-range -t "$pane" "$c" || fail kill
+assert_line 2 'second line' 'killed styled range still drawn'
 
 exit 0
