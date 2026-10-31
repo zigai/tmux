@@ -62,6 +62,16 @@ for seq in '\033[97;;97u' '\033[97;1:2;97u' '\033[97;1:3u' \
 	check "$A" "$seq"
 done
 
+# A bracketed paste reaches the pane as it was pasted.
+: >"$A"
+$TMUX respawn-pane -k -t:.0 \
+    "stty raw -echo; printf '\\033[?2004h\\033[>1u'; exec cat >>'$A'" ||
+    exit 1
+wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
+wait_for_output 'Kitty 1' $TMUX2 display -p '#{pane_key_mode}' || exit 1
+send '\033[200~hi\033[201~'
+check "$A" '\033[200~hi\033[201~'
+
 # With fewer flags the terminal is still asked for everything, and each event
 # is encoded again as the pane asked.
 use_flags 3 31

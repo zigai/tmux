@@ -334,14 +334,15 @@ int
 tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
     key_code *key, struct kitty_key *kk)
 {
-	struct client	*c = tty->client;
-	struct utf8_data ud;
-	utf8_char	 uc;
-	size_t		 end;
-	char		 tmp[256], *copy, *field, final;
-	u_int		 values[3], count, fields = 0, cp, keymods;
-	key_code	 nkey, onlykey;
-	int		 result;
+	struct client		*c = tty->client;
+	struct kitty_key	 nk;
+	struct utf8_data	 ud;
+	utf8_char		 uc;
+	size_t			 end;
+	char			 tmp[256], *copy, *field, final;
+	u_int			 values[3], count, fields = 0, cp, keymods;
+	key_code		 nkey, onlykey;
+	int			 result;
 
 	*size = 0;
 	if ((tty->flags & TTY_KKBPUSHED) == 0)
@@ -367,10 +368,10 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 	final = buf[end];
 	*size = end + 1;
 
-	memset(kk, 0, sizeof *kk);
-	kk->final = final;
-	kk->modifiers = 1;
-	kk->event = KITTY_EVENT_PRESS;
+	memset(&nk, 0, sizeof nk);
+	nk.final = final;
+	nk.modifiers = 1;
+	nk.event = KITTY_EVENT_PRESS;
 
 	copy = tmp;
 	while ((field = strsep(&copy, ";")) != NULL) {
@@ -378,58 +379,58 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 			if (*field == '\0') {
 				if (final == 'u')
 					return (-1);
-				kk->number = 1;
+				nk.number = 1;
 			} else {
 				if (tty_kitty_parse_list(field, values, 3,
 				    &count) != 0)
 					return (-1);
-				kk->number = values[0];
+				nk.number = values[0];
 				if (count > 1)
-					kk->shifted = values[1];
+					nk.shifted = values[1];
 				if (count > 2)
-					kk->base = values[2];
+					nk.base = values[2];
 			}
 		} else if (fields == 1) {
 			if (tty_kitty_parse_list(field, values, 2, &count) != 0)
 				return (-1);
 			if (count > 0 && *field != '\0')
-				kk->modifiers = values[0];
+				nk.modifiers = values[0];
 			if (count > 1)
-				kk->event = values[1];
+				nk.event = values[1];
 		} else if (fields == 2) {
-			if (tty_kitty_parse_list(field, kk->text,
-			    KITTY_TEXT_MAX, &kk->ntext) != 0)
+			if (tty_kitty_parse_list(field, nk.text,
+			    KITTY_TEXT_MAX, &nk.ntext) != 0)
 				return (-2);
 		} else
 			return (-1);
 		fields++;
 	}
-	if (kk->number == 0 || kk->modifiers == 0)
+	if (nk.number == 0 || nk.modifiers == 0)
 		return (-1);
-	if (kk->event < KITTY_EVENT_PRESS || kk->event > KITTY_EVENT_RELEASE)
+	if (nk.event < KITTY_EVENT_PRESS || nk.event > KITTY_EVENT_RELEASE)
 		return (-2);
-	kk->modifiers--;
-	keymods = kk->modifiers;
+	nk.modifiers--;
+	keymods = nk.modifiers;
 
-	nkey = tty_kitty_function(kk->number, final);
+	nkey = tty_kitty_function(nk.number, final);
 	if (nkey == KEYC_NONE) {
 		if (final != 'u')
 			return (-1);
-		if (kk->number >= 57344 && kk->number <= 63743)
+		if (nk.number >= 57344 && nk.number <= 63743)
 			return (-2);
 
 		/*
 		 * A key with only Shift is the character it types, without
 		 * the Shift, as with other terminals.
 		 */
-		cp = kk->number;
+		cp = nk.number;
 		if ((keymods & ~(KITTY_MOD_SHIFT|KITTY_MOD_CAPSLOCK|
 		    KITTY_MOD_NUMLOCK)) == 0) {
-			if (kk->ntext == 1 && kk->text[0] >= 0x20 &&
-			    kk->text[0] != 0x7f)
-				cp = kk->text[0];
-			else if ((keymods & KITTY_MOD_SHIFT) && kk->shifted != 0)
-				cp = kk->shifted;
+			if (nk.ntext == 1 && nk.text[0] >= 0x20 &&
+			    nk.text[0] != 0x7f)
+				cp = nk.text[0];
+			else if ((keymods & KITTY_MOD_SHIFT) && nk.shifted != 0)
+				cp = nk.shifted;
 			else if ((keymods & KITTY_MOD_SHIFT) &&
 			    cp >= 'a' && cp <= 'z')
 				cp -= 'a' - 'A';
@@ -465,8 +466,9 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 	if (log_get_level() != 0) {
 		log_debug("%s: Kitty key %.*s is %llx (%s) event %u", c->name,
 		    (int)*size, buf, nkey, key_string_lookup_key(nkey, 1),
-		    kk->event);
+		    nk.event);
 	}
 	*key = nkey;
+	*kk = nk;
 	return (0);
 }
