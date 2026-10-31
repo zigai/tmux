@@ -924,11 +924,11 @@ not_on_status:
 /* Convert a client position off the status lines to a window position. */
 static int
 server_client_window_position(struct client *c, u_int x, u_int y, u_int *px,
-    u_int *py, u_int *ox, u_int *oy)
+    u_int *py, u_int *ox, u_int *oy, u_int *sx, u_int *sy)
 {
 	int	statusat = status_at_line(c), sideat = status_side_at_column(c);
 	u_int	statuslines = status_line_size(c);
-	u_int	sidewidth = status_side_size(c), sx, sy;
+	u_int	sidewidth = status_side_size(c);
 
 	if (sideat == 0 && x >= sidewidth)
 		x -= sidewidth;
@@ -939,8 +939,8 @@ server_client_window_position(struct client *c, u_int x, u_int y, u_int *px,
 	else if (statusat > 0 && y >= (u_int)statusat)
 		y = statusat - 1;
 
-	tty_window_offset(&c->tty, ox, oy, &sx, &sy);
-	if (x > sx || y > sy)
+	tty_window_offset(&c->tty, ox, oy, sx, sy);
+	if (x > *sx || y > *sy)
 		return (-1);
 	*px = x + *ox;
 	*py = y + *oy;
@@ -955,7 +955,7 @@ server_client_check_mouse(struct client *c, struct key_event *event)
 	struct session			*s = c->session;
 	struct window			*w = s->curw->window;
 	struct window_pane		*wp, *lwp = NULL;
-	u_int				 x, y, px, py, n, sl_mpos = 0;
+	u_int				 x, y, sx, sy, px, py, n, sl_mpos = 0;
 	u_int				 b, bn;
 	int				 ignore = 0, outside;
 	int				 modal_drag = 0;
@@ -1069,8 +1069,9 @@ have_event:
 		}
 	} else if (loc == KEYC_MOUSE_LOCATION_NOWHERE) {
 		outside = server_client_window_position(c, x, y, &px, &py,
-		    &m->ox, &m->oy);
-		log_debug("mouse window @%u at %u,%u", w->id, m->ox, m->oy);
+		    &m->ox, &m->oy, &sx, &sy);
+		log_debug("mouse window @%u at %u,%u (%ux%u)", w->id, m->ox,
+		    m->oy, sx, sy);
 		if (outside) {
 			server_client_update_scrollbar_hover(c, type, -1, -1);
 			return (KEYC_UNKNOWN);
@@ -2774,7 +2775,7 @@ server_client_pointer_pane(struct client *c)
 	struct window		*w = c->session->curw->window;
 	struct window_pane	*wp;
 	u_int			 x = tty->mouse_last_x, y = tty->mouse_last_y;
-	u_int			 ox, oy, lines, width, sl_mpos;
+	u_int			 ox, oy, sx, sy, lines, width, sl_mpos;
 	int			 at;
 
 	if (w->menu != NULL)
@@ -2791,7 +2792,8 @@ server_client_pointer_pane(struct client *c)
 	width = status_side_size(c);
 	if (at != -1 && x >= (u_int)at && x < at + width)
 		return (NULL);
-	if (server_client_window_position(c, x, y, &x, &y, &ox, &oy) != 0)
+	if (server_client_window_position(c, x, y, &x, &y, &ox, &oy, &sx,
+	    &sy) != 0)
 		return (NULL);
 
 	wp = window_get_active_at(w, x, y);
