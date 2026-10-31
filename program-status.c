@@ -409,6 +409,27 @@ program_status_build_forward(struct window_pane *wp,
 		free(id);
 }
 
+static int
+program_status_equal(const char *s1, const char *s2)
+{
+	if (s1 == NULL || s2 == NULL)
+		return (s1 == s2);
+	return (strcmp(s1, s2) == 0);
+}
+
+/* Do two records with the same id have the same contents? */
+static int
+program_status_same(struct program_status_record *psr1,
+    struct program_status_record *psr2)
+{
+	return (psr1->state == psr2->state &&
+	    psr1->kind == psr2->kind &&
+	    psr1->progress == psr2->progress &&
+	    program_status_equal(psr1->app, psr2->app) &&
+	    program_status_equal(psr1->title, psr2->title) &&
+	    program_status_equal(psr1->msg, psr2->msg));
+}
+
 /* Find a record. */
 static struct program_status_record *
 program_status_find(struct program_status *ps, const char *id)
@@ -560,7 +581,6 @@ program_status_apply(struct window_pane *wp, struct program_status_report *r,
 	r->title = NULL;
 	new->msg = r->msg;
 	r->msg = NULL;
-	program_status_build_forward(wp, new);
 
 	if (ps == NULL) {
 		ps = wp->program_status = xcalloc(1, sizeof *ps);
@@ -571,7 +591,7 @@ program_status_apply(struct window_pane *wp, struct program_status_report *r,
 
 	psr = program_status_find(ps, id);
 	if (psr != NULL) {
-		changed = (strcmp(psr->forward, new->forward) != 0);
+		changed = !program_status_same(psr, new);
 		program_status_remove(ps, psr);
 	} else if (ps->count == PROGRAM_STATUS_MAX_RECORDS) {
 		oldest = NULL;
@@ -991,6 +1011,8 @@ program_status_forward_want(struct program_status_forward *psf,
 		wp = window_pane_find_by_id(psf->seen[i].id);
 		RB_FOREACH(psr, program_status_records,
 		    &wp->program_status->records) {
+			if (psr->forward == NULL)
+				program_status_build_forward(wp, psr);
 			if (psr->forward_id == NULL)
 				continue;
 			list = xreallocarray(list, n + 1, sizeof *list);

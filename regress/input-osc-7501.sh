@@ -442,6 +442,24 @@ raw "$(printf '\033c')"
 emit 'state=idle'
 hooked 6 "$pane:1"
 
+# A change to any one field runs the hook.
+t1=$(b64 one)
+t2=$(b64 two)
+n=7
+for report in \
+    "state=working:progress=1:app=a:title=$t1:msg=$t1" \
+    "state=working:progress=2:app=a:title=$t1:msg=$t1" \
+    "state=working:progress=2:app=b:title=$t1:msg=$t1" \
+    "state=working:progress=2:app=b:title=$t2:msg=$t1" \
+    "state=working:progress=2:app=b:title=$t2:msg=$t2" \
+    "state=working:progress=2:app=b:title=$t2" \
+    "state=blocked:progress=2:app=b:title=$t2" \
+    "state=blocked:kind=auth:progress=2:app=b:title=$t2"; do
+	emit "$report"
+	hooked "$n" "$pane:1"
+	n=$((n + 1))
+done
+
 # A burst of reports runs the hook once, with the last state.
 $TMUX set-hook -ga pane-program-status-changed \
     'set -gF @p "#{program_progress}"' || exit 1
@@ -455,9 +473,9 @@ while [ "$i" -le 500 ]; do
 	printf '\033]7501;state=working:progress=%d\033\\' $((i % 101))
 	i=$((i + 1))
 done | $TMUX display-message -I -t "$pane" || exit 1
-burst "7|$pane:1|96"
+burst "15|$pane:1|96"
 emit 'state=idle'
-burst "8|$pane:1|"
+burst "16|$pane:1|"
 $TMUX set-hook -gu pane-program-status-changed || exit 1
 clear_all
 
