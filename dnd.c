@@ -744,7 +744,7 @@ dnd_tty_input(struct tty *tty, const char *s)
 	struct client		*c = tty->client;
 	struct dnd_tty		*dt;
 	struct window_pane	*wp;
-	struct dnd_msg		 raw, msg;
+	struct dnd_msg		 raw, msg, part;
 	int			 continued;
 
 	if (dnd_parse(s, &raw) != 0) {
@@ -781,10 +781,14 @@ dnd_tty_input(struct tty *tty, const char *s)
 			dt->chunk_pane = -1;
 		if (wp == NULL || wp->dnd == NULL)
 			return;
+		memset(&part, 0, sizeof part);
+		part.flags = DND_HAS_M;
+		part.m = raw.m;
+		part.payload = raw.payload;
 		if (strchr("mMrR", msg.type) != NULL)
-			dnd_write(wp, &raw, wp->dnd->accept_id);
+			dnd_write(wp, &part, wp->dnd->accept_id);
 		else
-			dnd_write(wp, &raw, wp->dnd->offer_id);
+			dnd_write(wp, &part, wp->dnd->offer_id);
 		return;
 	}
 

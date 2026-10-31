@@ -95,12 +95,12 @@ pane $RIGHT 't=r:x=1'
 expect $DIR/right 't=R:x=1:i=7;EPERM' "request after finish"
 
 # A long chunked MIME list is kept, and given again in chunks when the drag
-# comes back to the pane.
+# comes back to the pane. Keys repeated on a later chunk are not passed on.
 long1=a/$(printf '%03000d' 0)
 long2=b/$(printf '%03000d' 0)
 list="$long1 $long2 text/plain"
 terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3:m=1;$long1 "
-terminal outer:0 "m=1;$long2 "
+terminal outer:0 "t=m:$(at $((OFF + 4)) 3):o=3:m=1;$long2 "
 terminal outer:0 'm=0;text/plain'
 expect $DIR/right "$(printf '%s\n' "t=m:$IN:o=3:i=7:m=1;$long1 " \
     "i=7:m=1;$long2 " 'i=7:m=0;text/plain')" "long list"
