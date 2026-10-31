@@ -449,8 +449,12 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 
 	if (keymods & KITTY_MOD_SHIFT)
 		nkey |= KEYC_SHIFT;
-	if (keymods & (KITTY_MOD_ALT|KITTY_MOD_META))
-		nkey |= KEYC_META|KEYC_IMPLIED_META;
+	/* Keypad keys have no sequence with Meta, so it is sent as ESC. */
+	if (keymods & (KITTY_MOD_ALT|KITTY_MOD_META)) {
+		nkey |= KEYC_META;
+		if (~nkey & KEYC_KEYPAD)
+			nkey |= KEYC_IMPLIED_META;
+	}
 	if (keymods & KITTY_MOD_CTRL)
 		nkey |= KEYC_CTRL;
 	if (keymods & KITTY_MOD_SUPER)

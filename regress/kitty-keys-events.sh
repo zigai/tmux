@@ -85,8 +85,8 @@ check "$A" '\033[97;5u\033[1;5A\033[27u'
 
 $TMUX respawn-pane -k -t:.0 "stty raw -echo; exec cat >>'$A'" || exit 1
 wait_for_output 'Kitty 1' $TMUX2 display -p '#{pane_key_mode}' || exit 1
-send '\033[97;5u\033[27u'
-check "$A" '\001\033'
+send '\033[97;5u\033[27u\033[57413;3u'
+check "$A" '\001\033\033+'
 
 # The prefix and bindings work when every key is reported: C-b c and C-b "
 # with Shift held. The pane sees neither these keys nor their releases.
