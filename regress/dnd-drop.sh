@@ -182,4 +182,13 @@ $INNER kill-pane -t $RIGHT || exit 1
 expect $DIR/out1 "$(printf '%s\n' 't=r:o=0' 't=A')" "pane killed"
 expect $DIR/out2 't=A' "pane killed, second client"
 
+# A client that detaches while over a pane tells the pane the drag left.
+pane $LEFT 't=a:i=5;text/plain'
+pane_sync $LEFT $DIR/left
+expect $DIR/out2 't=a;text/plain' "registered again, second client"
+terminal outer:1 "t=m:$(at 3 3):o=3;text/plain"
+expect $DIR/left "t=m:$(at 3 3):o=3:i=5;text/plain" "move before detach"
+$INNER detach-client -s inner || exit 1
+expect $DIR/left 't=m:x=-1:y=-1:i=5' "detach"
+
 exit 0

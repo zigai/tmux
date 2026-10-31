@@ -1142,6 +1142,7 @@ dnd_tty_stop(struct tty *tty)
 
 	if (dt == NULL || !tty_term_has(tty->term, TTYC_DND))
 		return;
+	dnd_leave(tty);
 	if (dt->accept != NULL)
 		tty_raw(tty, tty_term_string_s(tty->term, TTYC_DND, "t=A"));
 	if (dt->offer)
