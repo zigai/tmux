@@ -1213,6 +1213,7 @@ struct pane_range {
 	struct pane_range_span	 seen;
 
 	TAILQ_ENTRY(pane_range)	 entry;
+	TAILQ_ENTRY(pane_range)	 text_entry;
 	RB_ENTRY(pane_range)	 tree_entry;
 };
 

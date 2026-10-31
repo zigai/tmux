@@ -116,6 +116,12 @@ struct pane_range_match {
 	int			 clipped;
 };
 
+/* The positioned text ranges on one visible row, oldest first. */
+struct pane_range_text_row {
+	struct pane_range	**list;
+	u_int			  n;
+};
+
 /* Pane and grid state that decides whether a scan is needed. */
 struct pane_ranges_signature {
 	uint64_t		 output;
@@ -154,8 +160,13 @@ struct pane_ranges {
 	int				  index_dirty;
 	struct pane_range_records	  live;
 
+	struct pane_range_list		  text;
 	u_int				  ntext;
 	int				  text_dirty;
+	struct pane_range_text_row	 *text_rows;
+	u_int				  ntext_rows;
+	uint64_t			  text_base;
+	int				  text_rows_dirty;
 	int				  changed;
 	struct pane_ranges_signature	  text_signature;
 	struct pane_range_row		 *rows;
@@ -379,6 +390,7 @@ pane_ranges_get(struct window_pane *wp)
 	prs->wp = wp;
 	prs->generation = 1;
 	TAILQ_INIT(&prs->list);
+	TAILQ_INIT(&prs->text);
 	RB_INIT(&prs->tree);
 	RB_INIT(&prs->by_ids);
 	return (prs);
@@ -455,6 +467,19 @@ pane_ranges_free_rows(struct pane_ranges *prs)
 	prs->visible_len = prs->visible_size = 0;
 }
 
+/* Free the positioned text ranges of each visible row. */
+static void
+pane_ranges_free_text_rows(struct pane_ranges *prs)
+{
+	u_int	i;
+
+	for (i = 0; i < prs->ntext_rows; i++)
+		free(prs->text_rows[i].list);
+	free(prs->text_rows);
+	prs->text_rows = NULL;
+	prs->ntext_rows = 0;
+}
+
 /* Free the ranges of a screen. */
 void
 pane_ranges_free(struct screen *s)
@@ -473,6 +498,7 @@ pane_ranges_free(struct screen *s)
 		pane_range_free(r);
 	}
 	pane_ranges_free_rows(prs);
+	pane_ranges_free_text_rows(prs);
 	for (i = 0; i < prs->nsets; i++) {
 		free(prs->sets[i]->ids);
 		free(prs->sets[i]);
@@ -1306,10 +1332,9 @@ pane_ranges_resolve_text(struct pane_ranges *prs)
 	if (!pane_ranges_visible_update(prs) && !prs->text_dirty)
 		return (0);
 	prs->text_dirty = 0;
+	prs->text_rows_dirty = 1;
 
-	TAILQ_FOREACH(r, &prs->list, entry) {
-		if (r->anchor != PANE_RANGE_TEXT)
-			continue;
+	TAILQ_FOREACH(r, &prs->text, text_entry) {
 		state = r->state;
 		positioned = r->positioned;
 		span = r->span;
@@ -1741,6 +1766,7 @@ pane_range_set_text(struct pane_ranges *prs, struct pane_range *r,
 	r->positioned = 0;
 	r->visible_y = -1;
 	prs->text_dirty = 1;
+	prs->text_rows_dirty = 1;
 	return (1);
 }
 
@@ -1812,6 +1838,7 @@ pane_range_create(struct window_pane *wp, const struct pane_range_span *span,
 	RB_INSERT(pane_range_tree, &prs->tree, r);
 	prs->count++;
 	if (anchor == PANE_RANGE_TEXT) {
+		TAILQ_INSERT_TAIL(&prs->text, r, text_entry);
 		prs->ntext++;
 		pane_ranges_resolve_now(prs);
 	} else if (prs->count - prs->ntext == 1)
@@ -1866,8 +1893,11 @@ pane_range_remove(struct pane_ranges *prs, struct pane_range *r)
 {
 	TAILQ_REMOVE(&prs->list, r, entry);
 	RB_REMOVE(pane_range_tree, &prs->tree, r);
-	if (r->anchor == PANE_RANGE_TEXT)
+	if (r->anchor == PANE_RANGE_TEXT) {
+		TAILQ_REMOVE(&prs->text, r, text_entry);
 		prs->ntext--;
+		prs->text_rows_dirty = 1;
+	}
 	pane_range_free(r);
 
 	if (--prs->count == 0 && prs->listed) {
@@ -1877,6 +1907,7 @@ pane_range_remove(struct pane_ranges *prs, struct pane_range *r)
 		memset(&prs->index, 0, sizeof prs->index);
 		prs->index_dirty = 1;
 		pane_ranges_free_rows(prs);
+		pane_ranges_free_text_rows(prs);
 	}
 }
 
@@ -2069,21 +2100,21 @@ pane_ranges_drawing(struct window_pane *wp, struct screen *s)
 	return (prs);
 }
 
-/* Check if a text range is shown at a visible position of its pane. */
+/* Check if a text range is shown where its text was last found. */
+static int
+pane_range_text_shown(struct pane_range *r)
+{
+	if (!r->positioned)
+		return (0);
+	return (r->state == PANE_RANGE_LIVE || r->state == PANE_RANGE_CLIPPED);
+}
+
+/* Check if a text range shown on a row covers a position. */
 static int
 pane_range_text_covers(struct window_pane *wp, struct pane_range *r, u_int x,
-    u_int y)
+    uint64_t line)
 {
-	uint64_t	line;
-
-	if (r->anchor != PANE_RANGE_TEXT || !r->positioned)
-		return (0);
-	if (r->state != PANE_RANGE_LIVE && r->state != PANE_RANGE_CLIPPED)
-		return (0);
 	if (r->alternate != SCREEN_IS_ALTERNATE(&wp->base))
-		return (0);
-	line = pane_ranges_line(wp->base.grid, y);
-	if (line < r->span.start_line || line > r->span.end_line)
 		return (0);
 	if (line == r->span.start_line && x < r->span.start_x)
 		return (0);
@@ -2092,18 +2123,80 @@ pane_range_text_covers(struct window_pane *wp, struct pane_range *r, u_int x,
 	return (1);
 }
 
+/* Build the lists of positioned text ranges on each visible row. */
+static void
+pane_ranges_build_text_rows(struct pane_ranges *prs)
+{
+	struct window_pane		*wp = prs->wp;
+	struct grid			*gd = wp->base.grid;
+	struct pane_range		*r;
+	struct pane_range_text_row	*row;
+	uint64_t			 line, first, last;
+
+	pane_ranges_free_text_rows(prs);
+	prs->text_rows_dirty = 0;
+	prs->text_base = pane_ranges_line(gd, 0);
+
+	TAILQ_FOREACH(r, &prs->text, text_entry) {
+		if (!pane_range_text_shown(r))
+			continue;
+		first = r->span.start_line;
+		if (first < prs->text_base)
+			first = prs->text_base;
+		last = r->span.end_line;
+		if (last >= prs->text_base + gd->sy)
+			last = prs->text_base + gd->sy - 1;
+		if (first > last)
+			continue;
+		if (prs->text_rows == NULL) {
+			prs->text_rows = xcalloc(gd->sy,
+			    sizeof *prs->text_rows);
+			prs->ntext_rows = gd->sy;
+		}
+		for (line = first; line <= last; line++) {
+			row = &prs->text_rows[line - prs->text_base];
+			row->list = xreallocarray(row->list, row->n + 1,
+			    sizeof *row->list);
+			row->list[row->n++] = r;
+		}
+	}
+}
+
+/* Get the positioned text ranges on a line of a pane. */
+static struct pane_range_text_row *
+pane_ranges_text_row(struct pane_ranges *prs, uint64_t line)
+{
+	struct pane_range_text_row	*row;
+
+	if (prs->ntext == 0)
+		return (NULL);
+	if (prs->text_rows_dirty)
+		pane_ranges_build_text_rows(prs);
+	if (line < prs->text_base || line - prs->text_base >= prs->ntext_rows)
+		return (NULL);
+	row = &prs->text_rows[line - prs->text_base];
+	if (row->n == 0)
+		return (NULL);
+	return (row);
+}
+
 /* Get the newest text range shown at a visible position of a pane. */
 struct pane_range *
 pane_ranges_text_at(struct window_pane *wp, u_int x, u_int y)
 {
-	struct pane_ranges	*prs = wp->base.ranges;
-	struct pane_range	*r;
+	struct pane_ranges		*prs = wp->base.ranges;
+	struct pane_range_text_row	*row;
+	uint64_t			 line;
+	u_int				 i;
 
-	if (prs == NULL || prs->ntext == 0)
+	if (prs == NULL)
 		return (NULL);
-	TAILQ_FOREACH_REVERSE(r, &prs->list, pane_range_list, entry) {
-		if (pane_range_text_covers(wp, r, x, y))
-			return (r);
+	line = pane_ranges_line(wp->base.grid, y);
+	if ((row = pane_ranges_text_row(prs, line)) == NULL)
+		return (NULL);
+	for (i = row->n; i > 0; i--) {
+		if (pane_range_text_covers(wp, row->list[i - 1], x, line))
+			return (row->list[i - 1]);
 	}
 	return (NULL);
 }
