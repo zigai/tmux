@@ -784,7 +784,7 @@ tty_default_features(struct client *c, const char *name, u_int version)
 		},
 		{ .name = "ghostty",
 		  .version = 10400,
-		  .features = "kittyclipboard"
+		  .features = "kittyclipboard,kittycolours"
 		},
 		{ .name = "kitty",
 		  .features = TTY_FEATURES_BASE_MODERN_XTERM ","

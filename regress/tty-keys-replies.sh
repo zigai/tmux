@@ -61,9 +61,11 @@ def matches(name, value):
         return kind == "ghostty 1.2.0" and {
             "kittygraphics", "margins", "sync", "usstyle", "progressbar",
             "osc9", "osc777"} <= features and "osc99" not in features and \
-            "kittyclipboard" not in features
+            "kittyclipboard" not in features and \
+            "kittycolours" not in features
     if name == "XDA-ghostty-1.4":
-        return kind == "ghostty 1.4.0" and "kittyclipboard" in features
+        return kind == "ghostty 1.4.0" and \
+            {"kittyclipboard", "kittycolours"} <= features
     if name == "XDA-ghostty-tip":
         return kind == "ghostty tip" and "kittyclipboard" not in features
     if name == "XDA-WezTerm":
