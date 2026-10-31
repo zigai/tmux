@@ -3,8 +3,9 @@
 # Kitty clipboard protocol (OSC 5522) requests waiting for the terminal: only
 # the client a request was sent to may answer it, a new request from a pane is
 # refused while one waits, a reply split over two reads is not taken as keys, a
-# late answer is still a reply, and a request is failed when its client goes. The client which answers runs in a pane of a second server,
-# which itself asks a third server; stopping the third keeps requests waiting.
+# late answer is still a reply, and a request is failed when its client goes.
+# The client which answers runs in a pane of a second server, which itself asks
+# a third server; stopping the third keeps requests waiting.
 
 . ./regress-common.inc
 
