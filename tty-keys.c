@@ -1506,6 +1506,7 @@ tty_keys_device_attributes(struct tty *tty, const char *buf, size_t len,
 	tty->flags |= TTY_HAVEKKB;
 	tty_update_features(tty);
 	tty->flags |= TTY_HAVEDA;
+	tty_query_kitty_keys(tty);
 
 	return (0);
 }
