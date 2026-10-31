@@ -156,16 +156,18 @@ while [ -z "$($TMUX list-clients -F x)" ]; do
 	sleep 0.01
 done
 
-# The default style comes from pane-range-style and covers exactly the cells
-# of the range.
+# By default a range is drawn unchanged. The style of a range without its own
+# comes from pane-range-style and covers exactly the cells of the range.
 fresh default
 a=$(new -r 0:0-0:4)
-assert_line 1 "${E}[4mhello${E}[0m world" 'default style'
-assert_line 2 'second line' 'unranged line styled'
+assert_line 1 'hello world' 'range styled by default'
 $TMUX setw pane-range-style 'fg=blue' || fail 'set style option'
 assert_line 1 "${E}[34mhello${E}[39m world" 'pane-range-style not applied'
+assert_line 2 'second line' 'unranged line styled'
 $TMUX setw -u pane-range-style || fail 'unset style option'
-assert_line 1 "${E}[4mhello${E}[0m world" 'default style not restored'
+assert_line 1 'hello world' 'default style not restored'
+$TMUX setw -g pane-range-style underscore || fail 'set global style option'
+assert_line 1 "${E}[4mhello${E}[0m world" 'global pane-range-style'
 
 # The style is not stored: captures and copied text are unchanged.
 [ "$($TMUX capture-pane -pe -t "$pane" | sed -n 1p)" = 'hello world' ] ||
