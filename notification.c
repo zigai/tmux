@@ -424,9 +424,8 @@ notification_append(struct notification_payload *np, const void *buf,
 }
 
 /*
- * Decode base64 data. Chunks may be split anywhere in the encoded data, or be
- * encoded separately with their own padding, so decode only whole groups
- * unless padding has been seen or this is the end of the payload.
+ * Decode base64 data. Chunks may be split anywhere in the encoded data, so
+ * decode only whole groups unless this is the end of the payload.
  */
 static void
 notification_decode(struct notification_payload *np, int final)
@@ -438,8 +437,6 @@ notification_decode(struct notification_payload *np, int final)
 
 	if (len == 0)
 		return;
-	if (memchr(np->encoded, '=', len) != NULL)
-		final = 1;
 	if (final) {
 		used = len;
 		if (len % 4 == 1)
