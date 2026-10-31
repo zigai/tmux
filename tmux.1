@@ -5151,8 +5151,13 @@ is the same as
 but also creates a paste buffer.
 .Pp
 This also applies to the Kitty clipboard protocol (OSC 5522), except that
+the request is refused if this is
 .Cm off
-refuses the request and
+or
+.Ic set\-clipboard
+is not
+.Cm on ,
+and
 .Cm request
 or
 .Cm both
@@ -5162,7 +5167,10 @@ feature, otherwise the newest paste buffer is used.
 Paste events (mode 5522) are passed to applications only with
 .Cm request
 or
-.Cm both ,
+.Cm both
+and
+.Ic set\-clipboard
+.Cm on ,
 although the mode is always reported as supported.
 .Pp
 See also the

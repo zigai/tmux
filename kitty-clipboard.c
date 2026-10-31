@@ -806,7 +806,8 @@ kitty_clipboard_read(struct window_pane *wp,
 
 	kitty_clipboard_cancel(wp);
 	state = options_get_number(global_options, "get-clipboard");
-	if (state == 0) {
+	if (state == 0 ||
+	    options_get_number(global_options, "set-clipboard") != 2) {
 		kitty_clipboard_status(wp, "read", meta->id, "EPERM", end);
 		free(mimes);
 		return;

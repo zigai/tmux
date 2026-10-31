@@ -33,6 +33,7 @@ mode()
 $TMUX new -d -s kc -x40 -y10 "stty raw -echo; printf '\\033[?5522h'; \
     exec cat -v >$TMP/a" || exit 1
 $TMUX set -g status off || exit 1
+$TMUX set -s set-clipboard on || exit 1
 $TMUX set -s get-clipboard request || exit 1
 $TMUX set -s escape-time 10 || exit 1
 $TMUX set -as terminal-features 'tmux*:kittyclipboard' || exit 1
@@ -53,6 +54,12 @@ wait_for_output '?5522l' mode || fail "mode set with get-clipboard buffer"
 $TMUX set -s get-clipboard request || exit 1
 $TMUX refresh-client || exit 1
 wait_for_output '?5522h' mode || fail "mode not set again"
+$TMUX set -s set-clipboard external || exit 1
+$TMUX refresh-client || exit 1
+wait_for_output '?5522l' mode || fail "mode set with set-clipboard external"
+$TMUX set -s set-clipboard on || exit 1
+$TMUX refresh-client || exit 1
+wait_for_output '?5522h' mode || fail "mode not set with set-clipboard on"
 
 $TMUX split-window -t kc: "stty raw -echo; exec cat -v >$TMP/b" || exit 1
 wait_for_output '?5522l' mode || fail "mode set for other pane"
