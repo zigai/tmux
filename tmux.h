@@ -836,9 +836,6 @@ enum tty_code_code {
 #define CURSOR_MODES (MODE_CURSOR|MODE_CURSOR_BLINKING|MODE_CURSOR_VERY_VISIBLE)
 #define EXTENDED_KEY_MODES (MODE_KEYS_EXTENDED|MODE_KEYS_EXTENDED_2)
 
-/* Extended key output formats. */
-#define EXTENDED_KEYS_XTERM 1
-
 /* Kitty keyboard protocol flags. */
 #define KITTY_KEY_DISAMBIGUATE 0x1
 #define KITTY_KEY_REPORT_EVENTS 0x2
@@ -3702,9 +3699,9 @@ u_int	 input_kitty_flags(struct screen *);
 void	 input_kitty_set(struct screen *, u_int, int);
 void	 input_kitty_push(struct screen *, u_int);
 void	 input_kitty_pop(struct screen *, u_int);
-int	 input_kitty_modifier_key(key_code);
+key_code	 input_kitty_find(u_int, char);
 int	 input_kitty_bypass(const struct kitty_key *, key_code);
-int	 input_key_kitty(struct screen *, struct bufferevent *, key_code,
+int	 input_kitty_key(struct screen *, struct bufferevent *, key_code,
 	     const struct kitty_key *);
 
 /* colour.c */

@@ -25,14 +25,14 @@
 
 /* Track pane keyboard state and encode keys for applications. */
 
-struct input_kitty_key {
+struct input_kitty_entry {
 	key_code	 key;
 	u_int		 number;
 	char		 final;
 	char		 text;
 };
 
-static const struct input_kitty_key input_kitty_keys[] = {
+static const struct input_kitty_entry input_kitty_keys[] = {
 	{ C0_ESC, 27, 'u', 0 },
 	{ C0_CR, 13, 'u', 0 },
 	{ C0_HT, 9, 'u', 0 },
@@ -212,7 +212,7 @@ input_kitty_pop(struct screen *s, u_int count)
 	}
 }
 
-int
+static int
 input_kitty_modifier_key(key_code key)
 {
 	key &= KEYC_MASK_KEY;
@@ -252,7 +252,7 @@ input_kitty_modifiers(key_code key)
 	return (modifiers);
 }
 
-static const struct input_kitty_key *
+static const struct input_kitty_entry *
 input_kitty_lookup(key_code key)
 {
 	key_code	lookup;
@@ -264,6 +264,20 @@ input_kitty_lookup(key_code key)
 			return (&input_kitty_keys[i]);
 	}
 	return (NULL);
+}
+
+/* Find the key for a key number and final byte. */
+key_code
+input_kitty_find(u_int number, char final)
+{
+	u_int	i;
+
+	for (i = 0; i < nitems(input_kitty_keys); i++) {
+		if (input_kitty_keys[i].number == number &&
+		    input_kitty_keys[i].final == final)
+			return (input_kitty_keys[i].key);
+	}
+	return (KEYC_NONE);
 }
 
 static int
@@ -290,16 +304,16 @@ input_kitty_write_text(struct bufferevent *bev, const u_int *text,
  * Ghostty uses so a program sees the same bytes inside tmux as outside.
  */
 int
-input_key_kitty(struct screen *s, struct bufferevent *bev, key_code key,
+input_kitty_key(struct screen *s, struct bufferevent *bev, key_code key,
     const struct kitty_key *kk)
 {
-	const struct input_kitty_key	*ikk;
+	const struct input_kitty_entry	*ikk;
 	struct utf8_data		 ud;
 	wchar_t				 wc;
 	key_code			 onlykey;
-	u_int				 flags, number, modifiers, event, binding;
-	u_int				 shifted = 0, base = 0, ntext = 0, i, n;
-	u_int				 text[KITTY_TEXT_MAX];
+	u_int				 flags, number, modifiers, event;
+	u_int				 binding, shifted = 0, base = 0;
+	u_int				 ntext = 0, i, n, text[KITTY_TEXT_MAX];
 	char				 final, tmp[256];
 	size_t				 size;
 	int				 sep;

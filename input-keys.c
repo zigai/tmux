@@ -465,8 +465,7 @@ input_key_extended(struct bufferevent *bev, key_code key)
 	} else
 		key &= KEYC_MASK_KEY;
 
-	if (options_get_number(global_options, "extended-keys-format") ==
-	    EXTENDED_KEYS_XTERM)
+	if (options_get_number(global_options, "extended-keys-format") == 1)
 		xsnprintf(tmp, sizeof tmp, "\033[27;%c;%llu~", modifier, key);
 	else
 		xsnprintf(tmp, sizeof tmp, "\033[%llu;%cu", key, modifier);
@@ -601,7 +600,7 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
 	}
 
 	/* Kitty keys take precedence if the application asked for them. */
-	if (input_key_kitty(s, bev, key, kk) == 0)
+	if (input_kitty_key(s, bev, key, kk) == 0)
 		return (0);
 
 	/* Is this backspace? */
