@@ -833,6 +833,7 @@ dnd_pane_drop(struct window_pane *wp, struct input_ctx *ictx,
 {
 	struct dnd_pane	*dp = wp->dnd;
 	struct client	*c;
+	int		 finish;
 
 	switch (msg->type) {
 	case 'a':
@@ -864,17 +865,17 @@ dnd_pane_drop(struct window_pane *wp, struct input_ctx *ictx,
 			dnd_send(&c->tty, raw);
 		return;
 	case 'r':
+		/* A request with no item, entry or directory finishes. */
+		finish = (msg->x == 0 && msg->y == 0 && msg->py == 0);
 		c = dnd_find_client(wp, DND_DROP);
 		if (c == NULL) {
-			if (!continued && (msg->flags & (DND_HAS_X|DND_HAS_PY)))
+			if (!continued && !finish)
 				dnd_reply_error(wp, ictx, msg, 'R', "EPERM",
 				    dp->accept_id);
 			return;
 		}
 		dnd_send(&c->tty, raw);
-
-		/* A request with no item or directory finishes the drop. */
-		if ((msg->flags & (DND_HAS_X|DND_HAS_PY)) == 0)
+		if (finish)
 			c->tty.dnd->drop_pane = -1;
 		return;
 	}

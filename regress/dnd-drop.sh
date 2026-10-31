@@ -88,8 +88,9 @@ terminal outer:0 't=r:x=1:m=0;'
 $OUTER send-keys -t outer:0 -l "$(printf '\033]72;t=R:x=2;ENOENT\007')"
 expect $DIR/right "$(printf '%s\n' 't=r:x=1:i=7:m=1;aGVs' 'i=7:m=0;bG8=' \
     't=r:x=1:i=7:m=0;' 't=R:x=2:i=7;ENOENT')" "data"
-pane $RIGHT 't=r:o=1'
-expect $DIR/out1 't=r:o=1' "finish"
+pane $RIGHT 't=r:x=0:y=0:Y=0:o=1'
+expect $DIR/out1 't=r:x=0:y=0:Y=0:o=1' "finish"
+pane $RIGHT 't=r:x=0:y=0:Y=0'
 pane $RIGHT 't=r:x=1'
 expect $DIR/right 't=R:x=1:i=7;EPERM' "request after finish"
 
