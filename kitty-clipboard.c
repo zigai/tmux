@@ -132,11 +132,23 @@ static int
 kitty_clipboard_decode(u_char *carry, u_int *ncarry, const char *in,
     u_char **out, size_t *outsize)
 {
-	size_t	 len = strlen(in), i;
+	size_t	 len = strlen(in), i, need, space;
 	u_char	 ch, *p;
 	int	 v[4], j, n;
 
-	*out = xrealloc(*out, *outsize + ((*ncarry + len) / 4) * 3 + 1);
+	/*
+	 * Data may arrive in many small pieces, so allocate in powers of two.
+	 * The buffer is then always at least as big as the power of two above
+	 * its size.
+	 */
+	need = *outsize + ((*ncarry + len) / 4) * 3 + 1;
+	for (space = 1; space <= *outsize; space *= 2)
+		/* nothing */;
+	if (*out == NULL || need > space) {
+		while (space < need)
+			space *= 2;
+		*out = xrealloc(*out, space);
+	}
 	p = *out + *outsize;
 	for (i = 0; i < len; i++) {
 		ch = in[i];
