@@ -51,6 +51,9 @@ case ",$features," in
 *,utf8,*) ;;
 *) fail "utf8 is missing from client_termfeatures: $features" ;;
 esac
+case ",$features," in
+*,appesc,*) fail "utf8 also enabled appesc: $features" ;;
+esac
 
 present=$($INNER display-message -c "$client" -p '#{I/f:utf8}')
 [ "$present" = 1 ] || fail "utf8 terminal feature lookup returned '$present'"

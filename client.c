@@ -62,7 +62,7 @@ static int		 client_get_lock(char *);
 static int		 client_connect(struct event_base *, const char *,
 			     uint64_t);
 static void		 client_send_identify(const char *, const char *,
-			     char **, u_int, const char *, int);
+    char **, u_int, const char *, uint64_t);
 static void		 client_signal(int);
 static void		 client_dispatch(struct imsg *, void *);
 static void		 client_dispatch_attached(struct imsg *);
@@ -230,7 +230,7 @@ client_exit(void)
 /* Client main loop. */
 int
 client_main(struct event_base *base, int argc, char **argv, uint64_t flags,
-    int feat)
+    uint64_t feat)
 {
 	struct cmd_parse_result	*pr;
 	struct msg_command	*data;
@@ -442,7 +442,7 @@ client_main(struct event_base *base, int argc, char **argv, uint64_t flags,
 /* Send identify messages to server. */
 static void
 client_send_identify(const char *ttynam, const char *termname, char **caps,
-    u_int ncaps, const char *cwd, int feat)
+    u_int ncaps, const char *cwd, uint64_t feat)
 {
 	char	**ss;
 	size_t	  sslen;

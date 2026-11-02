@@ -20,7 +20,7 @@
 #define TMUX_PROTOCOL_H
 
 /* Protocol version. */
-#define PROTOCOL_VERSION 8
+#define PROTOCOL_VERSION 9
 
 /* Message types. */
 enum msgtype {

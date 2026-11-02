@@ -437,8 +437,8 @@ main(int argc, char **argv)
 	char					*path = NULL, *label = NULL;
 	char					*cause, **var;
 	const char				*s, *cwd;
-	int					 opt, keys, feat = 0, fflag = 0;
-	uint64_t				 flags = 0;
+	int					 opt, keys, fflag = 0;
+	uint64_t				 flags = 0, feat = 0;
 	const struct options_table_entry	*oe;
 	u_int					 i;
 

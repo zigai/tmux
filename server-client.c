@@ -3293,8 +3293,8 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 {
 	const char	*data, *home;
 	size_t		 datalen;
-	int		 flags, feat;
-	uint64_t	 longflags;
+	int		 flags;
+	uint64_t	 longflags, feat;
 	char		*name;
 
 	if (c->flags & CLIENT_IDENTIFIED)

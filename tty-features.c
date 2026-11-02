@@ -539,7 +539,8 @@ tty_parse_client_features(struct client *c, const char *s, const char *sep)
 
 /* Parse features list. */
 void
-tty_parse_features(const char *s, const char *sep, int *enabled, int *disabled)
+tty_parse_features(const char *s, const char *sep, uint64_t *enabled,
+    uint64_t *disabled)
 {
 	const struct tty_feature	 *tf;
 	char				 *next, *loop, *copy;
@@ -564,16 +565,16 @@ tty_parse_features(const char *s, const char *sep, int *enabled, int *disabled)
 		}
 		if (remove) {
 			log_debug("removing terminal feature: %s", tf->name);
-			*enabled &= ~(1 << i);
+			*enabled &= ~(1ULL << i);
 			if (disabled != NULL)
-				*disabled |= 1 << i;
+				*disabled |= 1ULL << i;
 			continue;
 		}
-		if (disabled != NULL && *disabled & (1 << i))
+		if (disabled != NULL && *disabled & (1ULL << i))
 			continue;
-		if (~(*enabled) & (1 << i)) {
+		if (~(*enabled) & (1ULL << i)) {
 			log_debug("adding terminal feature: %s", tf->name);
-			(*enabled) |= (1 << i);
+			(*enabled) |= (1ULL << i);
 		}
 	}
 	free(copy);
@@ -581,7 +582,7 @@ tty_parse_features(const char *s, const char *sep, int *enabled, int *disabled)
 
 /* Get features as string. */
 const char *
-tty_get_features(int feat)
+tty_get_features(uint64_t feat)
 {
 	const struct tty_feature	*tf;
 	static char			 s[512];
@@ -589,7 +590,7 @@ tty_get_features(int feat)
 
 	*s = '\0';
 	for (i = 0; i < nitems(tty_features); i++) {
-		if (~feat & (1 << i))
+		if (~feat & (1ULL << i))
 			continue;
 		tf = tty_features[i];
 
@@ -616,7 +617,7 @@ tty_feature_present(struct tty_term *term, const char *name)
 	for (i = 0; i < nitems(tty_features); i++) {
 		tf = tty_features[i];
 		if (strcmp(tf->name, name) == 0) {
-			if (term->applied_features & (1 << i))
+			if (term->applied_features & (1ULL << i))
 				return (1);
 			break;
 		}
@@ -652,7 +653,7 @@ tty_apply_features(struct tty_term *term)
 	struct client			*c = term->tty->client;
 	const struct tty_feature	*tf;
 	const char *const		*capability;
-	int				 feat;
+	uint64_t			 feat;
 	u_int				 i;
 
 	feat = (c->term_features & ~c->term_nofeatures);
@@ -661,7 +662,8 @@ tty_apply_features(struct tty_term *term)
 	log_debug("applying terminal features: %s", tty_get_features(feat));
 
 	for (i = 0; i < nitems(tty_features); i++) {
-		if ((term->applied_features & (1 << i)) || (~feat & (1 << i)))
+		if ((term->applied_features & (1ULL << i)) ||
+		    (~feat & (1ULL << i)))
 			continue;
 		tf = tty_features[i];
 

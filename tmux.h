@@ -2052,7 +2052,7 @@ struct key_event {
 struct tty_term {
 	char		*name;
 	struct tty	*tty;
-	int		 applied_features;
+	uint64_t	 applied_features;
 
 	char		 acs[UCHAR_MAX + 1][2];
 
@@ -2611,8 +2611,8 @@ struct client {
 	struct progress_bar	 progress_bar;
 
 	char			*term_name;
-	int			 term_features;
-	int		 	 term_nofeatures;
+	uint64_t		 term_features;
+	uint64_t		 term_nofeatures;
 	char			*term_type;
 	char		       **term_caps;
 	u_int			 term_ncaps;
@@ -3423,8 +3423,9 @@ const char	*tty_term_describe(struct tty_term *, enum tty_code_code);
 /* tty-features.c */
 void		 tty_parse_client_features(struct client *, const char *,
 		     const char *);
-void		 tty_parse_features(const char *, const char *, int *, int *);
-const char	*tty_get_features(int);
+void		 tty_parse_features(const char *, const char *, uint64_t *,
+		     uint64_t *);
+const char	*tty_get_features(uint64_t);
 int		 tty_feature_present(struct tty_term *, const char *);
 int		 tty_apply_features(struct tty_term *);
 void		 tty_default_features(struct client *, const char *, u_int);
@@ -3629,7 +3630,7 @@ void	cmd_wait_for_client_lost(struct client *);
 void	cmd_wait_for_flush(void);
 
 /* client.c */
-int	client_main(struct event_base *, int, char **, uint64_t, int);
+int	client_main(struct event_base *, int, char **, uint64_t, uint64_t);
 
 /* key-bindings.c */
 struct key_table *key_bindings_get_table(const char *, int);
