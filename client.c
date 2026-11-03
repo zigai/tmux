@@ -448,6 +448,7 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 	size_t	  sslen;
 	int	  fd;
 	uint64_t  flags = client_flags;
+	int	  shortfeat = feat;
 	pid_t	  pid;
 	u_int	  i;
 
@@ -457,7 +458,10 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 
 	proc_send(client_peer, MSG_IDENTIFY_TERM, -1, termname,
 	    strlen(termname) + 1);
-	proc_send(client_peer, MSG_IDENTIFY_FEATURES, -1, &feat, sizeof feat);
+	proc_send(client_peer, MSG_IDENTIFY_FEATURES, -1, &shortfeat,
+	    sizeof shortfeat);
+	proc_send(client_peer, MSG_IDENTIFY_LONGFEATURES, -1, &feat,
+	    sizeof feat);
 
 	proc_send(client_peer, MSG_IDENTIFY_TTYNAME, -1, ttynam,
 	    strlen(ttynam) + 1);

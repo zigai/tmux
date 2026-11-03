@@ -3086,6 +3086,7 @@ server_client_dispatch(struct imsg *imsg, void *arg)
 	case MSG_IDENTIFY_ENVIRON:
 	case MSG_IDENTIFY_FEATURES:
 	case MSG_IDENTIFY_FLAGS:
+	case MSG_IDENTIFY_LONGFEATURES:
 	case MSG_IDENTIFY_LONGFLAGS:
 	case MSG_IDENTIFY_STDIN:
 	case MSG_IDENTIFY_STDOUT:
@@ -3293,8 +3294,8 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 {
 	const char	*data, *home;
 	size_t		 datalen;
-	int		 flags;
-	uint64_t	 longflags, feat;
+	int		 flags, feat;
+	uint64_t	 longflags, longfeat;
 	char		*name;
 
 	if (c->flags & CLIENT_IDENTIFIED)
@@ -3308,9 +3309,17 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 		if (datalen != sizeof feat)
 			return (-1);
 		memcpy(&feat, data, sizeof feat);
-		c->term_features |= feat;
+		c->term_features |= (u_int)feat;
 		log_debug("client %p IDENTIFY_FEATURES %s", c,
-		    tty_get_features(feat));
+		    tty_get_features((u_int)feat));
+		break;
+	case MSG_IDENTIFY_LONGFEATURES:
+		if (datalen != sizeof longfeat)
+			return (-1);
+		memcpy(&longfeat, data, sizeof longfeat);
+		c->term_features |= longfeat;
+		log_debug("client %p IDENTIFY_LONGFEATURES %s", c,
+		    tty_get_features(longfeat));
 		break;
 	case MSG_IDENTIFY_FLAGS:
 		if (datalen != sizeof flags)

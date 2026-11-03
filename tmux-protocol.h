@@ -20,7 +20,7 @@
 #define TMUX_PROTOCOL_H
 
 /* Protocol version. */
-#define PROTOCOL_VERSION 9
+#define PROTOCOL_VERSION 8
 
 /* Message types. */
 enum msgtype {
@@ -39,6 +39,7 @@ enum msgtype {
 	MSG_IDENTIFY_STDOUT,
 	MSG_IDENTIFY_LONGFLAGS,
 	MSG_IDENTIFY_TERMINFO,
+	MSG_IDENTIFY_LONGFEATURES,
 
 	MSG_COMMAND = 200,
 	MSG_DETACH,
