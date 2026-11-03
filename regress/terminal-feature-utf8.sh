@@ -32,7 +32,7 @@ $INNER set-option -g status off || exit 1
 
 # A clean C-locale environment avoids the ordinary UTF-8 detection paths.
 # -T utf8 is therefore solely responsible for setting client_utf8.
-client_command="env -i PATH=/bin:/usr/bin TERM=screen LC_ALL=C $TEST_TMUX -T utf8 -LtestI$$ -f/dev/null attach-session -t inner"
+client_command="env -i TMUX_TMPDIR=$TMUX_TMPDIR PATH=/bin:/usr/bin TERM=screen LC_ALL=C $TEST_TMUX -T utf8 -LtestI$$ -f/dev/null attach-session -t inner"
 $OUTER new-session -d -s outer -x40 -y10 "$client_command" || exit 1
 $OUTER set-option -g status off || exit 1
 
