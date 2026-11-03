@@ -43,6 +43,7 @@ struct clients		 clients;
 
 struct tmuxproc		*server_proc;
 static int		 server_fd = -1;
+static int		 server_created_socket;
 static uint64_t		 server_client_flags;
 static int		 server_exit;
 static struct event	 server_ev_accept;
@@ -119,6 +120,7 @@ server_create_socket(uint64_t flags, char **cause)
 		goto fail;
 	}
 	unlink(sa.sun_path);
+	server_created_socket = 1;
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
 		goto fail;
@@ -263,6 +265,13 @@ server_start(struct tmuxproc *client, uint64_t flags, struct event_base *base,
 
 	job_kill_all();
 	prompt_save_history();
+
+	/*
+	 * Remove the socket while still holding it, so a new server can only
+	 * start after this one has gone and cannot lose its socket here.
+	 */
+	if (server_created_socket)
+		unlink(socket_path);
 
 	exit(0);
 }
