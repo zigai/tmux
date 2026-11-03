@@ -32,9 +32,11 @@ $(TESTS): prepare
 	@base="$@"; base=$${base##*/}; \
 	log="$(LOGDIR)/$${base%.sh}.log"; \
 	start=$$(date +%s); \
+	tmpdir=$$(mktemp -d); \
 	env -i LC_CTYPE=C.UTF-8 MallocNanoZone=0 SHELL=/bin/sh \
-	    sh -x "$@" >"$$log" 2>&1; \
+	    TMUX_TMPDIR="$$tmpdir" sh -x "$@" >"$$log" 2>&1; \
 	result=$$?; \
+	rm -rf "$$tmpdir"; \
 	end=$$(date +%s); \
 	case $$result in \
 	0) \
