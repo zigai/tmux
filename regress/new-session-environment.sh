@@ -31,8 +31,8 @@ cat <<EOF >$TMP
 new -- /bin/sh $SCRIPT
 EOF
 
-(cd /; env -i TERM=ansi TEST=test1 PATH=1 SHELL=/bin/sh \
-	$TMUX -f$TMP start) || exit 1
+(cd /; env -i TMUX_TMPDIR="$TMUX_TMPDIR" TERM=ansi TEST=test1 PATH=1 \
+	SHELL=/bin/sh $TMUX -f$TMP start) || exit 1
 sleep 1
 (cat <<EOF|cmp -s - $OUT) || exit 1
 TERM=$TERM
@@ -42,8 +42,8 @@ SHELL=/bin/sh
 TEST=test1
 EOF
 
-(cd /; env -i TERM=ansi TEST=test2 PATH=2 SHELL=/bin/sh \
-	$TMUX -f$TMP new -d -- /bin/sh $SCRIPT) || exit 1
+(cd /; env -i TMUX_TMPDIR="$TMUX_TMPDIR" TERM=ansi TEST=test2 PATH=2 \
+	SHELL=/bin/sh $TMUX -f$TMP new -d -- /bin/sh $SCRIPT) || exit 1
 sleep 1
 (cat <<EOF|cmp -s - $OUT) || exit 1
 TERM=$TERM
@@ -53,8 +53,8 @@ SHELL=/bin/sh
 TEST=test2
 EOF
 
-(cd /; env -i TERM=ansi TEST=test3 PATH=3 SHELL=/bin/sh \
-	$TMUX -f/dev/null new -d source $TMP) || exit 1
+(cd /; env -i TMUX_TMPDIR="$TMUX_TMPDIR" TERM=ansi TEST=test3 PATH=3 \
+	SHELL=/bin/sh $TMUX -f/dev/null new -d source $TMP) || exit 1
 sleep 1
 (cat <<EOF|cmp -s - $OUT) || exit 1
 TERM=$TERM
