@@ -21,11 +21,14 @@ $TMUX kill-server 2>/dev/null
 DIR=$(mktemp -d)
 FIFO=$DIR/fifo
 SERVER=
+SOCKET=
 
 mkfifo "$FIFO" || exit 1
 
 cleanup() {
 	[ -n "$SERVER" ] && kill -9 "$SERVER" 2>/dev/null
+	# A killed server cannot remove its own socket.
+	[ -n "$SOCKET" ] && rm -f "$SOCKET"
 	$TMUX kill-server 2>/dev/null
 	exec 8<&- 2>/dev/null
 	rm -rf "$DIR"
@@ -56,6 +59,7 @@ $TMUX -f/dev/null new -d -x 80 -y 24 -s rt \
 	'while :; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; sleep 0.01; done' ||
 	exit 1
 SERVER=$($TMUX display -pt rt '#{pid}')
+SOCKET=$($TMUX display -pt rt '#{socket_path}')
 
 # One control client with output down the unread fifo and one reading
 # normally; stdin of both held open by sleep so they stay attached.

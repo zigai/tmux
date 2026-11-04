@@ -8,6 +8,7 @@ TERM=screen
 [ -z "$TEST_TMUX" ] && TEST_TMUX=$(readlink -f ../tmux)
 TMUX="$TEST_TMUX -LtestA$$ -f/dev/null"
 SERVER=
+SOCKET=
 WATCHDOG=
 
 cleanup()
@@ -17,12 +18,15 @@ cleanup()
 		wait "$WATCHDOG" 2>/dev/null
 	fi
 	[ -n "$SERVER" ] && kill -9 "$SERVER" 2>/dev/null
+	# A killed server cannot remove its own socket.
+	[ -n "$SOCKET" ] && rm -f "$SOCKET"
 }
 trap cleanup 0
 trap 'exit 1' 1 2 15
 
 $TMUX new-session -d 'exec sleep 60' || exit 1
 SERVER=$($TMUX display-message -p '#{pid}') || exit 1
+SOCKET=$($TMUX display-message -p '#{socket_path}') || exit 1
 
 # kill-server cannot stop a server stuck rebuilding the width cache.
 (
