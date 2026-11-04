@@ -23,11 +23,14 @@ $TMUX kill-server 2>/dev/null
 DIR=$(mktemp -d)
 FIFO=$DIR/fifo
 SERVER=
+SOCKET=
 
 mkfifo "$FIFO" || exit 1
 
 cleanup() {
 	[ -n "$SERVER" ] && kill -9 "$SERVER" 2>/dev/null
+	# A killed server cannot remove its own socket.
+	[ -n "$SOCKET" ] && rm -f "$SOCKET"
 	$TMUX kill-server 2>/dev/null
 	exec 8<&- 2>/dev/null
 	rm -rf "$DIR"
@@ -37,6 +40,7 @@ trap cleanup 0 1 15
 # A detached session whose pane floods printable output forever.
 $TMUX -f/dev/null new -d -x 80 -y 24 -s rt 'cat /dev/zero | tr "\000" x' || exit 1
 SERVER=$($TMUX display -pt rt '#{pid}')
+SOCKET=$($TMUX display -pt rt '#{socket_path}')
 
 # Attach a control client with output down the fifo; stdin held open by sleep
 # so it stays attached. The fifo fills and is never read, so a backlog forms
