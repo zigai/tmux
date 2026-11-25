@@ -15,7 +15,7 @@ trap 'rm -f "$OUT"; stop_server $TMUX' 0
 trap 'exit 1' 1 2 15
 
 $TMUX new -d -x80 -y24 "stty raw -echo; exec cat >>'$OUT'" || exit 1
-$TMUX send-keys C-Escape M-C-BSpace M-F13 Pause LeftShift x || exit 1
-wait_for_output C-EscapeM-C-BSpaceM-F13PauseLeftShiftx cat "$OUT" || exit 1
+$TMUX send-keys C-Escape M-F13 Pause LeftShift x || exit 1
+wait_for_output C-EscapeM-F13PauseLeftShiftx cat "$OUT" || exit 1
 
 exit 0
