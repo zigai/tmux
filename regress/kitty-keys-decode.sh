@@ -35,7 +35,7 @@ fail()
 
 $TMUX2 set -g extended-keys on \; new -d || exit 1
 $TMUX set -g extended-keys on \; new -d "$TMUX2 attach" || exit 1
-wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' ||
+wait_for_output 'Kitty 5' $TMUX display -p '#{pane_key_mode}' ||
     fail "inner tmux did not turn on the protocol"
 
 assertion=0

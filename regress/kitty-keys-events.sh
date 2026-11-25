@@ -68,7 +68,7 @@ $TMUX respawn-pane -k -t:.0 \
     "stty raw -echo; printf '\\033[?2004h\\033[>1u'; exec cat >>'$A'" ||
     exit 1
 wait_for_output 'Kitty 1' $TMUX display -p '#{pane_key_mode}' || exit 1
-wait_for_output 'Kitty 1' $TMUX2 display -p '#{pane_key_mode}' || exit 1
+wait_for_output 'Kitty 5' $TMUX2 display -p '#{pane_key_mode}' || exit 1
 send '\033[200~hi\033[201~'
 check "$A" '\033[200~hi\033[201~'
 
@@ -79,12 +79,12 @@ send '\033[97;;97u\033[97;1:2;97u\033[97;1:3u\033[13u\033[13;1:3u'
 send '\033[57441;2u\033[97:65;2;65u\033[97:65;2:3u\033[57441;1:3u'
 check "$A" 'aa\033[97;1:3u\rA\033[97;2:3u'
 
-use_flags 1 1
+use_flags 1 5
 send '\033[97;5u\033[1;5A\033[27u'
 check "$A" '\033[97;5u\033[1;5A\033[27u'
 
 $TMUX respawn-pane -k -t:.0 "stty raw -echo; exec cat >>'$A'" || exit 1
-wait_for_output 'Kitty 1' $TMUX2 display -p '#{pane_key_mode}' || exit 1
+wait_for_output 'Kitty 5' $TMUX2 display -p '#{pane_key_mode}' || exit 1
 send '\033[97;5u\033[27u\033[57413;3u'
 check "$A" '\001\033\033+'
 
