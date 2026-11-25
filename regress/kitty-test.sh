@@ -7,18 +7,25 @@ export PATH
 
 cd "$(dirname "$0")" || exit 1
 
-[ -f ../image-kitty.o ] || exit 101
+makevar() {
+	${MAKE:-make} -s -C .. --no-print-directory \
+	    --eval 'print-%: ; $(info $($*))@:' "print-$1" || exit 1
+}
+
+# Old image objects can be left over from an earlier build.
+case " $(makevar DEFS) " in
+*-DENABLE_IMAGES*)
+	;;
+*)
+	exit 101
+	;;
+esac
 
 CC=${CC:-cc}
 PROG=$(mktemp)
 ERR=$(mktemp)
 MAIN=$(mktemp).o
 trap 'rm -f "$PROG" "$ERR" "$MAIN"' 0 1 15
-
-makevar() {
-	${MAKE:-make} -s -C .. --no-print-directory \
-	    --eval 'print-%: ; $(info $($*))@:' "print-$1" || exit 1
-}
 
 OBJS=$MAIN
 for o in ../*.o ../compat/*.o; do
