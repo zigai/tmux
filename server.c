@@ -43,6 +43,8 @@ struct clients		 clients;
 
 struct tmuxproc		*server_proc;
 static int		 server_fd = -1;
+static dev_t		 server_socket_dev;
+static ino_t		 server_socket_ino;
 static int		 server_created_socket;
 static uint64_t		 server_client_flags;
 static int		 server_exit;
@@ -108,6 +110,7 @@ int
 server_create_socket(uint64_t flags, char **cause)
 {
 	struct sockaddr_un	sa;
+	struct stat		sb;
 	size_t			size;
 	mode_t			mask;
 	int			fd, saved_errno;
@@ -120,7 +123,6 @@ server_create_socket(uint64_t flags, char **cause)
 		goto fail;
 	}
 	unlink(sa.sun_path);
-	server_created_socket = 1;
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
 		goto fail;
@@ -137,6 +139,12 @@ server_create_socket(uint64_t flags, char **cause)
 		goto fail;
 	}
 	umask(mask);
+
+	if (stat(sa.sun_path, &sb) == 0) {
+		server_socket_dev = sb.st_dev;
+		server_socket_ino = sb.st_ino;
+		server_created_socket = 1;
+	}
 
 	if (listen(fd, 128) == -1) {
 		saved_errno = errno;
@@ -179,6 +187,7 @@ int
 server_start(struct tmuxproc *client, uint64_t flags, struct event_base *base,
     int lockfd, char *lockfile)
 {
+	struct stat	 sb;
 	int		 fd;
 	sigset_t	 set, oldset;
 	struct client	*c = NULL;
@@ -267,10 +276,13 @@ server_start(struct tmuxproc *client, uint64_t flags, struct event_base *base,
 	prompt_save_history();
 
 	/*
-	 * Remove the socket while still holding it, so a new server can only
-	 * start after this one has gone and cannot lose its socket here.
+	 * Remove the socket only if it is still the one this server bound: if
+	 * it was deleted, another server may have created a new one there.
 	 */
-	if (server_created_socket)
+	if (server_created_socket &&
+	    stat(socket_path, &sb) == 0 &&
+	    sb.st_dev == server_socket_dev &&
+	    sb.st_ino == server_socket_ino)
 		unlink(socket_path);
 
 	exit(0);
