@@ -3702,6 +3702,7 @@ void	 input_kitty_push(struct screen *, u_int);
 void	 input_kitty_pop(struct screen *, u_int);
 key_code	 input_kitty_find(u_int, char);
 int	 input_kitty_bypass(const struct kitty_key *, key_code);
+key_code	 input_kitty_keypad_plain(key_code);
 int	 input_kitty_key(struct screen *, struct bufferevent *, key_code,
 	     const struct kitty_key *);
 

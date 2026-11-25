@@ -234,6 +234,58 @@ input_kitty_bypass(const struct kitty_key *kk, key_code key)
 	    input_kitty_modifier_key(key));
 }
 
+/*
+ * Keypad keys with Num Lock off only exist in the Kitty protocol. Return the
+ * key they stand for elsewhere, or KEYC_NONE if there is none.
+ */
+key_code
+input_kitty_keypad_plain(key_code key)
+{
+	key_code	plain;
+
+	switch (key & KEYC_MASK_KEY) {
+	case KEYC_KP_EQUAL:
+		plain = '=';
+		break;
+	case KEYC_KP_SEPARATOR:
+		plain = ',';
+		break;
+	case KEYC_KP_LEFT:
+		plain = KEYC_LEFT|KEYC_CURSOR;
+		break;
+	case KEYC_KP_RIGHT:
+		plain = KEYC_RIGHT|KEYC_CURSOR;
+		break;
+	case KEYC_KP_UP:
+		plain = KEYC_UP|KEYC_CURSOR;
+		break;
+	case KEYC_KP_DOWN:
+		plain = KEYC_DOWN|KEYC_CURSOR;
+		break;
+	case KEYC_KP_PPAGE:
+		plain = KEYC_PPAGE;
+		break;
+	case KEYC_KP_NPAGE:
+		plain = KEYC_NPAGE;
+		break;
+	case KEYC_KP_HOME:
+		plain = KEYC_HOME;
+		break;
+	case KEYC_KP_END:
+		plain = KEYC_END;
+		break;
+	case KEYC_KP_IC:
+		plain = KEYC_IC;
+		break;
+	case KEYC_KP_DC:
+		plain = KEYC_DC;
+		break;
+	default:
+		return (KEYC_NONE);
+	}
+	return (plain|(key & ~KEYC_MASK_KEY & ~KEYC_KEYPAD));
+}
+
 static u_int
 input_kitty_modifiers(key_code key)
 {
