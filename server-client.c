@@ -1622,7 +1622,7 @@ server_client_key_callback(struct cmdq_item *item, void *data)
 	u_int				 repeat;
 	uint64_t			 flags, prefix_delay;
 	struct cmd_find_state		 fs;
-	key_code			 key0, prefix, prefix2;
+	key_code			 key0, plain, prefix, prefix2;
 
 	if (ec != NULL)
 		c = ec;
@@ -1802,6 +1802,12 @@ try_again:
 		log_debug("currently repeating");
 
 	bd = key_bindings_get(table, key0);
+	if (bd == NULL) {
+		plain = input_kitty_keypad_plain(key0);
+		if (plain != KEYC_NONE)
+			bd = key_bindings_get(table,
+			    plain & (KEYC_MASK_KEY|KEYC_MASK_MODIFIERS));
+	}
 	if (bd == NULL)
 		bd = pane_ranges_key_binding(table, key0);
 

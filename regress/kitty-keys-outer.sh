@@ -77,17 +77,17 @@ $TMUX2 new -d -s o0 'exec sleep 100' \; set -g extended-keys on || exit 1
 attach o1 s1
 attach o2 s2
 wait_for_output 'Kitty 31' outer_mode o1 || exit 1
-wait_for_output 'Kitty 1' outer_mode o2 || exit 1
+wait_for_output 'Kitty 5' outer_mode o2 || exit 1
 $TMUX respawn-pane -k -t s2 "printf '\\033[>8u'; exec sleep 100" || exit 1
 wait_for_output 'Kitty 29' outer_mode o2 || exit 1
 
 # Switching windows or entering copy mode changes what is asked for.
 $TMUX new-window -t s1 'exec sleep 100' || exit 1
-wait_for_output 'Kitty 1' outer_mode o1 || exit 1
+wait_for_output 'Kitty 5' outer_mode o1 || exit 1
 $TMUX select-window -t s1:0 || exit 1
 wait_for_output 'Kitty 31' outer_mode o1 || exit 1
 $TMUX copy-mode -t s1:0 || exit 1
-wait_for_output 'Kitty 1' outer_mode o1 || exit 1
+wait_for_output 'Kitty 5' outer_mode o1 || exit 1
 $TMUX send-keys -t s1:0 -X cancel || exit 1
 wait_for_output 'Kitty 31' outer_mode o1 || exit 1
 $TMUX detach-client -s s1 || exit 1

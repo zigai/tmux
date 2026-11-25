@@ -735,8 +735,13 @@ prompt_space(const struct utf8_data *ud)
 static key_code
 prompt_keypad_key(key_code key)
 {
+	key_code	plain;
+
 	if (key & KEYC_MASK_MODIFIERS)
 		return (key);
+	plain = input_kitty_keypad_plain(key);
+	if (plain != KEYC_NONE)
+		return (plain & ~KEYC_MASK_FLAGS);
 
 	switch (key) {
 	case KEYC_KP_SLASH:

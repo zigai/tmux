@@ -186,12 +186,12 @@ tty_update_kitty(struct tty *tty, struct screen *s)
 		return;
 
 	/*
-	 * Ask for whatever the pane wants. Once events or all keys are
-	 * wanted, ask for everything else as well: every key then arrives
-	 * with its unshifted number and its text, which is enough to encode
-	 * it again for any pane and to match each release with its press.
+	 * Ask for whatever the pane wants, plus shifted keys so Alt+Shift+1
+	 * is M-!. Once events or all keys are wanted, ask for everything:
+	 * every key then has its unshifted number and text, enough to encode
+	 * it for any pane and to match each release with its press.
 	 */
-	flags = KITTY_KEY_DISAMBIGUATE;
+	flags = KITTY_KEY_DISAMBIGUATE|KITTY_KEY_REPORT_ALTERNATES;
 	if (s != NULL)
 		flags |= input_kitty_flags(s);
 	if (flags & (KITTY_KEY_REPORT_EVENTS|KITTY_KEY_REPORT_ALL)) {
@@ -299,12 +299,12 @@ tty_keys_kitty(struct tty *tty, const char *buf, size_t len, size_t *size,
 			return (-2);
 
 		/*
-		 * A key with only Shift is the character it types, without
-		 * the Shift, as with other terminals.
+		 * A key with only Shift and Alt is the character it types,
+		 * without the Shift, as with other terminals.
 		 */
 		cp = nk.number;
-		if ((keymods & ~(KITTY_MOD_SHIFT|KITTY_MOD_CAPSLOCK|
-		    KITTY_MOD_NUMLOCK)) == 0) {
+		if ((keymods & ~(KITTY_MOD_SHIFT|KITTY_MOD_ALT|KITTY_MOD_META|
+		    KITTY_MOD_CAPSLOCK|KITTY_MOD_NUMLOCK)) == 0) {
 			if (nk.ntext == 1 && nk.text[0] >= 0x20 &&
 			    nk.text[0] != 0x7f)
 				cp = nk.text[0];

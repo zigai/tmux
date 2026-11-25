@@ -537,6 +537,8 @@ input_key_vt10x(struct bufferevent *bev, key_code key)
 			key = onlykey - '\030';
 		else if (onlykey >= '@' && onlykey <= '~')
 			key = onlykey & 0x1f;
+		else if (onlykey == '\177')
+			key = '\010';
 		else
 			return (-1);
 	}
@@ -602,6 +604,9 @@ input_key(struct screen *s, struct bufferevent *bev, key_code key,
 	/* Kitty keys take precedence if the application asked for them. */
 	if (input_kitty_key(s, bev, key, kk) == 0)
 		return (0);
+	newkey = input_kitty_keypad_plain(key);
+	if (newkey != KEYC_NONE)
+		key = newkey;
 
 	/* Is this backspace? */
 	if ((key & KEYC_MASK_KEY) == KEYC_BSPACE) {
